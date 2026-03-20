@@ -1,0 +1,69 @@
+---
+title: "DJ Project Framework"
+format: html
+editor: visual
+---
+
+## Introduction
+
+This paper aims to formalize and implement a sequential probabilistic model for playlist generation under typical DJ set constraints. These constraints are modeled by song-to-song mixability constraints and a global "energy curve" designed to formalize the notion of the "shape of a DJ set" (link to relevant paper). As a sequential model, choosing the next song only depends on the current and previous states. At each step, we filter to a subset of songs using approximate nearest neighbors and then define a probability distribution of the next song dependent on a custom transition function that evaluates song to song similarity but penalizes different target arousal and tempo and key.
+
+The primary motivation of this paper is a lack of research focusing on the mix-level structure of DJ mixes. DJ track selection is closely related to tasks such as playlist generation and next song recommendation \[Temporal Considerations\], but existing sequential music recommendation algorithms do not take into account transition-level factors unique to DJ mixing like rhythmic and harmonic compatibility necessary for smooth transitions. Additionally, the macro structure of a mix exerts considerable influence on DJ track selection, who do not necessarily pick songs homogeneously throughout a set. DJs may vary the energy of a set over time, often creating ebbs and flows of tension and release reactive to energy on the dancefloor.
+
+Under the playlist generation context, we can consider either a global representation or sequential representation. Some papers have posed playlist generation as an optimal path-finding problem in feature space. Many other automatic playlist generation papers use a conditional sequential model to train reinforcement learning models or self-supervised convolutional neural (why?). In the context of a DJ set, a sequential characterization is preferred as it allows for both automatic set creation, and sequential recommendation within a human-assisted live interface. This project aims to not only generate playlists conforming to the notion of shape using the "energy curve", but also serve as a tool to help DJs plan sets using the energy live and select songs live. An integral part of the DJ experience is that it is a dynamic and reactive experience to the crowd.
+
+To formalize the macro structure of a DJ set, we use a time-dependent model component that we define as the "energy curve", corresponding to the perceived shape of a DJ set. "Energy" in this context refers to a common colloquial categorization within electronic dance music based on? (perceived induced energy) ?clarify?. This notion of energy corresponds well with the arousal component of the ubiquitious valence-arousal model of emotion in psychology. Many different characteristics within music contribute to the perceived energy . In the context of a DJ set, energy is dictated by the personal style of the DJ and the context of the set: an opening set at a swanky nightclub will have a much different vibe than a mainstage hardstyle festival act. Different DJ sets may follow different types of energy curves, some are smooth and increasing, while others may be spiky and discontinuous.
+
+What exactly constitutes a "good transition" is often subjective, but in the literature it typically involves a combination of rhythmic, harmonic and timbral similarity. Most electronic dance music emphasize beat-matching, so tempo (BPM) is an important constraint (paper showing +-5% tempo jump). Additionally, DJs often pick songs in similar keys (cite paper). Most commercial DJ software like Rekordbox and Serato automatically tag both BPM and tempo.
+
+Note that beyond whole song-to-song similarityThese software also display color and shape-coded visualizations of waveforms, with different colors corresponding to different frequencies (for example in Serato, bass frequencies ), and these can serve as a visual representation for general frequency similarity.
+
+### Background and Related Work
+
+## Proposed Method
+
+### Overview of Formal Probabilistic Model
+
+Let $\mathcal{S}$ be a library of songs. A playlist is an ordered sequence $\pi_{1:n}$ with $\pi_k \in \mathcal{S}$. Each song $\pi$ has duration $d_\pi$, energy $a_\pi$ (which we treat as a vector), and an embedding $e(\pi) \in \mathbb{R}^d$.
+
+Let $f:[0,T]\to\mathbb{R}$ be a target energy curve over the set duration $T$. To simplify the problem, we evaluate it at the discrete set times $\{t_k\}$ induced by the generated sequence. Set $t_1=0$ and update $t_{k+1} = t_k + d_{\pi_k}$. Define the target energy at step k as $\hat a_k = f(t_k)$.
+
+#### State
+
+At each step $k$, we define a state $s_k$ that summarizes all information needed to choose the next track: $$ s_k \;=\; U\!\left(s_{k-1},\, \pi_{k-1},\, t_k,\, \hat a_k\right), \qquad s_1 = U_0(\pi_1,t_1,\hat a_1)$$ The state $s_k$ includes the embedding of the current track $e(\pi_{k-1})$, a track history $\{e(\pi_{k-\ell}),\dots,e(\pi_{k-1})\}$, the current time $t_k$, the target energy $\hat a_k$, and any constraint variables (such as recent artists, key/BPM ranges).
+
+#### Candidate Retrieval
+
+Scoring all songs in $\mathcal{S}$ at each step may be prohibitively computationally expensive for large libraries. Instead, we retrieve a smaller candidate set $\mathcal{C}_k \subset \mathcal{S}$ using approximate nearest neighbors (ANN) in embedding space. Let the retrieval query be $q_k = G(s_k)$, and define $\mathcal{C}_k \;=\; \text{ANN}(q_k;\{e(\pi):\pi\in\mathcal{S}\}) \;\cap\; \mathcal{F}_k$, where $\mathcal{F}_k$ is an optional hard-filter set enforcing strict constraints (such as BPM window, key threshold, artist cooldown period). This also allows us to change the query to any arbitrary song $q_k = G(s_k)$ to define a different stylistic center on which to perform ANN, which could be used in conjunction with a search function
+
+#### Transition Scoring
+
+For each candidate $j \in \mathcal{C}_k$, define a scalar logit (unnormalized score) function: $$u_k(j) \;=\; \phi_\theta(s_k,j)\;-\;\beta\,(a_j-\hat a_k)^2\;-\;\gamma\,\text{keyDist}(\pi_{k-1},j)\;-\;\eta\, \text{BPMDist}(\pi_{k-1},j)$$ where $\phi_\theta(s_k,j)$ is a an engineered compatibility score, the remaining terms are explicit control penalties for curve adherence and basic mix constraints (key distance and BPM difference in this example), and $\beta,\gamma,\eta\ge 0$ are hyperparameters (or potentially learnable weights). This transition scoring function is therefore modular, and easily extendable to handle additional constraints or different compatibility scores. Our initial approach will directly use the track embeddings, but more advanced signal processing compatibility functions could be utilized.
+
+#### Candidate-restricted next-track distribution
+
+We define the next-track distribution as a softmax over $\mathcal{C}_k$: $$p(\pi_k=j \mid s_k,f)\;\approx\; \frac{\exp(u_k(j))}{\sum_{j'\in \mathcal{C}_k}\exp(u_k(j'))}, \qquad j\in\mathcal{C}_k$$
+
+This is a candidate-restricted approximation to the softmax over $\mathcal{S}$.
+
+#### Autoregressive factorization of the playlist distribution
+
+Given energy curve $f$, we model the playlist distribution autoregressively: $$p(\pi_{1:n}\mid f)\;=\; p(\pi_1\mid f)\prod_{k=2}^{n} p(\pi_k\mid s_k,f)$$where $p(\pi_k\mid s_k,f)$ is given by the candidate-restricted softmax above, and the state/time are updated deterministically by $\pi_{k-1}$ via $U(\cdot)$ and $t_{k+1}=t_k+d_{\pi_k}$.
+
+#### Generation
+
+Generation proceeds sequentially: at each step $k$, retrieve $\mathcal{C}_k$, compute $u_k(j)$ and $p(\pi_k=j\mid s_k,f)$, select $\pi_k$ (argmax, full sampling or top-$k$ sampling), then update $t_{k+1}$ and $s_{k+1}$. Termination is defined by a budget on T, a fixed n, or an end-condition (e.g., reaching a target final track or time window).
+
+#### Limitations and Potential Further Steps
+
+### Track Representations
+
+We first must convert each song $\pi$ in the library $\mathcal{S}$ into embeddings which serve as track representations. In line with past automatic DJ algorithm and music mash up papers, we compute a combination of both low-level and high-level
+
+### Candidate Retrieval
+
+### Transition Scoring
+
+### Generation
+
+### Visualization
