@@ -1,26 +1,26 @@
-track_number,title,artists,mp3_name,key,bpm,onset-time
-1,Filmic,"Above & Beyond",filmic.mp3,5A,129.87,0.55
-2,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",tearsfromthemoon.mp3,9A,125,0.0
-3,Break the Silence,"aname, Bri Zoli",breakthesilence.mp3,,,
-4,Love You Got,"Kelly Lee Owens",loveyougot.mp3,,,
-5,Parasite,"ANUQRAM, Eleanora",parasite.mp3,,,
-6,Lately (Adam Ten & Mita Gami Remix),"RUFUS",lately.mp3,,,
-7,Come Alive,"Grum, Sarah Appel",comealive.mp3,,,
-8,Subterranean,"Miss Monique, AVIRA",subterranean.mp3,,,
-9,Thalassophobia (Dark Mix),"J Ribbon",thalassophobia.mp3,,,
-10,Illusion,"Yotto",illusion.mp3,,,
-11,Brainwasher,"Nox Vahn",brainwasher.mp3,,,
-12,Warrior,"Marsh",warrior.mp3,,,
-13,Walk the Plank,"Lane 8",walktheplank.mp3,,,
-14,Power Drive,"Pryda",powerdrive.mp3,,,
-15,Water,"Bicep, Clara La San",water.mp3,,,
-16,Hold That Sucker Down (HEL:SLOWED Remix),"Jerome Isma-Ae",holdthatsuckerdown.mp3,,,
-17,Flame,"ARTBAT",flame.mp3,,,
-18,Ashes,"Camden Cox",ashes.mp3,,,
-19,At Night,"Maur, Dave Spoon",atnight.mp3,,,
-20,Yes Man,"Ferry Corsten",yesman.mp3,,,
-21,FILTHY ACID,"Paul Van Dyk",filthyacid.mp3,,,
-22,Access (John Askew Remix),"DJ Misjah, DJ Tim",access.mp3,,,
-23,Out of the Sky (Chris Schweizer Remix),"Audrey Gallagher, John O'Callaghan",outofthesky.mp3,,,
-24,Apex (John Askew Remix),"Simon Patterson",apex.mp3,,,
-25,Opulence,"Simon Patterson",opulence.mp3,,,
+track_number,title,artists,mp3_name,key,bpm,onset-time,genre,key shift
+1,Filmic,Above & Beyond,filmic.mp3,5A,129.87,0.55,chillout,0
+2,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",tearsfromthemoon.mp3,9A,125,0.0,progressive house,0
+3,Break the Silence,"aname, Bri Zoli",breakthesilence.mp3,6A,124,0.0,progressive house,0
+4,Love You Got,Kelly Lee Owens,loveyougot.mp3,4A,124,0.26,progressive house,0
+5,Parasite,"ANUQRAM, Eleanora",parasite.mp3,5A,124,0.0,progressive house,0
+6,Lately (Adam Ten & Mita Gami Remix),RUFUS DU SOL,lately.mp3,12A,126,0.45,progressive house,-1
+7,Come Alive,"Grum, Sarah Appel",comealive.mp3,1A,124,0.34,progressive house,-1
+8,Subterranean,"Miss Monique, AVIRA",subterranean.mp3,1A,123,0.0,melodic techno,0
+9,Thalassophobia (Dark Mix),J Ribbon,thalassophobia.mp3,12A,127,0.08,melodic techno,0
+10,Illusion,Yotto,illusion.mp3,9A,124,0.17,techno,0
+11,Brainwasher,Nox Vahn,brainwasher.mp3,8A,120,2.18,techno,0
+12,Warrior,Marsh,warrior.mp3,8A,126,0.11,progressive house,0
+13,Walk the Plank,Lane 8,walktheplank.mp3,8A,124,0.1,progressive house,0
+14,Power Drive,Pryda,powerdrive.mp3,8A,126,0.16,melodic techno,0
+15,Water,"Bicep, Clara La San",water.mp3,9A,130,0.51,melodic techno,0
+16,Hold That Sucker Down (HEL:SLOWED Remix),Jerome Isma-Ae,holdthatsuckerdown.mp3,10A,125,0.07,melodic techno,0
+17,Flame,ARTBAT,flame.mp3,8A,127,0.0,melodic techno,0
+18,Ashes,Camden Cox,ashes.mp3,8A,130,0.84,melodic techno,0
+19,At Night,"Maur, Dave Spoon",atnight.mp3,9A,130,0.07,tech house,0
+20,Yes Man,Ferry Corsten,yesman.mp3,9A,134,0.05,trance,0
+21,FILTHY ACID,Paul Van Dyk,filthyacid.mp3,8A,132,0.05,techno,0
+22,Access (John Askew Remix),"DJ Misjah, DJ Tim",access.mp3,8A,140,0.08,tech trance,0
+23,Out of the Sky (Chris Schweizer Remix),"Audrey Gallagher, John O'Callaghan",outofthesky.mp3,5A,138,0.1,tech trance,-1
+24,Apex (John Askew Remix),Simon Patterson,apex.mp3,10A,138,0.1,psytrance,0
+25,Opulence,Simon Patterson,opulence.mp3,11A,140,0.06,psytrance,0

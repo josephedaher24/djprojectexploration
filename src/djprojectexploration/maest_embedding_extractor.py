@@ -21,9 +21,18 @@ except ImportError as exc:
     ) from exc
 
 
-DEFAULT_MODEL_FILENAME = "discogs-maest-30s-pw-2.pb"
+DEFAULT_MODEL_FILENAME = "discogs-maest-30s-pw-519l-2.pb"
 DEFAULT_OUTPUT_NODE = "PartitionedCall/Identity_7"
 DEFAULT_OUTPUT_FILENAME = "maest_embedding_discogs-maest-30s-pw.json"
+
+
+def _to_project_relpath(path: Path, project_root: Path) -> str:
+    """Return path relative to project_root when possible, else absolute."""
+    resolved = path.expanduser().resolve()
+    try:
+        return str(resolved.relative_to(project_root))
+    except ValueError:
+        return str(resolved)
 
 
 def _first_mp3(music_dir: Path) -> Path | None:
@@ -101,6 +110,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    project_root = Path(__file__).resolve().parents[2]
 
     if args.audio_file is None:
         audio_file = _first_mp3(args.music_dir)
@@ -109,24 +119,29 @@ def main() -> None:
     else:
         audio_file = args.audio_file
 
+    audio_file = audio_file.expanduser().resolve()
+    model_file = args.model_file.expanduser().resolve()
+    output_file = args.output_file.expanduser()
+
     if not audio_file.exists():
         raise SystemExit(f"Audio file not found: {audio_file}")
 
-    if not args.model_file.exists():
+    if not model_file.exists():
         raise SystemExit(
-            f"MAEST model file not found: {args.model_file}\n"
+            f"MAEST model file not found: {model_file}\n"
             "Download a model from https://essentia.upf.edu/models.html#MAEST "
             "and pass it via --model-file."
         )
 
-    embedding, raw_shape, reduction = extract_embedding(audio_file, args.model_file, args.output_node)
+    embedding, raw_shape, reduction = extract_embedding(audio_file, model_file, args.output_node)
 
     payload = {
         "title": "MAEST Embedding (Essentia)",
         "filename": audio_file.name,
+        "audio_file": _to_project_relpath(audio_file, project_root),
         "embedding_type": "maest",
-        "model_name": args.model_file.stem,
-        "model_file": str(args.model_file),
+        "model_name": model_file.stem,
+        "model_file": _to_project_relpath(model_file, project_root),
         "output_node": args.output_node,
         "reduction": reduction,
         "raw_prediction_shape": list(raw_shape),
@@ -134,14 +149,14 @@ def main() -> None:
         "embedding": embedding.tolist(),
     }
 
-    args.output_file.parent.mkdir(parents=True, exist_ok=True)
-    with args.output_file.open("w", encoding="utf-8") as f:
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with output_file.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=4)
 
-    print(f"Audio file: {audio_file}")
-    print(f"Model file: {args.model_file}")
+    print(f"Audio file: {_to_project_relpath(audio_file, project_root)}")
+    print(f"Model file: {_to_project_relpath(model_file, project_root)}")
     print(f"Embedding dimension: {payload['embedding_dimension']}")
-    print(f"Saved MAEST embedding JSON: {args.output_file}")
+    print(f"Saved MAEST embedding JSON: {_to_project_relpath(output_file.resolve(), project_root)}")
 
 
 if __name__ == "__main__":

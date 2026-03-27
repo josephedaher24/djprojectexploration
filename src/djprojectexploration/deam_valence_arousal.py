@@ -23,6 +23,16 @@ DEFAULT_MUSICNN_OUTPUT = "model/dense/BiasAdd"
 DEFAULT_VGGISH_OUTPUT = "model/vggish/embeddings"
 DEFAULT_DEAM_OUTPUT = "model/Identity"
 DEAM_VALUE_RANGE = (1.0, 9.0)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _to_project_relpath(path: Path, project_root: Path = PROJECT_ROOT) -> str:
+    """Return project-relative path when possible, else absolute path."""
+    resolved = path.expanduser().resolve()
+    try:
+        return str(resolved.relative_to(project_root))
+    except ValueError:
+        return str(resolved)
 
 
 def _validate_model_file(model_file: str | Path, name: str) -> Path:
@@ -169,8 +179,8 @@ def predict_deam_valence_arousal_batch_musicnn(
 
 
 def save_deam_prediction_json(prediction: dict[str, Any], output_file: str | Path) -> Path:
-    """Save one prediction payload to JSON and return the resolved output path."""
-    output_path = Path(output_file).expanduser().resolve()
+    """Save one prediction payload to JSON and return the output path."""
+    output_path = Path(output_file).expanduser()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(prediction, f, indent=4)
@@ -202,14 +212,14 @@ def _build_prediction_payload(
     return {
         "title": title,
         "filename": audio_path.name,
-        "audio_file": str(audio_path),
+        "audio_file": _to_project_relpath(audio_path),
         "task": "deam_valence_arousal_regression",
         "dimensions": ["valence", "arousal"],
         "value_range": [DEAM_VALUE_RANGE[0], DEAM_VALUE_RANGE[1]],
         "models": {
-            "embedding_model_file": str(embedding_path),
+            "embedding_model_file": _to_project_relpath(embedding_path),
             "embedding_output": embedding_output,
-            "regression_model_file": str(regression_path),
+            "regression_model_file": _to_project_relpath(regression_path),
             "regression_output": regression_output,
         },
         "embedding_shape": list(embeddings.shape),

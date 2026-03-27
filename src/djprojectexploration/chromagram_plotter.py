@@ -61,6 +61,44 @@ def compute_chromagram(audio: np.ndarray, sample_rate: int, frame_size: int, hop
     return np.vstack(frames).T
 
 
+def compute_spectrogram_db(
+    audio: np.ndarray,
+    sample_rate: int,
+    frame_size: int,
+    hop_size: int,
+    min_frequency: float = 20.0,
+    top_db: float = 80.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute magnitude spectrogram in dB and corresponding frequency bins."""
+    windowing = Windowing(type="hann")
+    spectrum = Spectrum(size=frame_size)
+
+    spec_frames: list[np.ndarray] = []
+    for frame in FrameGenerator(audio, frameSize=frame_size, hopSize=hop_size, startFromZero=True):
+        spec = np.asarray(spectrum(windowing(frame)), dtype=np.float32)
+        spec_frames.append(spec)
+
+    if not spec_frames:
+        raise ValueError("No frames were generated from the input audio.")
+
+    # Shape: [freq_bins, time_frames]
+    spectrogram = np.vstack(spec_frames).T
+    freqs = np.linspace(0.0, sample_rate / 2.0, spectrogram.shape[0], dtype=np.float32)
+
+    valid = freqs >= float(min_frequency)
+    if not np.any(valid):
+        raise ValueError("No spectrogram bins available above min_frequency.")
+
+    spectrogram = spectrogram[valid, :]
+    freqs = freqs[valid]
+
+    eps = np.finfo(np.float32).eps
+    spectrogram_db = 20.0 * np.log10(np.maximum(spectrogram, eps))
+    max_db = float(np.max(spectrogram_db))
+    spectrogram_db = np.clip(spectrogram_db, max_db - float(top_db), max_db).astype(np.float32)
+    return spectrogram_db, freqs
+
+
 def estimate_key(audio: np.ndarray, sample_rate: int, frame_size: int, hop_size: int) -> tuple[str, str, float]:
     """Estimate key/scale/strength using Essentia-style HPCP+Key configuration."""
     windowing = Windowing(type="blackmanharris62")
@@ -74,11 +112,13 @@ def estimate_key(audio: np.ndarray, sample_rate: int, frame_size: int, hop_size:
     )
     hpcp_key = HPCP(
         size=36,
+        harmonics=6,
         referenceFrequency=440,
         sampleRate=sample_rate,
         bandPreset=False,
-        minFrequency=20,
+        minFrequency=60,
         maxFrequency=3500,
+        normalized="none",
         weightType="cosine",
         nonLinear=False,
         windowSize=1.0,
@@ -297,6 +337,9 @@ def plot_chromagram(
     hop_size: int,
     beat_times: np.ndarray,
     show_beat_pooled: bool,
+    show_log_spectrogram: bool,
+    spectrogram_db: np.ndarray | None,
+    spectrogram_freqs: np.ndarray | None,
     waveform_samples_per_second: int,
     title: str,
     key_label: str | None,
@@ -309,6 +352,14 @@ def plot_chromagram(
     chroma_duration = (num_frames * hop_size) / sample_rate
     x_max = max(audio_duration, chroma_duration)
 
+    if show_log_spectrogram:
+        if spectrogram_db is None or spectrogram_freqs is None:
+            raise ValueError("show_log_spectrogram requires spectrogram_db and spectrogram_freqs.")
+        spec_duration = (spectrogram_db.shape[1] * hop_size) / sample_rate
+        x_max = max(x_max, spec_duration)
+    else:
+        spec_duration = 0.0
+
     beat_pooled_data = None
     if show_beat_pooled:
         beat_pooled_data = pool_chromagram_by_beats(
@@ -320,25 +371,95 @@ def plot_chromagram(
         )
 
     has_beat_pooled_panel = beat_pooled_data is not None
+    panel_names: list[str] = []
+    if show_log_spectrogram:
+        panel_names.append("spectrogram")
+    panel_names.append("chroma")
     if has_beat_pooled_panel:
-        fig, (chroma_ax, pooled_ax, waveform_ax) = plt.subplots(
-            3,
-            1,
-            figsize=(14, 9.2),
-            sharex=True,
-            gridspec_kw={"height_ratios": [2.2, 2.2, 1.3], "hspace": 0.08},
-        )
-        colorbar_axes = [chroma_ax, pooled_ax, waveform_ax]
+        panel_names.append("pooled")
+    panel_names.append("waveform")
+
+    height_ratio_map = {
+        "spectrogram": 2.2,
+        "chroma": 2.2,
+        "pooled": 2.0,
+        "waveform": 1.3,
+    }
+    height_ratios = [height_ratio_map[name] for name in panel_names]
+    fig_height = max(6.5, 2.2 * len(panel_names) + 2.0)
+    fig = plt.figure(figsize=(15.5, fig_height))
+    grid = fig.add_gridspec(
+        len(panel_names),
+        2,
+        width_ratios=[1.0, 14.0],
+        height_ratios=height_ratios,
+        hspace=0.08,
+        wspace=0.08,
+    )
+    mean_ax = fig.add_subplot(grid[:, 0])
+
+    right_axes: list[plt.Axes] = []
+    for i in range(len(panel_names)):
+        if i == 0:
+            right_axes.append(fig.add_subplot(grid[i, 1]))
+        else:
+            right_axes.append(fig.add_subplot(grid[i, 1], sharex=right_axes[0]))
+
+    axis_map = {name: axis for name, axis in zip(panel_names, right_axes)}
+
+    spectrogram_ax = axis_map.get("spectrogram")
+    chroma_ax = axis_map["chroma"]
+    pooled_ax = axis_map.get("pooled")
+    waveform_ax = axis_map["waveform"]
+
+    mean_vector = chromagram.mean(axis=1, keepdims=True)
+    mean_ax.imshow(
+        mean_vector,
+        aspect="auto",
+        origin="lower",
+        cmap="magma",
+        interpolation="nearest",
+        extent=[0, 1, 0, num_bins],
+        vmin=float(np.min(chromagram)),
+        vmax=float(np.max(chromagram)),
+    )
+    mean_ax.set_title("Mean\nChroma", fontsize=9)
+    mean_ax.set_xticks([])
+    mean_ax.set_ylabel("Pitch Class")
+    if num_bins % 12 == 0:
+        bins_per_pitch_class = num_bins // 12
+        tick_positions = [i * bins_per_pitch_class + (bins_per_pitch_class / 2) for i in range(12)]
+        mean_ax.set_yticks(tick_positions)
+        mean_ax.set_yticklabels(PITCH_CLASS_LABELS, fontsize=8)
     else:
-        fig, (chroma_ax, waveform_ax) = plt.subplots(
-            2,
-            1,
-            figsize=(14, 8),
-            sharex=True,
-            gridspec_kw={"height_ratios": [3.4, 1.3], "hspace": 0.08},
+        mean_ax.set_yticks(np.arange(0, num_bins, max(1, num_bins // 12)))
+        mean_ax.tick_params(axis="y", labelsize=8)
+
+    if show_log_spectrogram and spectrogram_ax is not None and spectrogram_db is not None and spectrogram_freqs is not None:
+        time_edges = np.linspace(0.0, spec_duration, spectrogram_db.shape[1] + 1, dtype=np.float32)
+        if spectrogram_freqs.size == 1:
+            center = float(spectrogram_freqs[0])
+            freq_edges = np.array([max(1e-3, center * 0.5), center * 1.5], dtype=np.float32)
+        else:
+            freq_edges = np.empty(spectrogram_freqs.size + 1, dtype=np.float32)
+            freq_edges[1:-1] = (spectrogram_freqs[:-1] + spectrogram_freqs[1:]) * 0.5
+            first_step = float(spectrogram_freqs[1] - spectrogram_freqs[0])
+            last_step = float(spectrogram_freqs[-1] - spectrogram_freqs[-2])
+            freq_edges[0] = max(1e-3, float(spectrogram_freqs[0]) - first_step * 0.5)
+            freq_edges[-1] = float(spectrogram_freqs[-1]) + last_step * 0.5
+
+        spec_image = spectrogram_ax.pcolormesh(
+            time_edges,
+            freq_edges,
+            spectrogram_db,
+            shading="auto",
+            cmap="viridis",
         )
-        pooled_ax = None
-        colorbar_axes = [chroma_ax, waveform_ax]
+        spectrogram_ax.set_yscale("log", base=2)
+        spectrogram_ax.set_ylabel("Freq (Hz)")
+        spectrogram_ax.set_title("Log-Frequency Spectrogram")
+        spectrogram_ax.tick_params(axis="x", labelbottom=False)
+        fig.colorbar(spec_image, ax=spectrogram_ax, label="Magnitude (dB)", pad=0.02)
 
     image = chroma_ax.imshow(
         chromagram,
@@ -348,7 +469,8 @@ def plot_chromagram(
         interpolation="nearest",
         extent=[0, chroma_duration, 0, num_bins],
     )
-    fig.colorbar(image, ax=colorbar_axes, label="Chroma Energy", pad=0.02)
+    chroma_colorbar_axes = [chroma_ax] if pooled_ax is None else [chroma_ax, pooled_ax]
+    fig.colorbar(image, ax=chroma_colorbar_axes, label="Chroma Energy", pad=0.02)
     chroma_ax.set_ylabel("Pitch Class")
     if key_label is None:
         chroma_ax.set_title(title)
@@ -430,7 +552,7 @@ def plot_chromagram(
         beat_axis.set_xticklabels(tick_labels)
 
     if interactive:
-        controlled_axes = [chroma_ax, waveform_ax] if pooled_ax is None else [chroma_ax, pooled_ax, waveform_ax]
+        controlled_axes = [axis_map[name] for name in panel_names]
         attach_zoom_controls(
             fig=fig,
             primary_axis=chroma_ax,
@@ -499,6 +621,23 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Show an additional beat-pooled chromagram panel.",
     )
+    parser.add_argument(
+        "--show-log-spectrogram",
+        action="store_true",
+        help="Show a full-band spectrogram panel with a log-frequency axis for harmonic comparison.",
+    )
+    parser.add_argument(
+        "--spectrogram-min-frequency",
+        type=float,
+        default=20.0,
+        help="Minimum frequency (Hz) shown in the log spectrogram panel.",
+    )
+    parser.add_argument(
+        "--spectrogram-top-db",
+        type=float,
+        default=80.0,
+        help="Dynamic range in dB retained in the spectrogram panel.",
+    )
     return parser.parse_args()
 
 
@@ -517,6 +656,10 @@ def main() -> None:
         raise SystemExit("--onset-time-ms requires --bpm.")
     if args.waveform_samples_per_second <= 0:
         raise SystemExit("--waveform-samples-per-second must be a positive integer.")
+    if args.spectrogram_min_frequency <= 0:
+        raise SystemExit("--spectrogram-min-frequency must be > 0.")
+    if args.spectrogram_top_db <= 0:
+        raise SystemExit("--spectrogram-top-db must be > 0.")
     if args.interactive and not args.show:
         args.show = True
 
@@ -534,6 +677,17 @@ def main() -> None:
         hop_size=args.hop_size,
         chroma_bins=args.chroma_bins,
     )
+    spectrogram_db = None
+    spectrogram_freqs = None
+    if args.show_log_spectrogram:
+        spectrogram_db, spectrogram_freqs = compute_spectrogram_db(
+            audio=audio,
+            sample_rate=args.sample_rate,
+            frame_size=args.frame_size,
+            hop_size=args.hop_size,
+            min_frequency=args.spectrogram_min_frequency,
+            top_db=args.spectrogram_top_db,
+        )
     if args.bpm is not None:
         audio_duration = audio.size / args.sample_rate
         if args.onset_time_ms is not None:
@@ -566,6 +720,9 @@ def main() -> None:
         hop_size=args.hop_size,
         beat_times=beat_times,
         show_beat_pooled=args.show_beat_pooled,
+        show_log_spectrogram=args.show_log_spectrogram,
+        spectrogram_db=spectrogram_db,
+        spectrogram_freqs=spectrogram_freqs,
         waveform_samples_per_second=args.waveform_samples_per_second,
         title=f"Chromagram: {audio_file.name}",
         key_label=f"{detected_key} {detected_scale} ({key_strength:.2f})",
@@ -582,6 +739,8 @@ def main() -> None:
         print(f"Phase anchor (first onset): {onset_anchor:.3f} s")
     print(f"Detected beats: {beat_times.size}")
     print(f"Chromagram shape: {chromagram.shape} [bins x frames]")
+    if spectrogram_db is not None:
+        print(f"Spectrogram shape: {spectrogram_db.shape} [freq_bins x frames]")
     print(f"Saved chromagram plot: {output_file}")
 
 

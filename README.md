@@ -32,7 +32,7 @@ uv run python -m djprojectexploration
 
 ```bash
 uv run djprojectexploration-maest \
-  --model-file models/discogs-maest-30s-pw-2.pb \
+  --model-file models/discogs-maest-30s-pw-519l-2.pb \
   --output-file music/maest_embedding_discogs-maest-30s-pw.json
 ```
 

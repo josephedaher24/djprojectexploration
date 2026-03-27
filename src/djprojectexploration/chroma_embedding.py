@@ -10,6 +10,7 @@ import numpy as np
 from essentia.standard import (
     FrameGenerator,
     HPCP,
+    Key,
     MonoLoader,
     OnsetRate,
     RhythmExtractor2013,
@@ -17,6 +18,28 @@ from essentia.standard import (
     Spectrum,
     Windowing,
 )
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PITCH_CLASS_LABELS = ["A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#"]
+ENHARMONIC_KEY_MAP = {
+    "AB": "G#",
+    "BB": "A#",
+    "CB": "B",
+    "DB": "C#",
+    "EB": "D#",
+    "FB": "E",
+    "GB": "F#",
+}
+
+
+def _to_project_relpath(path: Path, project_root: Path = PROJECT_ROOT) -> str:
+    """Return project-relative path when possible, else absolute path."""
+    resolved = path.expanduser().resolve()
+    try:
+        return str(resolved.relative_to(project_root))
+    except ValueError:
+        return str(resolved)
 
 
 def compute_frame_chroma(
@@ -41,9 +64,10 @@ def compute_frame_chroma(
         size=chroma_bins,
         sampleRate=sample_rate,
         referenceFrequency=440,
-        minFrequency=40,
-        maxFrequency=5000,
-        harmonics=8,
+        minFrequency=60,
+        maxFrequency=2000,
+        normalized="unitSum",
+        harmonics=4,
         nonLinear=False,
         weightType="cosine",
     )
@@ -68,6 +92,85 @@ def compute_frame_chroma(
 def detect_beats(audio: np.ndarray) -> tuple[float, np.ndarray]:
     bpm, beat_times, *_ = RhythmExtractor2013(method="multifeature")(audio)
     return float(bpm), np.asarray(beat_times, dtype=np.float32)
+
+
+def estimate_key(audio: np.ndarray, sample_rate: int, frame_size: int, hop_size: int) -> tuple[str, str, float]:
+    """Estimate key/scale/strength using the same Essentia setup as the plotter."""
+    windowing = Windowing(type="blackmanharris62")
+    spectrum = Spectrum(size=frame_size)
+    spectral_peaks = SpectralPeaks(
+        orderBy="magnitude",
+        magnitudeThreshold=1e-5,
+        minFrequency=20,
+        maxFrequency=3500,
+        maxPeaks=60,
+    )
+    hpcp_key = HPCP(
+        size=36,
+        referenceFrequency=440,
+        sampleRate=sample_rate,
+        bandPreset=False,
+        minFrequency=20,
+        maxFrequency=3500,
+        weightType="cosine",
+        nonLinear=False,
+        windowSize=1.0,
+    )
+    key_detector = Key(
+        profileType="edma",
+        numHarmonics=4,
+        pcpSize=36,
+        slope=0.6,
+        usePolyphony=True,
+        useThreeChords=True,
+    )
+
+    hpcp_frames: list[np.ndarray] = []
+    for frame in FrameGenerator(audio, frameSize=frame_size, hopSize=hop_size, startFromZero=True):
+        spec = spectrum(windowing(frame))
+        freqs, mags = spectral_peaks(spec)
+        if len(freqs) == 0:
+            continue
+        hpcp_frames.append(np.asarray(hpcp_key(freqs, mags), dtype=np.float32))
+
+    if not hpcp_frames:
+        return "N", "unknown", 0.0
+
+    mean_hpcp = np.vstack(hpcp_frames).mean(axis=0).astype(np.float32)
+    key, scale, strength, _relative_strength = key_detector(mean_hpcp)
+    return str(key), str(scale), float(strength)
+
+
+def _normalize_key_label(key_label: str) -> str:
+    normalized = key_label.strip().upper()
+    normalized = ENHARMONIC_KEY_MAP.get(normalized, normalized)
+    return normalized
+
+
+def key_to_feature_vector(key_label: str, scale: str, strength: float) -> np.ndarray:
+    """Encode key estimate as numeric features appended to the chroma embedding.
+
+    Output dims: 12 (tonic one-hot) + 1 (mode) + 1 (strength) = 14.
+    mode: 1.0=major, -1.0=minor, 0.0=unknown.
+    """
+    tonic_features = np.zeros(len(PITCH_CLASS_LABELS), dtype=np.float32)
+    normalized_key = _normalize_key_label(key_label)
+    if normalized_key in PITCH_CLASS_LABELS:
+        tonic_features[PITCH_CLASS_LABELS.index(normalized_key)] = 1.0
+
+    scale_norm = scale.strip().lower()
+    if scale_norm == "major":
+        mode_value = 1.0
+    elif scale_norm == "minor":
+        mode_value = -1.0
+    else:
+        mode_value = 0.0
+
+    strength_value = float(np.clip(strength, 0.0, 1.0))
+    return np.concatenate(
+        [tonic_features, np.array([mode_value, strength_value], dtype=np.float32)],
+        axis=0,
+    ).astype(np.float32)
 
 
 def detect_first_onset(audio: np.ndarray) -> float | None:
@@ -135,9 +238,10 @@ def generate_chroma_embedding(
     chroma_bins: int = 12,
     bpm: float | None = None,
     onset_time_ms: float | None = None,
+    include_key_features: bool = True,
 ) -> dict[str, Any]:
     """Generate a chroma embedding with optional manual beat-grid controls."""
-    audio_path = Path(audio_file).resolve()
+    audio_path = Path(audio_file).expanduser().resolve()
     if not audio_path.exists():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
     if chroma_bins <= 0:
@@ -180,16 +284,47 @@ def generate_chroma_embedding(
         beat_times=beat_times,
         audio_duration=audio_duration,
     )
-    embedding = summarize_chroma_embedding(beat_chroma)
+    base_embedding = summarize_chroma_embedding(beat_chroma)
+    detected_key, detected_scale, key_strength = estimate_key(
+        audio=audio,
+        sample_rate=sample_rate,
+        frame_size=frame_size,
+        hop_size=hop_size,
+    )
+
+    if include_key_features:
+        key_features = key_to_feature_vector(
+            key_label=detected_key,
+            scale=detected_scale,
+            strength=key_strength,
+        )
+        embedding = np.concatenate([base_embedding, key_features]).astype(np.float32)
+        norm = float(np.linalg.norm(embedding))
+        if norm > 0:
+            embedding /= norm
+        embedding_type = "chroma_mean_std_plus_key"
+        title = "Beat-Synchronous Chroma Embedding (Mean+Std + Key)"
+    else:
+        key_features = np.zeros(0, dtype=np.float32)
+        embedding = base_embedding
+        embedding_type = "chroma_mean_std"
+        title = "Beat-Synchronous Chroma Embedding (Mean+Std)"
 
     return {
-        "title": "Beat-Synchronous Chroma Embedding (Mean+Std)",
+        "title": title,
         "filename": audio_path.name,
-        "audio_file": str(audio_path),
-        "embedding_type": "chroma_mean_std",
+        "audio_file": _to_project_relpath(audio_path),
+        "embedding_type": embedding_type,
         "chroma_bins": int(chroma_bins),
+        "base_embedding_dimension": int(base_embedding.shape[0]),
+        "key_feature_dimension": int(key_features.shape[0]),
         "embedding_dimension": int(embedding.shape[0]),
         "embedding": embedding.tolist(),
+        "key_estimate": {
+            "key": detected_key,
+            "scale": detected_scale,
+            "strength": float(key_strength),
+        },
         "beat_pooling": {
             "bpm": float(used_bpm),
             "beat_count": int(beat_times.size),
@@ -202,6 +337,7 @@ def generate_chroma_embedding(
             "hop_size": int(hop_size),
             "manual_bpm": None if bpm is None else float(bpm),
             "manual_onset_time_ms": None if onset_time_ms is None else float(onset_time_ms),
+            "include_key_features": bool(include_key_features),
         },
     }
 
@@ -222,4 +358,3 @@ def test_losingit_embedding() -> dict[str, Any]:
     print(f"Embedding dimension: {result['embedding_dimension']}")
     print(f"Saved test embedding: {output_file}")
     return result
-
