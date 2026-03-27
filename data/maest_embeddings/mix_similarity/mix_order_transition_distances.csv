@@ -1,0 +1,25 @@
+from_track_number,from_title,from_mp3,to_track_number,to_title,to_mp3,cosine_similarity,cosine_distance,euclidean_distance
+1,Filmic,filmic.mp3,2,Tears from the Moon (aname Mix),tearsfromthemoon.mp3,0.9122099280357361,0.08779007196426392,19.0570068359375
+2,Tears from the Moon (aname Mix),tearsfromthemoon.mp3,3,Break the Silence,breakthesilence.mp3,0.9599095582962036,0.04009044170379639,12.502123832702637
+3,Break the Silence,breakthesilence.mp3,4,Love You Got,loveyougot.mp3,0.9369890689849854,0.06301093101501465,15.504376411437988
+4,Love You Got,loveyougot.mp3,5,Parasite,parasite.mp3,0.9520810842514038,0.04791891574859619,13.389959335327148
+5,Parasite,parasite.mp3,6,Lately (Adam Ten & Mita Gami Remix),lately.mp3,0.9530748128890991,0.04692518711090088,13.465045928955078
+6,Lately (Adam Ten & Mita Gami Remix),lately.mp3,7,Come Alive,comealive.mp3,0.9472838640213013,0.05271613597869873,14.307449340820312
+7,Come Alive,comealive.mp3,8,Subterranean,subterranean.mp3,0.964449405670166,0.035550594329833984,12.013625144958496
+8,Subterranean,subterranean.mp3,9,Thalassophobia (Dark Mix),thalassophobia.mp3,0.9695765972137451,0.030423402786254883,11.181652069091797
+9,Thalassophobia (Dark Mix),thalassophobia.mp3,10,Illusion,illusion.mp3,0.9410524368286133,0.05894756317138672,15.445805549621582
+10,Illusion,illusion.mp3,11,Brainwasher,brainwasher.mp3,0.939117431640625,0.060882568359375,15.770562171936035
+11,Brainwasher,brainwasher.mp3,12,Warrior,warrior.mp3,0.9380728006362915,0.061927199363708496,16.136703491210938
+12,Warrior,warrior.mp3,13,Walk the Plank,walktheplank.mp3,0.9630462527275085,0.036953747272491455,12.432318687438965
+13,Walk the Plank,walktheplank.mp3,14,Power Drive,powerdrive.mp3,0.9527879357337952,0.047212064266204834,13.719914436340332
+14,Power Drive,powerdrive.mp3,15,Water,water.mp3,0.9360599517822266,0.06394004821777344,15.704633712768555
+15,Water,water.mp3,16,Hold That Sucker Down (HEL:SLOWED Remix),holdthatsuckerdown.mp3,0.9354913234710693,0.06450867652893066,15.803421974182129
+16,Hold That Sucker Down (HEL:SLOWED Remix),holdthatsuckerdown.mp3,17,Flame,flame.mp3,0.9631597995758057,0.036840200424194336,12.179970741271973
+17,Flame,flame.mp3,18,Ashes,ashes.mp3,0.9337505102157593,0.06624948978424072,16.771373748779297
+18,Ashes,ashes.mp3,19,At Night,atnight.mp3,0.912935197353363,0.08706480264663696,19.051250457763672
+19,At Night,atnight.mp3,20,Yes Man,yesman.mp3,0.9287925958633423,0.07120740413665771,16.48295783996582
+20,Yes Man,yesman.mp3,21,FILTHY ACID,filthyacid.mp3,0.9225107431411743,0.07748925685882568,17.996328353881836
+21,FILTHY ACID,filthyacid.mp3,22,Access (John Askew Remix),access.mp3,0.9436036944389343,0.056396305561065674,15.555490493774414
+22,Access (John Askew Remix),access.mp3,23,Out of the Sky (Chris Schweizer Remix),outofthesky.mp3,0.9450147747993469,0.054985225200653076,15.347932815551758
+23,Out of the Sky (Chris Schweizer Remix),outofthesky.mp3,24,Apex (John Askew Remix),apex.mp3,0.9607769250869751,0.0392230749130249,13.051907539367676
+24,Apex (John Askew Remix),apex.mp3,25,Opulence,opulence.mp3,0.9765527844429016,0.02344721555709839,10.05147933959961

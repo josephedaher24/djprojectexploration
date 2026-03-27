@@ -10,3 +10,6 @@ __pycache__/
 .mypy_cache/
 build/
 dist/
+models/*
+data/deam_valence_arousal/*.json
+data/maest_embeddings/*.json

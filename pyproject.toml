@@ -6,8 +6,10 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "essentia>=2.1b6.dev1389",
+    "essentia-tensorflow>=2.1b6.dev1389",
     "matplotlib>=3.10.8",
     "numpy>=2.4.3",
+    "pacmap",
     "scipy>=1.17.1",
     "soundfile>=0.13.1",
     "tensorflow>=2.15.0",
@@ -15,6 +17,8 @@ dependencies = [
 
 [project.scripts]
 djprojectexploration = "djprojectexploration.essentia_feature_extractor:main"
+djprojectexploration-maest = "djprojectexploration.maest_embedding_extractor:main"
+djprojectexploration-chromagram = "djprojectexploration.chromagram_plotter:main"
 
 [build-system]
 requires = ["hatchling"]
