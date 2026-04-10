@@ -68,10 +68,22 @@ def fifth_aware_similarity(
     x: np.ndarray | list[float] | tuple[float, ...],
     y: np.ndarray | list[float] | tuple[float, ...],
     kernel: np.ndarray | None = None,
+    unit_sum_normalize: bool = True,
 ) -> float:
-    """Fifth-aware compatibility score x^T K y after unit-sum normalization."""
-    xn = normalize_unit_sum(x)
-    yn = normalize_unit_sum(y)
+    """Fifth-aware compatibility score ``x^T K y``.
+
+    By default vectors are unit-sum normalized first (legacy behavior). For
+    centered pitch-class vectors, pass ``unit_sum_normalize=False`` to score the
+    vectors directly.
+    """
+    x_arr = _as_length_12(x).astype(np.float32)
+    y_arr = _as_length_12(y).astype(np.float32)
+    if unit_sum_normalize:
+        xn = normalize_unit_sum(x_arr)
+        yn = normalize_unit_sum(y_arr)
+    else:
+        xn = x_arr
+        yn = y_arr
 
     if kernel is None:
         K = build_fifth_kernel()
@@ -86,8 +98,13 @@ def fifth_aware_similarity(
 def pairwise_fifth_aware_similarity_matrix(
     vectors: np.ndarray,
     kernel: np.ndarray | None = None,
+    unit_sum_normalize: bool = True,
 ) -> np.ndarray:
-    """Compute pairwise fifth-aware similarity for N x 12 pitch-class vectors."""
+    """Compute pairwise fifth-aware similarity for N x 12 pitch-class vectors.
+
+    By default rows are unit-sum normalized first (legacy behavior). For
+    centered vectors, set ``unit_sum_normalize=False``.
+    """
     arr = np.asarray(vectors, dtype=np.float32)
     if arr.ndim != 2 or arr.shape[1] != 12:
         raise ValueError(f"Expected shape (N, 12), got {arr.shape}.")
@@ -99,10 +116,12 @@ def pairwise_fifth_aware_similarity_matrix(
         if K.shape != (12, 12):
             raise ValueError(f"Expected kernel shape (12, 12), got {K.shape}.")
 
-    row_sums = arr.sum(axis=1, keepdims=True)
-    row_sums = np.where(row_sums == 0.0, 1.0, row_sums)
-    arr_n = arr / row_sums
+    if unit_sum_normalize:
+        row_sums = arr.sum(axis=1, keepdims=True)
+        row_sums = np.where(row_sums == 0.0, 1.0, row_sums)
+        arr_use = arr / row_sums
+    else:
+        arr_use = arr
 
     # S = X K X^T
-    return (arr_n @ K @ arr_n.T).astype(np.float32)
-
+    return (arr_use @ K @ arr_use.T).astype(np.float32)

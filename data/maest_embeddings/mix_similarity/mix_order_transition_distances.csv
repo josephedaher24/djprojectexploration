@@ -1,25 +1,23 @@
 from_track_number,from_title,from_mp3,to_track_number,to_title,to_mp3,cosine_similarity,cosine_distance,euclidean_distance
-1,Filmic,filmic.mp3,2,Tears from the Moon (aname Mix),tearsfromthemoon.mp3,0.9122099280357361,0.08779007196426392,19.0570068359375
-2,Tears from the Moon (aname Mix),tearsfromthemoon.mp3,3,Break the Silence,breakthesilence.mp3,0.9599095582962036,0.04009044170379639,12.502123832702637
-3,Break the Silence,breakthesilence.mp3,4,Love You Got,loveyougot.mp3,0.9369890689849854,0.06301093101501465,15.504376411437988
-4,Love You Got,loveyougot.mp3,5,Parasite,parasite.mp3,0.9520810842514038,0.04791891574859619,13.389959335327148
-5,Parasite,parasite.mp3,6,Lately (Adam Ten & Mita Gami Remix),lately.mp3,0.9530748128890991,0.04692518711090088,13.465045928955078
-6,Lately (Adam Ten & Mita Gami Remix),lately.mp3,7,Come Alive,comealive.mp3,0.9472838640213013,0.05271613597869873,14.307449340820312
-7,Come Alive,comealive.mp3,8,Subterranean,subterranean.mp3,0.964449405670166,0.035550594329833984,12.013625144958496
-8,Subterranean,subterranean.mp3,9,Thalassophobia (Dark Mix),thalassophobia.mp3,0.9695765972137451,0.030423402786254883,11.181652069091797
-9,Thalassophobia (Dark Mix),thalassophobia.mp3,10,Illusion,illusion.mp3,0.9410524368286133,0.05894756317138672,15.445805549621582
-10,Illusion,illusion.mp3,11,Brainwasher,brainwasher.mp3,0.939117431640625,0.060882568359375,15.770562171936035
-11,Brainwasher,brainwasher.mp3,12,Warrior,warrior.mp3,0.9380728006362915,0.061927199363708496,16.136703491210938
-12,Warrior,warrior.mp3,13,Walk the Plank,walktheplank.mp3,0.9630462527275085,0.036953747272491455,12.432318687438965
-13,Walk the Plank,walktheplank.mp3,14,Power Drive,powerdrive.mp3,0.9527879357337952,0.047212064266204834,13.719914436340332
-14,Power Drive,powerdrive.mp3,15,Water,water.mp3,0.9360599517822266,0.06394004821777344,15.704633712768555
-15,Water,water.mp3,16,Hold That Sucker Down (HEL:SLOWED Remix),holdthatsuckerdown.mp3,0.9354913234710693,0.06450867652893066,15.803421974182129
-16,Hold That Sucker Down (HEL:SLOWED Remix),holdthatsuckerdown.mp3,17,Flame,flame.mp3,0.9631597995758057,0.036840200424194336,12.179970741271973
-17,Flame,flame.mp3,18,Ashes,ashes.mp3,0.9337505102157593,0.06624948978424072,16.771373748779297
-18,Ashes,ashes.mp3,19,At Night,atnight.mp3,0.912935197353363,0.08706480264663696,19.051250457763672
-19,At Night,atnight.mp3,20,Yes Man,yesman.mp3,0.9287925958633423,0.07120740413665771,16.48295783996582
-20,Yes Man,yesman.mp3,21,FILTHY ACID,filthyacid.mp3,0.9225107431411743,0.07748925685882568,17.996328353881836
-21,FILTHY ACID,filthyacid.mp3,22,Access (John Askew Remix),access.mp3,0.9436036944389343,0.056396305561065674,15.555490493774414
-22,Access (John Askew Remix),access.mp3,23,Out of the Sky (Chris Schweizer Remix),outofthesky.mp3,0.9450147747993469,0.054985225200653076,15.347932815551758
-23,Out of the Sky (Chris Schweizer Remix),outofthesky.mp3,24,Apex (John Askew Remix),apex.mp3,0.9607769250869751,0.0392230749130249,13.051907539367676
-24,Apex (John Askew Remix),apex.mp3,25,Opulence,opulence.mp3,0.9765527844429016,0.02344721555709839,10.05147933959961
+1,Poa Alpina,biosphere - poa alpina (allternative version) [audio].mp3,2,Water Slide,water slide.mp3,0.8967409729957581,0.10325902700424194,21.369115829467773
+2,Water Slide,water slide.mp3,3,Selene,selene (extended mix).mp3,0.9496042132377625,0.05039578676223755,14.472010612487793
+3,Selene,selene (extended mix).mp3,4,Tundra,tundra.mp3,0.9412954449653625,0.05870455503463745,15.443216323852539
+4,Tundra,tundra.mp3,5,Headspace,dee montero feat. meliha - headspace.mp3,0.9216548800468445,0.07834511995315552,17.886350631713867
+5,Headspace,dee montero feat. meliha - headspace.mp3,6,TERRITORY,territory.mp3,0.9316033720970154,0.06839662790298462,16.581472396850586
+6,TERRITORY,territory.mp3,7,Icicle,icicle.mp3,0.9435831308364868,0.056416869163513184,15.125396728515625
+7,Icicle,icicle.mp3,8,Sunlight (Jody Wisternoff Remix),sunlight (jody wisternoff remix).mp3,0.9612420797348022,0.038757920265197754,12.568822860717773
+8,Sunlight (Jody Wisternoff Remix),sunlight (jody wisternoff remix).mp3,9,Muse,muse (extended mix).mp3,0.9518620371818542,0.04813796281814575,13.712320327758789
+9,Muse,muse (extended mix).mp3,10,Wavy Jane,my friend - wavy jane.mp3,0.9311376810073853,0.06886231899261475,16.413564682006836
+10,Wavy Jane,my friend - wavy jane.mp3,11,Needs to Feel (Wippenberg Remix),needs to feel (wippenberg remix).mp3,0.9529597759246826,0.04704022407531738,13.482688903808594
+11,Needs to Feel (Wippenberg Remix),needs to feel (wippenberg remix).mp3,12,I Wonder,i wonder.mp3,0.953278660774231,0.04672133922576904,13.564900398254395
+12,I Wonder,i wonder.mp3,13,Bloodstream (Cubicore Remix),bloodstream (cubicore extended remix).mp3,0.9675744771957397,0.032425522804260254,11.492079734802246
+13,Bloodstream (Cubicore Remix),bloodstream (cubicore extended remix).mp3,14,Ice Beach,ice beach (original mix).mp3,0.9278034567832947,0.07219654321670532,17.151952743530273
+14,Ice Beach,ice beach (original mix).mp3,15,Connected (Vocal Mix),connected (vocal mix).mp3,0.9573402404785156,0.042659759521484375,13.370016098022461
+15,Connected (Vocal Mix),connected (vocal mix).mp3,16,Time Goes By (Super8 Deep Mix),time goes by (super8 deep mix).mp3,0.9636979103088379,0.03630208969116211,12.340912818908691
+16,Time Goes By (Super8 Deep Mix),time goes by (super8 deep mix).mp3,17,Metanoia,metanoia (original club mix).mp3,0.9500767588615417,0.04992324113845825,14.192588806152344
+17,Metanoia,metanoia (original club mix).mp3,18,Frozen,frozen (extended mix).mp3,0.936226487159729,0.063773512840271,16.032909393310547
+18,Frozen,frozen (extended mix).mp3,19,These Shoulders (Oliver Smith Remix),these shoulders (oliver smith remix).mp3,0.9514009952545166,0.0485990047454834,13.883615493774414
+19,These Shoulders (Oliver Smith Remix),these shoulders (oliver smith remix).mp3,20,The Whiteroom,the whiteroom (extended mix).mp3,0.9528719186782837,0.04712808132171631,14.05579948425293
+20,The Whiteroom,the whiteroom (extended mix).mp3,21,Far From In Love,above & beyond - far from in love (original mix).mp3,0.9656859040260315,0.034314095973968506,12.170548439025879
+21,Far From In Love,above & beyond - far from in love (original mix).mp3,22,Zocalo,zocalo.mp3,0.9279893636703491,0.07201063632965088,17.382720947265625
+22,Zocalo,zocalo.mp3,23,Perception (Vocal Mix),perception (new vocal mix).mp3,0.9281837940216064,0.07181620597839355,16.945056915283203

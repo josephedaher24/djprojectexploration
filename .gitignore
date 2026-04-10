@@ -11,6 +11,18 @@ __pycache__/
 build/
 dist/
 models/*
+
+# Legacy per-track embedding artifacts (NPZ collections are used instead)
 data/deam_valence_arousal/*.json
 data/maest_embeddings/*.json
 data/chroma_embeddings/*.json
+data/tempo_embeddings/*.json
+
+# Local snippet artifacts (prefer sharing as archive)
+data/snippets/
+
+data/exports/*.csv
+data/exports/*.txt
+
+# Notebook export scratch scripts
+.tmp_*.py

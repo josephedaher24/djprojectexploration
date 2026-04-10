@@ -5,20 +5,41 @@ description = "Exploration project scaffolded with uv."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "anywidget>=0.9.18",
+    "appnope==0.1.4 ; sys_platform == 'darwin'",
+    "debugpy==1.8.20",
     "essentia>=2.1b6.dev1389",
     "essentia-tensorflow>=2.1b6.dev1389",
+    "ipykernel==7.2.0",
+    "ipywidgets>=8.1.8",
+    "jupyter-client==8.8.0",
+    "librosa>=0.11.0",
     "matplotlib>=3.10.8",
+    "nbformat>=5.10.4",
+    "nest-asyncio==1.6.0",
     "numpy>=2.4.3",
     "pacmap",
+    "plotly>=6.6.0",
+    "psutil==7.2.2",
+    "pyloudnorm",
+    "pyzmq==27.1.0",
     "scipy>=1.17.1",
     "soundfile>=0.13.1",
     "tensorflow>=2.15.0",
+    "tornado==6.5.5",
 ]
 
 [project.scripts]
 djprojectexploration = "djprojectexploration.essentia_feature_extractor:main"
 djprojectexploration-maest = "djprojectexploration.maest_embedding_extractor:main"
-djprojectexploration-chromagram = "djprojectexploration.chromagram_plotter:main"
+djprojectexploration-chroma = "djprojectexploration.chroma_embedding_extractor:main"
+djprojectexploration-tempo = "djprojectexploration.tempo_embedding_extractor:main"
+djprojectexploration-deam = "djprojectexploration.deam_embedding_extractor:main"
+djprojectexploration-maest-playlist = "djprojectexploration.playlist_embedding_pipeline:maest_main"
+djprojectexploration-chroma-playlist = "djprojectexploration.playlist_embedding_pipeline:chroma_main"
+djprojectexploration-tempo-playlist = "djprojectexploration.playlist_embedding_pipeline:tempo_main"
+djprojectexploration-deam-playlist = "djprojectexploration.playlist_embedding_pipeline:deam_main"
+djprojectexploration-snippet-cache = "djprojectexploration.audio_snippets:main"
 
 [build-system]
 requires = ["hatchling"]

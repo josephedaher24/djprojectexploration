@@ -1,26 +1,25 @@
 filename,valence,arousal,valence_std,arousal_std,num_segments,prediction_file
-access.mp3,7.2244553565979,5.291905403137207,1.1435273885726929,0.5057787895202637,327,data/deam_valence_arousal/access_deam_valence_arousal.json
-apex.mp3,7.463061332702637,5.145267486572266,0.7964769601821899,0.6765317916870117,266,data/deam_valence_arousal/apex_deam_valence_arousal.json
-ashes.mp3,6.996777534484863,6.245239734649658,0.9171591997146606,0.6511839032173157,125,data/deam_valence_arousal/ashes_deam_valence_arousal.json
-atnight.mp3,6.6222734451293945,5.804913520812988,0.43800240755081177,0.5316974520683289,217,data/deam_valence_arousal/atnight_deam_valence_arousal.json
-brainwasher.mp3,5.898028373718262,5.230565547943115,0.4546544849872589,0.430794894695282,235,data/deam_valence_arousal/brainwasher_deam_valence_arousal.json
-breakthesilence.mp3,5.800743103027344,5.103508949279785,0.7352613210678101,0.7306194305419922,263,data/deam_valence_arousal/breakthesilence_deam_valence_arousal.json
-comealive.mp3,6.585826873779297,5.150383949279785,0.6255497336387634,0.5658530592918396,220,data/deam_valence_arousal/comealive_deam_valence_arousal.json
-filmic.mp3,3.902583599090576,3.681189775466919,0.2716422975063324,0.23074239492416382,153,data/deam_valence_arousal/filmic_deam_valence_arousal.json
-filthyacid.mp3,5.862897872924805,5.082142353057861,0.6943103075027466,0.4718162715435028,245,data/deam_valence_arousal/filthyacid_deam_valence_arousal.json
-flame.mp3,5.662785530090332,5.4440412521362305,1.0542471408843994,1.2168737649917603,308,data/deam_valence_arousal/flame_deam_valence_arousal.json
-holdthatsuckerdown.mp3,6.2175493240356445,5.722168922424316,0.8197490572929382,0.7430285811424255,206,data/deam_valence_arousal/holdthatsuckerdown_deam_valence_arousal.json
-illusion.mp3,6.04067850112915,5.360933303833008,0.6254635453224182,0.49487778544425964,250,data/deam_valence_arousal/illusion_deam_valence_arousal.json
-lately.mp3,5.822629928588867,6.113135814666748,0.41808265447616577,0.5986393094062805,142,data/deam_valence_arousal/lately_deam_valence_arousal.json
-loveyougot.mp3,5.9708662033081055,5.573479175567627,0.8368032574653625,0.8598732948303223,182,data/deam_valence_arousal/loveyougot_deam_valence_arousal.json
-opulence.mp3,7.025694370269775,4.9430437088012695,1.0106204748153687,0.7270923256874084,279,data/deam_valence_arousal/opulence_deam_valence_arousal.json
-outofthesky.mp3,6.824264049530029,5.9086809158325195,0.8905526399612427,0.6832500696182251,274,data/deam_valence_arousal/outofthesky_deam_valence_arousal.json
-parasite.mp3,5.710567474365234,5.715407848358154,0.7045716047286987,0.6561514139175415,251,data/deam_valence_arousal/parasite_deam_valence_arousal.json
-powerdrive.mp3,6.469071865081787,5.9018964767456055,0.7254584431648254,0.5984800457954407,357,data/deam_valence_arousal/powerdrive_deam_valence_arousal.json
-subterranean.mp3,6.076249122619629,5.404294967651367,0.8868473172187805,0.7124281525611877,245,data/deam_valence_arousal/subterranean_deam_valence_arousal.json
-tearsfromthemoon.mp3,5.349315643310547,5.091214179992676,0.9776231646537781,0.9727489352226257,351,data/deam_valence_arousal/tearsfromthemoon_deam_valence_arousal.json
-thalassophobia.mp3,6.173125743865967,5.886743068695068,0.9326545000076294,1.1052974462509155,253,data/deam_valence_arousal/thalassophobia_deam_valence_arousal.json
-walktheplank.mp3,6.767060279846191,5.980710506439209,0.7958999872207642,0.686880350112915,190,data/deam_valence_arousal/walktheplank_deam_valence_arousal.json
-warrior.mp3,6.348788738250732,6.803818225860596,0.5247592926025391,0.8816540837287903,307,data/deam_valence_arousal/warrior_deam_valence_arousal.json
-water.mp3,5.989394187927246,5.954420566558838,0.715186595916748,0.507174551486969,171,data/deam_valence_arousal/water_deam_valence_arousal.json
-yesman.mp3,6.676850318908691,5.528681755065918,0.6633864641189575,0.5577816963195801,261,data/deam_valence_arousal/yesman_deam_valence_arousal.json
+Above & Beyond - Far From In Love (Original Mix).mp3,7.342907905578613,6.019933223724365,1.1230169534683228,0.6051652431488037,294,data/deam_valence_arousal/Above & Beyond - Far From In Love (Original Mix)_deam_valence_arousal.json
+Biosphere - Poa Alpina (Allternative Version) [Audio].mp3,3.4062092304229736,3.0136377811431885,0.30951476097106934,0.2871094346046448,201,data/deam_valence_arousal/Biosphere - Poa Alpina (Allternative Version) [Audio]_deam_valence_arousal.json
+Bloodstream (Cubicore Extended Remix).mp3,6.24733304977417,6.274991035461426,0.743348240852356,1.0564497709274292,284,data/deam_valence_arousal/Bloodstream (Cubicore Extended Remix)_deam_valence_arousal.json
+Connected (Vocal Mix).mp3,7.332426071166992,6.098508834838867,1.2720602750778198,0.9368049502372742,292,data/deam_valence_arousal/Connected (Vocal Mix)_deam_valence_arousal.json
+Dee Montero feat. Meliha - Headspace.mp3,6.207931041717529,5.575334072113037,0.46550771594047546,0.3907792270183563,311,data/deam_valence_arousal/Dee Montero feat. Meliha - Headspace_deam_valence_arousal.json
+Frozen (Extended Mix).mp3,6.205999374389648,5.198715686798096,1.022835612297058,0.7718548774719238,344,data/deam_valence_arousal/Frozen (Extended Mix)_deam_valence_arousal.json
+Headspace (Beatless Mix).mp3,4.705488681793213,4.532491207122803,0.747028648853302,0.6324189901351929,230,data/deam_valence_arousal/Headspace (Beatless Mix)_deam_valence_arousal.json
+I Wonder.mp3,6.355555057525635,6.121703147888184,0.7732483744621277,0.726650059223175,161,data/deam_valence_arousal/I Wonder_deam_valence_arousal.json
+Ice Beach (Original Mix).mp3,7.0033955574035645,5.948340892791748,0.9795569181442261,0.5671107172966003,346,data/deam_valence_arousal/Ice Beach (Original Mix)_deam_valence_arousal.json
+Icicle.mp3,5.352476596832275,5.3421311378479,0.6329331994056702,0.5409629344940186,312,data/deam_valence_arousal/Icicle_deam_valence_arousal.json
+Metanoia (Original Club Mix).mp3,6.645976543426514,5.611604690551758,0.8972921371459961,1.0155154466629028,303,data/deam_valence_arousal/Metanoia (Original Club Mix)_deam_valence_arousal.json
+Muse (Extended Mix).mp3,5.671529293060303,5.201727867126465,0.7916452884674072,0.475679874420166,271,data/deam_valence_arousal/Muse (Extended Mix)_deam_valence_arousal.json
+My Friend - Wavy Jane.mp3,6.291051387786865,5.573479175567627,0.7121534943580627,0.5494140982627869,202,data/deam_valence_arousal/My Friend - Wavy Jane_deam_valence_arousal.json
+Needs To Feel (Wippenberg Remix).mp3,5.980505466461182,5.314467906951904,0.5968490839004517,0.6729606986045837,379,data/deam_valence_arousal/Needs To Feel (Wippenberg Remix)_deam_valence_arousal.json
+Perception (New Vocal Mix).mp3,6.3914713859558105,5.785350799560547,0.5681252479553223,0.6762228012084961,429,data/deam_valence_arousal/Perception (New Vocal Mix)_deam_valence_arousal.json
+Selene (Extended Mix).mp3,5.8924665451049805,5.972010135650635,0.5255768299102783,0.6780624985694885,303,data/deam_valence_arousal/Selene (Extended Mix)_deam_valence_arousal.json
+Sunlight (Jody Wisternoff Remix).mp3,5.629400253295898,5.231365203857422,0.48042216897010803,0.4188421070575714,279,data/deam_valence_arousal/Sunlight (Jody Wisternoff Remix)_deam_valence_arousal.json
+TERRITORY.mp3,4.9536848068237305,4.725454807281494,0.6904053688049316,0.7210837006568909,184,data/deam_valence_arousal/TERRITORY_deam_valence_arousal.json
+The Whiteroom (Extended Mix).mp3,7.2744245529174805,6.420637130737305,0.9829403162002563,0.9130560755729675,366,data/deam_valence_arousal/The Whiteroom (Extended Mix)_deam_valence_arousal.json
+These Shoulders (Oliver Smith Remix).mp3,6.632014274597168,5.814836502075195,0.9218531250953674,0.7365955710411072,275,data/deam_valence_arousal/These Shoulders (Oliver Smith Remix)_deam_valence_arousal.json
+Time Goes By (Super8 Deep Mix).mp3,6.418823719024658,5.657349109649658,0.9433826804161072,0.7192193865776062,342,data/deam_valence_arousal/Time Goes By (Super8 Deep Mix)_deam_valence_arousal.json
+Tundra.mp3,5.798717498779297,5.777312278747559,0.494773805141449,0.5857653021812439,255,data/deam_valence_arousal/Tundra_deam_valence_arousal.json
+Water Slide.mp3,5.712196350097656,5.513481140136719,0.821538507938385,0.8462761640548706,319,data/deam_valence_arousal/Water Slide_deam_valence_arousal.json
+Zocalo.mp3,5.864487648010254,5.448862075805664,0.9908311367034912,0.7294299602508545,341,data/deam_valence_arousal/Zocalo_deam_valence_arousal.json
