@@ -1249,7 +1249,7 @@ def _build_html(
     )
 
 
-def export_energy_sequence_builder(
+def export_dj_sequence(
     *,
     project_root: Path = PROJECT_ROOT,
     output_file: Path | None = None,
@@ -1260,7 +1260,7 @@ def export_energy_sequence_builder(
 ) -> Path:
     project_root = project_root.expanduser().resolve()
     mix_slugs = mix_slugs or ["aries-mix", "ara-mix"]
-    output_file = output_file or (project_root / "data" / "exports" / "energy_sequence_builder.html")
+    output_file = output_file or (project_root / "data" / "exports" / "dj_sequence_builder.html")
     output_file = output_file.expanduser().resolve()
     energy_npz_path = energy_npz_path or (project_root / "data" / "energy_embeddings" / "aries_ara_energy_features.npz")
 
@@ -1298,8 +1298,8 @@ def export_energy_sequence_builder(
         harmonic_self_normalize=True,
     )
 
-    title = "Energy Sequence Builder"
-    plot_div_id = "energy_sequence_builder_pacmap"
+    title = "DJ Sequence Builder"
+    plot_div_id = "dj_sequence_builder_pacmap"
     plot_html = _build_plot(records, coords, plot_div_id=plot_div_id, title="PaCMAP Track Selector")
     html = _build_html(
         plot_html=plot_html,
@@ -1331,15 +1331,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--open", action="store_true", help="Open the exported HTML in a browser.")
     args = parser.parse_args(argv)
 
-    output_file = export_energy_sequence_builder(
+    output_file = export_dj_sequence(
         output_file=args.output_file,
         energy_npz_path=args.energy_npz,
         default_length=args.sequence_length,
         mix_slugs=args.mix_slugs,
         open_browser=bool(args.open),
     )
-    print(f"Saved energy sequence builder HTML: {output_file}")
+    print(f"Saved DJ sequence builder HTML: {output_file}")
     return 0
+
+
+export_energy_sequence_builder = export_dj_sequence
 
 
 if __name__ == "__main__":

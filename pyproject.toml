@@ -42,10 +42,12 @@ djprojectexploration-chroma-playlist = "djprojectexploration.playlist_embedding_
 djprojectexploration-tempo-playlist = "djprojectexploration.playlist_embedding_pipeline:tempo_main"
 djprojectexploration-deam-playlist = "djprojectexploration.playlist_embedding_pipeline:deam_main"
 djprojectexploration-snippet-cache = "djprojectexploration.audio_snippets:main"
+djprojectexploration-dj-sequence = "djprojectexploration.energy_sequence_builder:main"
 djprojectexploration-energy-sequence-builder = "djprojectexploration.energy_sequence_builder:main"
 djprojectexploration-umap-precomputed = "djprojectexploration.interactive_umap_precomputed:main"
 djprojectexploration-pacmap-knn = "djprojectexploration.interactive_pacmap_knn:main"
 djprojectexploration-umap-simplex = "djprojectexploration.interactive_umap_simplex:main"
+djprojectexploration-dj-pacmap = "djprojectexploration.interactive_pacmap_knn_simplex:main"
 djprojectexploration-pacmap-knn-simplex = "djprojectexploration.interactive_pacmap_knn_simplex:main"
 
 [build-system]

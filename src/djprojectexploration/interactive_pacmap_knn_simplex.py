@@ -803,7 +803,7 @@ def _build_simplex_html(
     )
 
 
-def export_interactive_pacmap_knn_simplex(
+def export_dj_pacmap(
     *,
     project_root: Path = PROJECT_ROOT,
     mix_slugs: list[str] | None = None,
@@ -827,7 +827,7 @@ def export_interactive_pacmap_knn_simplex(
         for slug in mix_slugs
     )
     output_file = output_file or (
-        project_root / "data" / "exports" / f"{dataset_tag}_interactive_pacmap_knn_simplex_maest_tempo_chroma.html"
+        project_root / "data" / "exports" / f"{dataset_tag}_interactive_dj_pacmap.html"
     )
     output_file = output_file.expanduser().resolve()
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -921,7 +921,7 @@ def export_interactive_pacmap_knn_simplex(
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build an interactive 3-way PaCMAP kNN simplex HTML.")
+    parser = argparse.ArgumentParser(description="Build the interactive DJ PaCMAP HTML.")
     parser.add_argument("--mix-slug", action="append", dest="mix_slugs")
     parser.add_argument("--output-file", type=Path, default=None)
     parser.add_argument("--random-state", type=int, default=7777)
@@ -939,7 +939,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    export_interactive_pacmap_knn_simplex(
+    export_dj_pacmap(
         mix_slugs=args.mix_slugs,
         output_file=args.output_file,
         random_state=args.random_state,
@@ -953,6 +953,9 @@ def main() -> None:
         click_links_per_song=args.click_links_per_song,
         bpm_color_scale_pct=args.bpm_color_scale_pct,
     )
+
+
+export_interactive_pacmap_knn_simplex = export_dj_pacmap
 
 
 if __name__ == "__main__":
