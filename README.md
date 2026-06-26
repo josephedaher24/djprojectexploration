@@ -1,10 +1,22 @@
 # djprojectexploration
 
-Minimal Python project scaffold using `uv`, with audio and signal-processing libraries installed.
+Exploration repo for DJ/music compatibility experiments. The project extracts audio features from local music
+collections, stores playlist-level embeddings, and generates standalone interactive HTML tools for exploring
+genre/tempo/key compatibility and sequence-building workflows.
 
 ```bash
 uv sync
 ```
+
+## Current Focus
+
+The current handoff-worthy work is centered on two generated HTML tools:
+
+- **Interactive DJ PaCMAP**: a draggable simplex visualization that blends Genre, Tempo, and Key weighting.
+- **DJ Sequence Builder**: an interactive track-selection and recommendation surface for building energy-aware sequences.
+
+Both tools are generated from Python and use local feature files plus cached audio snippets. The generated pages embed
+the visualization data and frontend JavaScript; audio snippets remain external `.wav` files.
 
 ## Requirements
 
@@ -13,6 +25,8 @@ uv sync
 - `essentia` for music/audio feature extraction
 - `soundfile` for reading and writing audio files
 - `matplotlib` for waveform and spectrogram visualization
+- `plotly` for standalone interactive HTML plots
+- `pacmap` and `umap-learn` for dimensionality reduction prototypes
 
 ## Model Downloads
 
@@ -27,6 +41,169 @@ Raw model files must be downloaded from [Essentia](https://essentia.upf.edu/mode
 uv add <package>
 uv run python -m djprojectexploration
 ```
+
+Useful generated-file paths are ignored or treated as disposable handoff artifacts. Prefer committing source code,
+small CSV/NPZ input data, and documentation; share generated HTML/snippet bundles separately when possible.
+
+## Data Layout
+
+The repo currently uses CSV tracklists plus playlist-level NPZ feature bundles as the source of truth for the
+interactive generators.
+
+Important paths for the current `aries-mix + ara-mix` demo:
+
+```text
+music/aries-mix/aries_mix_tracks.csv
+music/ara-mix/ara_mix_tracks.csv
+
+data/maest_embeddings/aries_mix_tracks.npz
+data/maest_embeddings/ara_mix_tracks.npz
+
+data/chroma_embeddings/aries_mix_tracks.npz
+data/chroma_embeddings/ara_mix_tracks.npz
+
+data/tempo_embeddings/aries_mix_tracks.npz
+data/tempo_embeddings/ara_mix_tracks.npz
+
+data/energy_embeddings/aries_ara_energy_features.npz
+```
+
+Snippet cache used by interactive playback:
+
+```text
+data/snippets/aries_mix_tracks/
+data/snippets/ara_mix_tracks/
+```
+
+Generated standalone HTML defaults:
+
+```text
+data/exports/aries_mix_tracks__ara_mix_tracks_interactive_dj_pacmap.html
+data/exports/dj_sequence_builder.html
+```
+
+For frontend work, treat `.npz` as the Python/backend numeric format and JSON/HTML as frontend export formats.
+Do not convert large embedding arrays to JSON unless the browser actually needs them.
+
+## Interactive DJ PaCMAP
+
+Generate the current PaCMAP-based DJ visualization:
+
+```bash
+uv run djprojectexploration-dj-pacmap
+```
+
+Equivalent module command:
+
+```bash
+.venv/bin/python -m djprojectexploration.interactive_pacmap_knn_simplex
+```
+
+Default output:
+
+```text
+data/exports/aries_mix_tracks__ara_mix_tracks_interactive_dj_pacmap.html
+```
+
+The page uses a draggable triangle/simplex control:
+
+- `Genre` is backed by MAEST similarity internally.
+- `Tempo` is backed by tempo similarity.
+- `Key` is backed by chroma/HPCP harmonic similarity internally.
+
+The generator precomputes PaCMAP layouts over a 3-way simplex grid and interpolates between them in the browser.
+Current defaults include:
+
+- `step=0.1`, producing 66 simplex layouts
+- `n_neighbors=8`
+- `MN_ratio=1.0`
+- `FP_ratio=1.5`
+- `distance=angular`
+- neighbor-aware traversal/alignment from a central simplex anchor
+
+Useful options:
+
+```bash
+uv run djprojectexploration-dj-pacmap \
+  --n-neighbors 10 \
+  --mn-ratio 0.8 \
+  --fp-ratio 1.8 \
+  --step 0.1
+```
+
+The previous longer command is still available for compatibility:
+
+```bash
+uv run djprojectexploration-pacmap-knn-simplex
+```
+
+## DJ Sequence Builder
+
+Generate the current sequence-builder page:
+
+```bash
+uv run djprojectexploration-dj-sequence
+```
+
+Default output:
+
+```text
+data/exports/dj_sequence_builder.html
+```
+
+The page combines PaCMAP track selection with compatibility/recommendation controls and energy metadata loaded from:
+
+```text
+data/energy_embeddings/aries_ara_energy_features.npz
+```
+
+Useful options:
+
+```bash
+uv run djprojectexploration-dj-sequence \
+  --sequence-length 12 \
+  --mix aries-mix \
+  --mix ara-mix
+```
+
+The previous longer command is still available:
+
+```bash
+uv run djprojectexploration-energy-sequence-builder
+```
+
+## Sharing Artifacts
+
+For sharing a working demo without committing generated/audio files, create or use these archives:
+
+```text
+data/exports/dj_interactive_htmls.zip
+data/exports/dj_pacmap_snippets.zip
+```
+
+The HTML zip contains generated standalone pages. The snippet zip contains:
+
+```text
+data/snippets/aries_mix_tracks/
+data/snippets/ara_mix_tracks/
+```
+
+When unpacking for playback, preserve the relative `data/exports` and `data/snippets` relationship or update snippet
+paths in the generated HTML.
+
+For a frontend handoff branch, usually commit:
+
+- source files under `src/djprojectexploration/`
+- `pyproject.toml` and `uv.lock`
+- small CSV and NPZ files needed to reproduce the two-mix demo
+- docs describing the data contract
+
+Usually do not commit:
+
+- `data/snippets/`
+- `data/exports/`
+- generated `.zip` bundles
+- large exploratory notebooks unless they are intentionally part of the handoff
 
 ## Apple Music playlist exports
 
