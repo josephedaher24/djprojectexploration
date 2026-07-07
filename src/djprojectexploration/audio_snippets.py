@@ -18,7 +18,8 @@ import numpy as np
 from scipy import signal
 import soundfile as sf
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from djprojectexploration.tracklists import PROJECT_ROOT, to_project_relpath
+
 DEFAULT_SNIPPET_SECONDS = 8.0
 DEFAULT_MIDDLE_FRACTION = 0.66
 DEFAULT_SCAN_HOP_SECONDS = 0.25
@@ -38,11 +39,7 @@ class SnippetInfo:
 
 
 def _to_project_relpath(path: Path) -> str:
-    resolved = path.expanduser().resolve()
-    try:
-        return str(resolved.relative_to(PROJECT_ROOT))
-    except ValueError:
-        return str(resolved)
+    return to_project_relpath(path)
 
 
 def _sanitize_slug(value: str) -> str:
@@ -289,7 +286,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    from djprojectexploration.playlist_embedding_pipeline import load_playlist_tracks
+    from djprojectexploration.tracklists import load_playlist_tracks
 
     csv_path = args.tracklist_csv.expanduser().resolve()
     output_dir = (

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import json
 import os
 from pathlib import Path
@@ -20,6 +19,7 @@ from djprojectexploration.multimodal_compatibility import (
     _pairwise_tempo_similarity_matrix,
     load_aries_mix_feature_set,
 )
+from djprojectexploration.tracklists import read_csv_rows
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -126,11 +126,6 @@ def _resolve_audio_path(
     return None
 
 
-def _read_csv_rows(path: Path) -> list[dict[str, str]]:
-    with path.open("r", encoding="utf-8", newline="") as f:
-        return list(csv.DictReader(f))
-
-
 def _load_combined_records_and_features(
     *,
     project_root: Path,
@@ -167,7 +162,7 @@ def _load_combined_records_and_features(
             chroma_use_base_only=True,
         )
 
-        csv_rows = _read_csv_rows(tracklist_csv)
+        csv_rows = read_csv_rows(tracklist_csv)
         csv_by_token: dict[str, dict[str, str]] = {}
         for row in csv_rows:
             token = _row_token(row)

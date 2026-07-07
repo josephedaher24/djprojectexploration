@@ -80,6 +80,32 @@ data/exports/
 The default demo still centers on `aries-mix` and `ara-mix`, but most playlist commands accept either a tracklist path or
 repeatable `--mix` arguments.
 
+To start from a folder of audio files, generate a normalized tracklist first:
+
+```bash
+uv run djprojectexploration-build-tracklist path/to/music-folder --name my-set
+```
+
+Default output is written inside the music folder:
+
+```text
+path/to/music-folder/my_set_tracks.csv
+```
+
+The generated CSV includes `track_number`, `title`, `artists`, `mp3_name`, `filepath`, `key`, `bpm`, `onset-time`,
+`genre`, `key shift`, and `energy`. Tag values are filled from audio metadata when available; cue/onset, key-shift, and
+energy can be added later by importers or manual labeling.
+
+For a fuller app-ready build, use the dataset orchestrator:
+
+```bash
+uv run djprojectexploration-build-dataset path/to/music-folder --name my-set
+```
+
+This creates `music/my-set/my_set_tracks.csv`, then runs snippet caching, waveform extraction, playlist embeddings,
+energy feature/NPZ export, and sequence-builder HTML export. Use `--skip-embeddings`, `--skip-energy`, or
+`--skip-app-export` while iterating.
+
 ## Source Layout
 
 Most production code lives under `src/djprojectexploration/`. The main app/export modules are:
@@ -245,6 +271,7 @@ The sequence builder app reuses this backend through `POST /api/render-transitio
 Build one compressed NPZ per playlist:
 
 ```bash
+uv run djprojectexploration-build-tracklist music/my-set --name my-set
 uv run djprojectexploration-maest-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
 uv run djprojectexploration-chroma-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
 uv run djprojectexploration-tempo-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
@@ -263,6 +290,19 @@ Generate energy feature CSVs:
 ```bash
 uv run djprojectexploration-energy-features music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
 ```
+
+Create the canonical app-consumable energy NPZ from one or more energy feature CSVs:
+
+```bash
+uv run djprojectexploration-energy-npz \
+  data/energy_features/aries_mix_tracks_energy_features.csv \
+  data/energy_features/ara_mix_tracks_energy_features.csv \
+  --name aries_ara_energy_features
+```
+
+The NPZ writer implements the replaceable full energy model from `notebooks/energy_analysis.ipynb`: BPM plus simple,
+advanced, and loudness/RMS audio features with a Gaussian Tweedie/ridge pipeline. If labeled `energy` values are present,
+it fits the model and writes `glm_energy_pred`; otherwise it still writes the canonical NPZ with unavailable predictions.
 
 Useful common options:
 

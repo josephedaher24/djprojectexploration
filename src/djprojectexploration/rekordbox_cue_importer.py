@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 import xml.etree.ElementTree as ET
 
-from djprojectexploration.playlist_embedding_pipeline import PROJECT_ROOT
+from djprojectexploration.tracklists import PROJECT_ROOT, optional_float
 
 
 DEFAULT_TRACKLIST = PROJECT_ROOT / "music" / "aries-mix" / "aries_mix_tracks.csv"
@@ -69,18 +69,6 @@ class RekordboxTrack:
     cues: list[RekordboxCue]
 
 
-def _optional_float(value: str | None) -> float | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
-
-
 def _location_to_path(location: str) -> Path | None:
     if not location:
         return None
@@ -124,8 +112,8 @@ def parse_rekordbox_xml(xml_path: Path) -> list[RekordboxTrack]:
 
         tempos = elem.findall("TEMPO")
         first_tempo = tempos[0] if tempos else None
-        bpm = _optional_float(first_tempo.attrib.get("Bpm") if first_tempo is not None else None)
-        onset = _optional_float(first_tempo.attrib.get("Inizio") if first_tempo is not None else None)
+        bpm = optional_float(first_tempo.attrib.get("Bpm") if first_tempo is not None else None)
+        onset = optional_float(first_tempo.attrib.get("Inizio") if first_tempo is not None else None)
 
         cues: list[RekordboxCue] = []
         if onset is not None:
@@ -140,14 +128,14 @@ def parse_rekordbox_xml(xml_path: Path) -> list[RekordboxTrack]:
             )
         for mark in elem.findall("POSITION_MARK"):
             name = _cue_name(mark.attrib.get("Name"))
-            start = _optional_float(mark.attrib.get("Start"))
+            start = optional_float(mark.attrib.get("Start"))
             if start is None:
                 continue
             cues.append(
                 RekordboxCue(
                     name=name or f"CUE {mark.attrib.get('Num', '').strip()}".strip(),
                     start_seconds=float(start),
-                    end_seconds=_optional_float(mark.attrib.get("End")),
+                    end_seconds=optional_float(mark.attrib.get("End")),
                     rekordbox_type=mark.attrib.get("Type", "").strip(),
                     rekordbox_num=mark.attrib.get("Num", "").strip(),
                 )

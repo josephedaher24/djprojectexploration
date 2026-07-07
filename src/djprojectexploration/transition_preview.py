@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import json
 import math
@@ -19,10 +18,12 @@ import numpy as np
 from scipy import signal
 import soundfile as sf
 
-from djprojectexploration.playlist_embedding_pipeline import (
+from djprojectexploration.tracklists import (
     PROJECT_ROOT,
     PlaylistTrack,
     load_playlist_tracks,
+    optional_float,
+    read_csv_rows,
 )
 
 
@@ -163,8 +164,7 @@ def _track_tokens(track: PlaylistTrack) -> set[str]:
 
 
 def _read_tracklist_rows(tracklist_csv: Path) -> list[dict[str, str]]:
-    with tracklist_csv.open("r", encoding="utf-8", newline="") as f:
-        return list(csv.DictReader(f))
+    return read_csv_rows(tracklist_csv)
 
 
 def _default_cue_table(tracklist_csv: Path) -> Path:
@@ -179,20 +179,7 @@ def _default_cue_table(tracklist_csv: Path) -> Path:
 def _read_cue_rows(cue_table: Path | None) -> list[dict[str, str]]:
     if cue_table is None or not cue_table.exists():
         return []
-    with cue_table.open("r", encoding="utf-8", newline="") as f:
-        return list(csv.DictReader(f))
-
-
-def _optional_float(value: str | None) -> float | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if text == "":
-        return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
+    return read_csv_rows(cue_table)
 
 
 def _find_track(tracks: list[PlaylistTrack], query: str) -> PlaylistTrack:
@@ -258,7 +245,7 @@ def _cue_seconds_from_table(
         if not track_tokens.intersection(v for v in row_tokens if v):
             continue
         if " ".join(str(row.get("cue_name", "")).strip().upper().split()) == normalized:
-            return _optional_float(row.get("start_seconds"))
+            return optional_float(row.get("start_seconds"))
     return None
 
 
@@ -269,7 +256,7 @@ def _cue_seconds_from_wide_columns(row: dict[str, str], cue_name: str | None) ->
     column = CUE_COLUMN_BY_NAME.get(normalized)
     if column is None:
         return None
-    return _optional_float(row.get(column))
+    return optional_float(row.get(column))
 
 
 def _cue_seconds(

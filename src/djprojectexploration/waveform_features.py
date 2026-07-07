@@ -12,12 +12,14 @@ from typing import Any
 import numpy as np
 
 from djprojectexploration.playlist_embedding_pipeline import (
-    PROJECT_ROOT,
-    PlaylistTrack,
     _default_npz_name,
     _metadata_arrays,
-    _to_project_relpath,
+)
+from djprojectexploration.tracklists import (
+    PROJECT_ROOT,
+    PlaylistTrack,
     load_playlist_tracks,
+    to_project_relpath as _to_project_relpath,
 )
 
 

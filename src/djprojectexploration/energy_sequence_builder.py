@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import html
 import io
@@ -32,6 +31,7 @@ from djprojectexploration.multimodal_compatibility import (
     SongMetadata,
     load_aries_mix_feature_set,
 )
+from djprojectexploration.tracklists import read_csv_rows
 from djprojectexploration.waveform_features import (
     default_waveform_npz_path,
     load_waveform_feature_lookup,
@@ -167,11 +167,6 @@ def _row_token(row: dict[str, str]) -> str | None:
     return None
 
 
-def _read_csv_rows(path: Path) -> list[dict[str, str]]:
-    with path.open("r", encoding="utf-8", newline="") as f:
-        return list(csv.DictReader(f))
-
-
 def _resolve_audio_path(
     row: dict[str, str],
     fallback_filename: str,
@@ -266,7 +261,7 @@ def _load_combined_records_and_features(
             chroma_use_base_only=True,
         )
 
-        csv_rows = _read_csv_rows(tracklist_csv)
+        csv_rows = read_csv_rows(tracklist_csv)
         csv_by_token: dict[str, dict[str, str]] = {}
         for row in csv_rows:
             token = _row_token(row)

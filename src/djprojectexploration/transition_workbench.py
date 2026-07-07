@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import html
 import json
@@ -24,7 +23,7 @@ from djprojectexploration.local_http import (
     json_response,
     text_response,
 )
-from djprojectexploration.playlist_embedding_pipeline import PROJECT_ROOT, load_playlist_tracks
+from djprojectexploration.tracklists import PROJECT_ROOT, load_playlist_tracks, read_csv_rows
 from djprojectexploration.transition_preview import (
     DEFAULT_OUTPUT_DIR,
     EQ_MODES,
@@ -60,13 +59,6 @@ def _default_cue_table(tracklist: Path) -> Path:
     elif stem.endswith("_tracks"):
         stem = stem[: -len("_tracks")]
     return tracklist.with_name(f"{stem}_cues.csv")
-
-
-def _read_csv_rows(path: Path) -> list[dict[str, str]]:
-    if not path.exists():
-        return []
-    with path.open("r", encoding="utf-8", newline="") as f:
-        return list(csv.DictReader(f))
 
 
 def _optional_str(value: Any) -> str | None:
@@ -128,7 +120,7 @@ class TransitionWorkbench:
         self.generated_source_dir = self.output_dir / "_workbench_sources"
 
     def _cues_by_track(self, source: TrackSource) -> dict[int, list[dict[str, Any]]]:
-        cue_rows = _read_csv_rows(source.cue_table)
+        cue_rows = read_csv_rows(source.cue_table, missing_ok=True)
         cues_by_track: dict[int, list[dict[str, Any]]] = {}
         seen_cues: set[tuple[int, str, str, str]] = set()
         for row in cue_rows:
@@ -221,7 +213,7 @@ class TransitionWorkbench:
         rendered_track_number: int,
     ) -> list[dict[str, str]]:
         rows: list[dict[str, str]] = []
-        for row in _read_csv_rows(source.cue_table):
+        for row in read_csv_rows(source.cue_table, missing_ok=True):
             try:
                 track_number = int(str(row.get("track_number", "")).strip())
             except ValueError:

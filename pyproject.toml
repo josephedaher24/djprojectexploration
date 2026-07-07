@@ -44,6 +44,7 @@ djprojectexploration-chroma-playlist = "djprojectexploration.playlist_embedding_
 djprojectexploration-tempo-playlist = "djprojectexploration.playlist_embedding_pipeline:tempo_main"
 djprojectexploration-groove-playlist = "djprojectexploration.playlist_embedding_pipeline:groove_main"
 djprojectexploration-deam-playlist = "djprojectexploration.playlist_embedding_pipeline:deam_main"
+djprojectexploration-build-tracklist = "djprojectexploration.music_folder_ingest:main"
 djprojectexploration-snippet-cache = "djprojectexploration.audio_snippets:main"
 djprojectexploration-preview-sections = "djprojectexploration.preview_sections:main"
 djprojectexploration-rekordbox-cues = "djprojectexploration.rekordbox_cue_importer:main"
@@ -53,9 +54,11 @@ djprojectexploration-transition-workbench = "djprojectexploration.transition_wor
 djprojectexploration-dj-sequence = "djprojectexploration.energy_sequence_builder:main"
 djprojectexploration-energy-sequence-builder = "djprojectexploration.energy_sequence_builder:main"
 djprojectexploration-energy-features = "djprojectexploration.energy_features:main"
+djprojectexploration-energy-npz = "djprojectexploration.energy_features:energy_npz_main"
 djprojectexploration-waveforms = "djprojectexploration.waveform_features:main"
 djprojectexploration-sequence-builder-app = "djprojectexploration.sequence_builder_app:main"
 djprojectexploration-dj-pacmap = "djprojectexploration.interactive_pacmap_knn_simplex:main"
+djprojectexploration-build-dataset = "djprojectexploration.dataset_builder:main"
 
 [build-system]
 requires = ["hatchling"]

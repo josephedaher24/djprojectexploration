@@ -10,14 +10,17 @@ import argparse
 import csv
 import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import librosa
 import numpy as np
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from djprojectexploration.tracklists import PROJECT_ROOT, optional_float, to_project_relpath
+
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "energy_features"
+DEFAULT_ENERGY_EMBEDDING_DIR = PROJECT_ROOT / "data" / "energy_embeddings"
 DEFAULT_TEMPO_EMBEDDING_DIR = PROJECT_ROOT / "data" / "tempo_embeddings"
 EPS = 1e-12
 
@@ -28,6 +31,54 @@ SPECTRAL_BANDS_HZ = {
     "mid": (250.0, 2000.0),
     "high": (2000.0, 8000.0),
 }
+FULL_ENERGY_MODEL_NAME = "full_tweedie_ridge_aries_ara"
+FULL_ENERGY_FEATURE_KEYS = [
+    "bpm",
+    "spectral_centroid_hz",
+    "spectral_tilt_db_per_oct",
+    "spectral_rolloff_05_hz",
+    "low_band_energy_ratio",
+    "low_band_periodicity",
+    "dynamic_range_db",
+    "crest_factor_db",
+    "onset_density",
+    "onset_magnitude",
+    "rhythmic_entropy",
+    "band_flux_low",
+    "band_flux_mid",
+    "band_flux_high",
+    "downbeat_strength_ratio",
+    "phrase_consistency_4bar",
+    "phrase_consistency_1bar",
+    "hpss_percussive_ratio",
+    "bassline_onset_density",
+    "spectral_spread_hz",
+    "section_transition_rate",
+    "integrated_loudness_lufs",
+    "short_term_loudness_mean_lufs",
+    "short_term_loudness_std_lu",
+    "short_term_loudness_range_lu",
+    "rms_mean_db",
+    "rms_median_db",
+    "rms_std_db",
+    "rms_iqr_db",
+    "rms_range_db",
+    "rms_var",
+]
+ENERGY_NPZ_FIELDNAMES = [
+    "mix_name",
+    "track_number",
+    "title",
+    "artists",
+    "genre",
+    "mp3_name",
+    "energy",
+    "bpm",
+    "glm_energy_pred",
+    "glm_energy_oof_pred",
+    "glm_energy_residual",
+    "glm_energy_oof_residual",
+]
 
 
 @dataclass(frozen=True)
@@ -46,23 +97,28 @@ class EnergyTrack:
     energy: float | None
 
 
+@dataclass(frozen=True)
+class EnergyModelResult:
+    model_name: str
+    feature_names: list[str]
+    predictions: np.ndarray
+    oof_predictions: np.ndarray
+    best_alpha: float
+    baseline_mae: float
+    oof_mae: float
+    oof_r2: float
+    train_mae: float
+    train_r2: float
+    available: bool
+
+
 def _project_relpath(path: Path) -> str:
-    resolved = path.expanduser().resolve()
-    try:
-        return str(resolved.relative_to(PROJECT_ROOT))
-    except ValueError:
-        return str(resolved)
+    return to_project_relpath(path)
 
 
 def _optional_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if text == "":
-        return None
-    try:
-        number = float(text)
-    except ValueError:
+    number = optional_float(value)
+    if number is None:
         return None
     return number if np.isfinite(number) else None
 
@@ -702,6 +758,272 @@ def write_feature_csv(rows: list[dict[str, Any]], output_file: str | Path) -> Pa
     return output_path
 
 
+def _row_key(row: dict[str, Any]) -> tuple[str, str]:
+    mix = str(row.get("mix_name") or row.get("mix_slug") or row.get("source") or "").strip().lower()
+    filename = str(row.get("mp3_name") or row.get("filename") or row.get("filepath") or row.get("audio_path") or "").strip()
+    return mix, Path(filename).name.lower()
+
+
+def _mix_name_from_path(path: Path) -> str:
+    stem = path.stem
+    for suffix in ("_energy_features", "_tracks"):
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+    return stem.replace("_", "-")
+
+
+def _read_feature_csvs(paths: list[str | Path]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path_value in paths:
+        path = Path(path_value).expanduser().resolve()
+        mix_name = _mix_name_from_path(path)
+        with path.open("r", encoding="utf-8", newline="") as f:
+            for row in csv.DictReader(f):
+                out = dict(row)
+                out.setdefault("mix_name", mix_name)
+                rows.append(out)
+    return rows
+
+
+def _energy_value(row: dict[str, Any]) -> float:
+    return _safe_feature(row.get("energy"))
+
+
+def _feature_matrix(rows: list[dict[str, Any]], feature_names: list[str]) -> np.ndarray:
+    return np.asarray(
+        [[_safe_feature(row.get(feature)) for feature in feature_names] for row in rows],
+        dtype=np.float64,
+    )
+
+
+def _r2_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    y = np.asarray(y_true, dtype=np.float64)
+    pred = np.asarray(y_pred, dtype=np.float64)
+    ss_res = float(np.sum(np.square(y - pred)))
+    ss_tot = float(np.sum(np.square(y - float(np.mean(y)))))
+    if ss_tot <= 0:
+        return float("nan")
+    return 1.0 - ss_res / ss_tot
+
+
+def fit_full_energy_model(rows: list[dict[str, Any]], *, min_valid_features: int = 4) -> EnergyModelResult:
+    """Fit the replaceable full energy model from labeled feature rows."""
+    y_all = np.asarray([_energy_value(row) for row in rows], dtype=np.float64)
+    X_all = _feature_matrix(rows, FULL_ENERGY_FEATURE_KEYS)
+    train_mask = np.isfinite(y_all) & np.any(np.isfinite(X_all), axis=1)
+    if int(np.sum(train_mask)) < 6:
+        nan_pred = np.full(len(rows), np.nan, dtype=np.float64)
+        return EnergyModelResult(
+            model_name=FULL_ENERGY_MODEL_NAME,
+            feature_names=[],
+            predictions=nan_pred,
+            oof_predictions=nan_pred.copy(),
+            best_alpha=float("nan"),
+            baseline_mae=float("nan"),
+            oof_mae=float("nan"),
+            oof_r2=float("nan"),
+            train_mae=float("nan"),
+            train_r2=float("nan"),
+            available=False,
+        )
+
+    valid_feature_mask = np.sum(np.isfinite(X_all[train_mask]), axis=0) >= int(min_valid_features)
+    feature_names = [name for name, keep in zip(FULL_ENERGY_FEATURE_KEYS, valid_feature_mask) if keep]
+    if not feature_names:
+        nan_pred = np.full(len(rows), np.nan, dtype=np.float64)
+        return EnergyModelResult(
+            model_name=FULL_ENERGY_MODEL_NAME,
+            feature_names=[],
+            predictions=nan_pred,
+            oof_predictions=nan_pred.copy(),
+            best_alpha=float("nan"),
+            baseline_mae=float("nan"),
+            oof_mae=float("nan"),
+            oof_r2=float("nan"),
+            train_mae=float("nan"),
+            train_r2=float("nan"),
+            available=False,
+        )
+
+    X = X_all[:, valid_feature_mask]
+    X_train = X[train_mask]
+    y_train = y_all[train_mask]
+
+    try:
+        from sklearn.base import clone
+        from sklearn.exceptions import ConvergenceWarning
+        from sklearn.impute import SimpleImputer
+        from sklearn.linear_model import TweedieRegressor
+        from sklearn.metrics import mean_absolute_error
+        from sklearn.model_selection import KFold, RepeatedKFold
+        from sklearn.pipeline import make_pipeline
+        from sklearn.preprocessing import StandardScaler
+        import warnings
+    except ImportError as exc:
+        raise ImportError("The full energy model requires scikit-learn. It is normally installed via umap-learn.") from exc
+
+    base_model = make_pipeline(
+        SimpleImputer(strategy="median"),
+        StandardScaler(),
+        TweedieRegressor(
+            power=0,
+            link="identity",
+            alpha=1.0,
+            fit_intercept=True,
+            max_iter=10000,
+            tol=1e-7,
+        ),
+    )
+    alpha_grid = np.logspace(-3, 2, 26)
+    n_splits = min(5, int(y_train.size))
+    cv = RepeatedKFold(n_splits=n_splits, n_repeats=20, random_state=42)
+    alpha_scores = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ConvergenceWarning)
+        for alpha in alpha_grid:
+            fold_mae = []
+            for train_idx, test_idx in cv.split(X_train, y_train):
+                model = clone(base_model)
+                model.set_params(tweedieregressor__alpha=float(alpha))
+                model.fit(X_train[train_idx], y_train[train_idx])
+                pred = model.predict(X_train[test_idx])
+                fold_mae.append(mean_absolute_error(y_train[test_idx], pred))
+            alpha_scores.append(float(np.mean(fold_mae)))
+    best_alpha = float(alpha_grid[int(np.argmin(np.asarray(alpha_scores, dtype=np.float64)))])
+
+    oof_train = np.full(y_train.shape, np.nan, dtype=np.float64)
+    diagnostic_cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ConvergenceWarning)
+        for train_idx, test_idx in diagnostic_cv.split(X_train, y_train):
+            model = clone(base_model)
+            model.set_params(tweedieregressor__alpha=best_alpha)
+            model.fit(X_train[train_idx], y_train[train_idx])
+            oof_train[test_idx] = model.predict(X_train[test_idx])
+
+    final_model = clone(base_model)
+    final_model.set_params(tweedieregressor__alpha=best_alpha)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ConvergenceWarning)
+        final_model.fit(X_train, y_train)
+    train_pred = final_model.predict(X_train)
+    all_pred = final_model.predict(X)
+
+    oof_all = np.full(len(rows), np.nan, dtype=np.float64)
+    train_positions = np.flatnonzero(train_mask)
+    oof_all[train_positions] = oof_train
+    baseline = np.full_like(y_train, float(np.mean(y_train)), dtype=np.float64)
+    return EnergyModelResult(
+        model_name=FULL_ENERGY_MODEL_NAME,
+        feature_names=feature_names,
+        predictions=np.asarray(all_pred, dtype=np.float64),
+        oof_predictions=oof_all,
+        best_alpha=best_alpha,
+        baseline_mae=float(mean_absolute_error(y_train, baseline)),
+        oof_mae=float(mean_absolute_error(y_train, oof_train)),
+        oof_r2=_r2_score(y_train, oof_train),
+        train_mae=float(mean_absolute_error(y_train, train_pred)),
+        train_r2=_r2_score(y_train, train_pred),
+        available=True,
+    )
+
+
+def default_energy_npz_path(output_dir: str | Path = DEFAULT_ENERGY_EMBEDDING_DIR, *, name: str = "energy_features") -> Path:
+    return Path(output_dir).expanduser().resolve() / f"{name}.npz"
+
+
+def create_energy_embedding_npz(
+    feature_csvs: list[str | Path],
+    *,
+    output_file: str | Path | None = None,
+    manifest_file: str | Path | None = None,
+    name: str = "energy_features",
+    output_dir: str | Path = DEFAULT_ENERGY_EMBEDDING_DIR,
+    model: str = "full",
+) -> Path:
+    """Create the canonical app-consumable energy NPZ from energy feature CSV rows."""
+    rows = _read_feature_csvs(feature_csvs)
+    if not rows:
+        raise RuntimeError("No rows found in energy feature CSV inputs.")
+    if model != "full":
+        raise ValueError("Only model='full' is currently implemented.")
+
+    model_result = fit_full_energy_model(rows)
+    feature_names = list(model_result.feature_names or FULL_ENERGY_FEATURE_KEYS)
+    embeddings = _feature_matrix(rows, feature_names).astype(np.float32)
+
+    output_path = Path(output_file).expanduser().resolve() if output_file is not None else default_energy_npz_path(output_dir, name=name)
+    manifest_path = (
+        Path(manifest_file).expanduser().resolve()
+        if manifest_file is not None
+        else output_path.with_name(f"{output_path.stem}_manifest.csv")
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    energies = np.asarray([_energy_value(row) for row in rows], dtype=np.float32)
+    predictions = np.asarray(model_result.predictions, dtype=np.float32)
+    oof_predictions = np.asarray(model_result.oof_predictions, dtype=np.float32)
+    residual = energies.astype(np.float64) - predictions.astype(np.float64)
+    oof_residual = energies.astype(np.float64) - oof_predictions.astype(np.float64)
+    created_utc = datetime.now(tz=timezone.utc).isoformat()
+
+    np.savez_compressed(
+        output_path,
+        embedding_type=np.array("energy_features", dtype=np.str_),
+        created_utc=np.array(created_utc, dtype=np.str_),
+        model_name=np.array(model_result.model_name, dtype=np.str_),
+        num_tracks=np.array(len(rows), dtype=np.int32),
+        embedding_dimension=np.array(int(embeddings.shape[1]), dtype=np.int32),
+        embeddings=embeddings,
+        feature_names=np.asarray(feature_names, dtype=np.str_),
+        mix_name=np.asarray([str(row.get("mix_name", "")) for row in rows], dtype=np.str_),
+        track_number=np.asarray([str(row.get("track_number", "")) for row in rows], dtype=np.str_),
+        title=np.asarray([str(row.get("title") or row.get("name") or "") for row in rows], dtype=np.str_),
+        artists=np.asarray([str(row.get("artists") or row.get("artist") or "") for row in rows], dtype=np.str_),
+        genre=np.asarray([str(row.get("genre") or "") for row in rows], dtype=np.str_),
+        mp3_name=np.asarray([str(row.get("mp3_name") or row.get("filename") or "") for row in rows], dtype=np.str_),
+        energy=energies,
+        bpm=np.asarray([_safe_feature(row.get("bpm") or row.get("labeled_bpm") or row.get("tempo_embedding_bpm")) for row in rows], dtype=np.float32),
+        glm_available=np.array(bool(model_result.available), dtype=np.bool_),
+        glm_best_alpha=np.array(float(model_result.best_alpha), dtype=np.float32),
+        glm_baseline_mae=np.array(float(model_result.baseline_mae), dtype=np.float32),
+        glm_oof_mae=np.array(float(model_result.oof_mae), dtype=np.float32),
+        glm_oof_r2=np.array(float(model_result.oof_r2), dtype=np.float32),
+        glm_train_mae=np.array(float(model_result.train_mae), dtype=np.float32),
+        glm_train_r2=np.array(float(model_result.train_r2), dtype=np.float32),
+        glm_energy_pred=predictions,
+        glm_energy_oof_pred=oof_predictions,
+        glm_energy_residual=np.asarray(residual, dtype=np.float32),
+        glm_energy_oof_residual=np.asarray(oof_residual, dtype=np.float32),
+    )
+
+    manifest_fields = list(ENERGY_NPZ_FIELDNAMES)
+    for feature in feature_names:
+        if feature not in manifest_fields:
+            manifest_fields.append(feature)
+    with manifest_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=manifest_fields)
+        writer.writeheader()
+        for i, row in enumerate(rows):
+            out = dict(row)
+            out["glm_energy_pred"] = predictions[i]
+            out["glm_energy_oof_pred"] = oof_predictions[i]
+            out["glm_energy_residual"] = residual[i]
+            out["glm_energy_oof_residual"] = oof_residual[i]
+            writer.writerow({field: _csv_value(out.get(field, "")) for field in manifest_fields})
+
+    print(f"Saved energy feature NPZ: {_project_relpath(output_path)}")
+    print(f"Saved energy feature manifest: {_project_relpath(manifest_path)}")
+    print(f"Tracks: {len(rows)}")
+    print(f"Features retained: {len(feature_names)}")
+    print(f"Full energy model available: {bool(model_result.available)}")
+    if model_result.available:
+        print(f"Best alpha: {model_result.best_alpha:.4g}")
+        print(f"OOF MAE: {model_result.oof_mae:.3f}; train MAE: {model_result.train_mae:.3f}")
+    return output_path
+
+
 def create_energy_feature_csv(
     input_csv: str | Path,
     *,
@@ -775,6 +1097,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def parse_npz_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Create canonical energy NPZ from energy feature CSV files.")
+    parser.add_argument(
+        "feature_csv",
+        nargs="+",
+        type=Path,
+        help="Energy feature CSV(s), such as data/energy_features/<stem>_energy_features.csv.",
+    )
+    parser.add_argument("--output-file", type=Path, default=None)
+    parser.add_argument("--manifest-file", type=Path, default=None)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_ENERGY_EMBEDDING_DIR)
+    parser.add_argument("--name", default="energy_features", help="Default output stem when --output-file is omitted.")
+    parser.add_argument("--model", default="full", choices=["full"], help="Energy model spec to use.")
+    return parser.parse_args(argv)
+
+
 def main() -> None:
     args = parse_args()
     create_energy_feature_csv(
@@ -791,6 +1129,19 @@ def main() -> None:
         section_sec=float(args.section_sec),
         max_tracks=args.max_tracks,
     )
+
+
+def energy_npz_main(argv: list[str] | None = None) -> int:
+    args = parse_npz_args(argv)
+    create_energy_embedding_npz(
+        [Path(path) for path in args.feature_csv],
+        output_file=args.output_file,
+        manifest_file=args.manifest_file,
+        name=str(args.name),
+        output_dir=args.output_dir,
+        model=str(args.model),
+    )
+    return 0
 
 
 if __name__ == "__main__":
