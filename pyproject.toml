@@ -55,11 +55,7 @@ djprojectexploration-energy-sequence-builder = "djprojectexploration.energy_sequ
 djprojectexploration-energy-features = "djprojectexploration.energy_features:main"
 djprojectexploration-waveforms = "djprojectexploration.waveform_features:main"
 djprojectexploration-sequence-builder-app = "djprojectexploration.sequence_builder_app:main"
-djprojectexploration-umap-precomputed = "djprojectexploration.interactive_umap_precomputed:main"
-djprojectexploration-pacmap-knn = "djprojectexploration.interactive_pacmap_knn:main"
-djprojectexploration-umap-simplex = "djprojectexploration.interactive_umap_simplex:main"
 djprojectexploration-dj-pacmap = "djprojectexploration.interactive_pacmap_knn_simplex:main"
-djprojectexploration-pacmap-knn-simplex = "djprojectexploration.interactive_pacmap_knn_simplex:main"
 
 [build-system]
 requires = ["hatchling"]

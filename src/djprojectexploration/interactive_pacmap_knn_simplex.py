@@ -1,4 +1,4 @@
-"""Export an interactive 3-way PaCMAP kNN visualization with simplex interpolation."""
+"""Export the canonical interactive DJ embedding visualization."""
 
 from __future__ import annotations
 
@@ -11,15 +11,15 @@ from typing import Any
 
 import numpy as np
 
-from djprojectexploration.interactive_umap_precomputed import (
+from djprojectexploration.interactive_visualization_common import (
     PROJECT_ROOT,
     _align_to_reference,
     _build_plot,
     _json_script_payload,
     _load_combined_records_and_features,
+    _neighbor_pairs_from_distance,
     _normalize_distance_matrix,
 )
-from djprojectexploration.interactive_pacmap_knn import _neighbor_pairs_from_distance
 from djprojectexploration.multimodal_compatibility import (
     _build_harmonic_kernel,
     _pairwise_cosine_similarity_matrix,
@@ -31,6 +31,7 @@ PACMAP_PAIR_SOURCE_CHOICES = ("neighbors-only", "combined-all")
 DISTANCE_COMBINE_CHOICES = ("l2", "l1")
 LAYOUT_INIT_CHOICES = ("neighbor", "pca", "random")
 CONTROL_MODE_CHOICES = ("genre-mixability", "legacy-simplex", "legacy-discrete-simplex")
+REDUCER_CHOICES = ("pacmap", "umap")
 
 
 def _format_setting_value(value: Any) -> str:
@@ -619,6 +620,122 @@ def _compute_pacmap_knn_4way_layouts(
         if reference_coords is None:
             reference_coords = coords
         previous_coords = coords
+        layouts[_simplex_key_4way(weights)] = [[float(x), float(y)] for x, y in coords]
+    return layouts
+
+
+def _compute_umap_simplex_layouts(
+    *,
+    D_maest: np.ndarray,
+    D_tempo: np.ndarray,
+    D_chroma: np.ndarray,
+    grid: list[tuple[float, float, float]],
+    n_neighbors: int,
+    min_dist: float,
+    random_state: int,
+    align: bool,
+    distance_combine: str,
+) -> dict[str, list[list[float]]]:
+    try:
+        from umap import UMAP
+    except ImportError as exc:
+        raise ImportError("UMAP is not installed. Install with: uv add umap-learn") from exc
+
+    if distance_combine not in DISTANCE_COMBINE_CHOICES:
+        raise ValueError(
+            f"distance_combine must be one of {DISTANCE_COMBINE_CHOICES}, got {distance_combine!r}."
+        )
+
+    layouts: dict[str, list[list[float]]] = {}
+    reference: np.ndarray | None = None
+    n = D_maest.shape[0]
+    effective_neighbors = min(max(2, int(n_neighbors)), max(2, n - 1))
+
+    # Compute high-style layouts first so the aligned UMAP sequence has a stable anchor.
+    ordered_grid = sorted(grid, key=lambda w: (-w[0], -w[1], -w[2]))
+    for weights in ordered_grid:
+        D = _combined_distance_3way(
+            D_maest,
+            D_tempo,
+            D_chroma,
+            weights,
+            combine_mode=distance_combine,
+        )
+        reducer = UMAP(
+            n_components=2,
+            n_neighbors=effective_neighbors,
+            min_dist=float(min_dist),
+            metric="precomputed",
+            random_state=int(random_state),
+        )
+        coords = np.asarray(reducer.fit_transform(D), dtype=np.float32)
+        if align and reference is not None:
+            coords = _align_to_reference(reference, coords)
+        if reference is None:
+            reference = coords
+        layouts[_simplex_key(weights)] = [[float(x), float(y)] for x, y in coords]
+    return layouts
+
+
+def _compute_umap_4way_layouts(
+    *,
+    D_maest: np.ndarray,
+    D_tempo: np.ndarray,
+    D_groove: np.ndarray,
+    D_chroma: np.ndarray,
+    grid: list[tuple[float, float, float, float]],
+    n_neighbors: int,
+    min_dist: float,
+    random_state: int,
+    align: bool,
+    distance_combine: str,
+) -> dict[str, list[list[float]]]:
+    try:
+        from umap import UMAP
+    except ImportError as exc:
+        raise ImportError("UMAP is not installed. Install with: uv add umap-learn") from exc
+
+    if distance_combine not in DISTANCE_COMBINE_CHOICES:
+        raise ValueError(
+            f"distance_combine must be one of {DISTANCE_COMBINE_CHOICES}, got {distance_combine!r}."
+        )
+
+    layouts: dict[str, list[list[float]]] = {}
+    reference: np.ndarray | None = None
+    n = D_maest.shape[0]
+    effective_neighbors = min(max(2, int(n_neighbors)), max(2, n - 1))
+
+    ordered_grid = sorted(
+        grid,
+        key=lambda w: (
+            float(np.sum((np.asarray(w, dtype=np.float64) - 0.25) ** 2)),
+            -w[0],
+            -w[1],
+            -w[2],
+            -w[3],
+        ),
+    )
+    for weights in ordered_grid:
+        D = _combined_distance_4way(
+            D_maest,
+            D_tempo,
+            D_groove,
+            D_chroma,
+            weights,
+            combine_mode=distance_combine,
+        )
+        reducer = UMAP(
+            n_components=2,
+            n_neighbors=effective_neighbors,
+            min_dist=float(min_dist),
+            metric="precomputed",
+            random_state=int(random_state),
+        )
+        coords = np.asarray(reducer.fit_transform(D), dtype=np.float32)
+        if align and reference is not None:
+            coords = _align_to_reference(reference, coords)
+        if reference is None:
+            reference = coords
         layouts[_simplex_key_4way(weights)] = [[float(x), float(y)] for x, y in coords]
     return layouts
 
@@ -1643,9 +1760,13 @@ def export_dj_pacmap(
     distance_combine: str = "l2",
     layout_init: str = "neighbor",
     control_mode: str = "genre-mixability",
+    reducer: str = "pacmap",
+    umap_min_dist: float = 0.1,
 ) -> Path:
     if control_mode not in CONTROL_MODE_CHOICES:
         raise ValueError(f"control_mode must be one of {CONTROL_MODE_CHOICES}, got {control_mode!r}.")
+    if reducer not in REDUCER_CHOICES:
+        raise ValueError(f"reducer must be one of {REDUCER_CHOICES}, got {reducer!r}.")
 
     project_root = project_root.expanduser().resolve()
     mix_slugs = mix_slugs or ["aries-mix", "ara-mix"]
@@ -1653,8 +1774,10 @@ def export_dj_pacmap(
         str((project_root / "music" / slug / f"{slug.replace('-', '_')}_tracks.csv").stem)
         for slug in mix_slugs
     )
+    reducer_label = "PaCMAP" if reducer == "pacmap" else "UMAP"
+    reducer_file_tag = "pacmap" if reducer == "pacmap" else "umap"
     output_file = output_file or (
-        project_root / "data" / "exports" / f"{dataset_tag}_interactive_dj_pacmap.html"
+        project_root / "data" / "exports" / f"{dataset_tag}_interactive_dj_{reducer_file_tag}.html"
     )
     output_file = output_file.expanduser().resolve()
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1689,22 +1812,35 @@ def export_dj_pacmap(
             harmonic_self_normalize=True,
         )
         grid = _simplex_grid(step)
-        layouts = _compute_pacmap_knn_simplex_layouts(
-            X_reference=features.maest,
-            D_maest=matrices["maest_distance"],
-            D_tempo=matrices["tempo_distance"],
-            D_chroma=matrices["chroma_distance"],
-            grid=grid,
-            n_neighbors=n_neighbors,
-            mn_ratio=mn_ratio,
-            fp_ratio=fp_ratio,
-            distance=distance,
-            random_state=random_state,
-            align=align_layouts,
-            pair_source=pair_source,
-            distance_combine=distance_combine,
-            layout_init=layout_init,
-        )
+        if reducer == "pacmap":
+            layouts = _compute_pacmap_knn_simplex_layouts(
+                X_reference=features.maest,
+                D_maest=matrices["maest_distance"],
+                D_tempo=matrices["tempo_distance"],
+                D_chroma=matrices["chroma_distance"],
+                grid=grid,
+                n_neighbors=n_neighbors,
+                mn_ratio=mn_ratio,
+                fp_ratio=fp_ratio,
+                distance=distance,
+                random_state=random_state,
+                align=align_layouts,
+                pair_source=pair_source,
+                distance_combine=distance_combine,
+                layout_init=layout_init,
+            )
+        else:
+            layouts = _compute_umap_simplex_layouts(
+                D_maest=matrices["maest_distance"],
+                D_tempo=matrices["tempo_distance"],
+                D_chroma=matrices["chroma_distance"],
+                grid=grid,
+                n_neighbors=n_neighbors,
+                min_dist=umap_min_dist,
+                random_state=random_state,
+                align=align_layouts,
+                distance_combine=distance_combine,
+            )
         initial_key = _simplex_key((0.6, 0.2, 0.2))
         initial_coords = np.asarray(layouts.get(initial_key) or next(iter(layouts.values())), dtype=np.float32)
         similarity_payload = _build_similarity_payload_3way(
@@ -1717,7 +1853,7 @@ def export_dj_pacmap(
             chroma_distance=matrices["chroma_distance"],
             temperature=temperature,
         )
-        title = "Interactive DJ PaCMAP"
+        title = f"Interactive DJ {reducer_label}"
     else:
         groove_embeddings = _load_combined_groove_embeddings(
             project_root=project_root,
@@ -1741,23 +1877,37 @@ def export_dj_pacmap(
             harmonic_self_normalize=True,
         )
         grid4 = _simplex_grid_4way(step)
-        layouts = _compute_pacmap_knn_4way_layouts(
-            X_reference=features.maest,
-            D_maest=matrices["maest_distance"],
-            D_tempo=matrices["tempo_distance"],
-            D_groove=matrices["groove_distance"],
-            D_chroma=matrices["chroma_distance"],
-            grid=grid4,
-            n_neighbors=n_neighbors,
-            mn_ratio=mn_ratio,
-            fp_ratio=fp_ratio,
-            distance=distance,
-            random_state=random_state,
-            align=align_layouts,
-            pair_source=pair_source,
-            distance_combine=distance_combine,
-            layout_init=layout_init,
-        )
+        if reducer == "pacmap":
+            layouts = _compute_pacmap_knn_4way_layouts(
+                X_reference=features.maest,
+                D_maest=matrices["maest_distance"],
+                D_tempo=matrices["tempo_distance"],
+                D_groove=matrices["groove_distance"],
+                D_chroma=matrices["chroma_distance"],
+                grid=grid4,
+                n_neighbors=n_neighbors,
+                mn_ratio=mn_ratio,
+                fp_ratio=fp_ratio,
+                distance=distance,
+                random_state=random_state,
+                align=align_layouts,
+                pair_source=pair_source,
+                distance_combine=distance_combine,
+                layout_init=layout_init,
+            )
+        else:
+            layouts = _compute_umap_4way_layouts(
+                D_maest=matrices["maest_distance"],
+                D_tempo=matrices["tempo_distance"],
+                D_groove=matrices["groove_distance"],
+                D_chroma=matrices["chroma_distance"],
+                grid=grid4,
+                n_neighbors=n_neighbors,
+                min_dist=umap_min_dist,
+                random_state=random_state,
+                align=align_layouts,
+                distance_combine=distance_combine,
+            )
         initial_key = _simplex_key_4way((0.5, 0.2, 0.2, 0.1))
         initial_coords = np.asarray(layouts.get(initial_key) or next(iter(layouts.values())), dtype=np.float32)
         similarity_payload = _build_similarity_payload_4way(
@@ -1772,9 +1922,9 @@ def export_dj_pacmap(
             chroma_distance=matrices["chroma_distance"],
             temperature=temperature,
         )
-        title = "Interactive DJ PaCMAP: Genre vs Mixability"
+        title = f"Interactive DJ {reducer_label}: Genre vs Mixability"
 
-    plot_div_id = f"{dataset_tag}_pacmap_knn_simplex_maest_tempo_chroma".replace("-", "_")
+    plot_div_id = f"{dataset_tag}_{reducer}_simplex_maest_tempo_chroma".replace("-", "_")
     plot_html = _build_plot(
         records,
         initial_coords,
@@ -1792,15 +1942,17 @@ def export_dj_pacmap(
         if output_file.is_relative_to(project_root)
         else output_file,
         "control-mode": control_mode,
+        "reducer": reducer,
         "layout-mode": "discrete" if control_mode == "legacy-discrete-simplex" else "interpolated",
         "distance-combine": distance_combine,
-        "pair-source": pair_source,
-        "layout-init": layout_init,
-        "distance": distance,
+        "pair-source": pair_source if reducer == "pacmap" else "n/a",
+        "layout-init": layout_init if reducer == "pacmap" else "n/a",
+        "distance": distance if reducer == "pacmap" else "precomputed",
+        "umap-min-dist": umap_min_dist if reducer == "umap" else "n/a",
         "random-state": random_state,
         "n-neighbors": n_neighbors,
-        "mn-ratio": mn_ratio,
-        "fp-ratio": fp_ratio,
+        "mn-ratio": mn_ratio if reducer == "pacmap" else "n/a",
+        "fp-ratio": fp_ratio if reducer == "pacmap" else "n/a",
         "step": step,
         "align-layouts": align_layouts,
         "temperature": temperature,
@@ -1809,7 +1961,11 @@ def export_dj_pacmap(
         "bpm-color-scale-pct": bpm_color_scale_pct,
         "track-count": len(records),
         "layout-count": len(layouts),
-        "neighbor-pairs-per-layout": len(records) * min(max(1, int(n_neighbors)), len(records) - 1),
+        "neighbor-pairs-per-layout": (
+            len(records) * min(max(1, int(n_neighbors)), len(records) - 1)
+            if reducer == "pacmap"
+            else "n/a"
+        ),
     }
     if is_legacy_simplex:
         html = _build_simplex_html(
@@ -1846,25 +2002,41 @@ def export_dj_pacmap(
         )
     output_file.write_text(html, encoding="utf-8")
     print(f"Loaded aligned tracks: {len(records)}")
-    print(f"Computed PaCMAP kNN simplex layouts: {len(layouts)}")
+    print(f"Computed {reducer_label} simplex layouts: {len(layouts)}")
     print(f"Control mode: {control_mode}")
-    print(f"PaCMAP pair source: {pair_source}")
+    print(f"Reducer: {reducer}")
+    if reducer == "pacmap":
+        print(f"PaCMAP pair source: {pair_source}")
+        print(f"Layout init mode: {layout_init}")
+        print(f"Neighbor pairs per layout: {len(records) * min(max(1, int(n_neighbors)), len(records) - 1)}")
+    else:
+        print(f"UMAP min_dist: {umap_min_dist}")
     print(f"Distance combine mode: {distance_combine}")
-    print(f"Layout init mode: {layout_init}")
-    print(f"Neighbor pairs per layout: {len(records) * min(max(1, int(n_neighbors)), len(records) - 1)}")
     print(f"Standalone HTML saved to: {output_file}")
     return output_file
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build the interactive DJ PaCMAP HTML.")
+    parser = argparse.ArgumentParser(description="Build the interactive DJ embedding HTML.")
     parser.add_argument("--mix-slug", action="append", dest="mix_slugs")
     parser.add_argument("--output-file", type=Path, default=None)
+    parser.add_argument(
+        "--reducer",
+        choices=REDUCER_CHOICES,
+        default="pacmap",
+        help="Embedding reducer used to generate the precomputed layout grid.",
+    )
     parser.add_argument("--random-state", type=int, default=7777)
     parser.add_argument("--n-neighbors", type=int, default=10)
     parser.add_argument("--mn-ratio", type=float, default=0.5)
     parser.add_argument("--fp-ratio", type=float, default=1.5)
     parser.add_argument("--distance", default="angular")
+    parser.add_argument(
+        "--umap-min-dist",
+        type=float,
+        default=0.1,
+        help="UMAP min_dist value when --reducer umap is selected.",
+    )
     parser.add_argument("--step", type=float, default=0.1)
     parser.add_argument("--no-align-layouts", action="store_true")
     parser.add_argument("--background-links-per-song", type=int, default=3)
@@ -1934,6 +2106,8 @@ def main() -> None:
         distance_combine=args.distance_combine,
         layout_init=args.layout_init,
         control_mode=args.control_mode,
+        reducer=args.reducer,
+        umap_min_dist=args.umap_min_dist,
     )
 
 

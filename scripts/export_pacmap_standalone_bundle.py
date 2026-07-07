@@ -17,7 +17,10 @@ from typing import Any
 import numpy as np
 
 from djprojectexploration.interactive_pacmap_knn_simplex import _component_matrices_3way
-from djprojectexploration.interactive_umap_precomputed import PROJECT_ROOT, _load_combined_records_and_features
+from djprojectexploration.interactive_visualization_common import (
+    PROJECT_ROOT,
+    _load_combined_records_and_features,
+)
 
 
 def _json_default(value: Any) -> Any:

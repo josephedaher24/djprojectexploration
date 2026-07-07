@@ -14,8 +14,8 @@ The most active workflows are:
 
 - **DJ Sequence Builder**: a PaCMAP-based track browser, recommendation surface, sequence editor, library view, diagnostics
   panel, and transition preview workflow.
-- **Interactive DJ PaCMAP**: a standalone PaCMAP visualization with controls for balancing style/genre against tempo,
-  groove, and key compatibility.
+- **Interactive DJ PaCMAP / UMAP**: a standalone embedding visualization with controls for balancing style/genre against
+  tempo, groove, and key compatibility.
 - **Transition tools**: local transition rendering, waveform/automation visualization, and a small web workbench for
   testing cue points, pitch shifts, crossfades, EQ, and filters.
 - **Playlist feature pipelines**: MAEST, chroma, tempo, groove, waveform, energy, and optional DEAM feature extraction into
@@ -123,7 +123,7 @@ grid of PaCMAP layouts and interpolates between them in the browser:
 uv run djprojectexploration-sequence-builder-app --dynamic-layout --step 0.1
 ```
 
-### Interactive DJ PaCMAP
+### Interactive DJ PaCMAP / UMAP
 
 Generate the standalone PaCMAP visualization:
 
@@ -141,6 +141,7 @@ Useful options:
 
 ```bash
 uv run djprojectexploration-dj-pacmap \
+  --reducer pacmap \
   --control-mode genre-mixability \
   --n-neighbors 10 \
   --mn-ratio 0.5 \
@@ -148,14 +149,17 @@ uv run djprojectexploration-dj-pacmap \
   --step 0.1
 ```
 
-Compatibility aliases:
+Generate the same interactive HTML shell with UMAP layouts instead of PaCMAP:
 
 ```bash
-uv run djprojectexploration-pacmap-knn-simplex
-uv run djprojectexploration-pacmap-knn
-uv run djprojectexploration-umap-precomputed
-uv run djprojectexploration-umap-simplex
+uv run djprojectexploration-dj-pacmap \
+  --reducer umap \
+  --umap-min-dist 0.1 \
+  --step 0.1
 ```
+
+The older experimental UMAP and PaCMAP scripts have been retired. Use `djprojectexploration-dj-pacmap` for standalone
+HTML exports and reducer comparisons.
 
 ## Transition Tools
 

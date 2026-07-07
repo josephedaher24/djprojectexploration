@@ -24,7 +24,7 @@ from djprojectexploration.interactive_pacmap_knn_simplex import (
     _load_combined_groove_embeddings,
     _simplex_grid_4way,
 )
-from djprojectexploration.interactive_umap_precomputed import simplify_genre
+from djprojectexploration.interactive_visualization_common import simplify_genre
 from djprojectexploration.multimodal_compatibility import (
     SongFeatureSet,
     SongMetadata,
