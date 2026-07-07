@@ -22,8 +22,9 @@ The most active workflows are:
   compact NPZ files.
 
 Generated HTML, snippets, artwork, waveforms, transition renders, and local audio are treated as disposable artifacts.
-Commit source code, docs, small CSV metadata, and intentionally shared feature bundles; avoid committing generated exports
-unless they are explicitly part of a handoff.
+Commit source code, docs, small CSV metadata, intentionally shared feature bundles, and the packaged frontend assets under
+`src/djprojectexploration/templates/` and `src/djprojectexploration/static/`; avoid committing generated exports unless
+they are explicitly part of a handoff.
 
 ## Requirements
 
@@ -79,6 +80,31 @@ data/exports/
 The default demo still centers on `aries-mix` and `ara-mix`, but most playlist commands accept either a tracklist path or
 repeatable `--mix` arguments.
 
+## Source Layout
+
+Most production code lives under `src/djprojectexploration/`. The main app/export modules are:
+
+- `energy_sequence_builder.py`: builds the sequence-builder data payload, PaCMAP layouts, recommendations, and standalone
+  HTML export.
+- `interactive_pacmap_knn_simplex.py`: canonical standalone PaCMAP/UMAP visualization exporter.
+- `transition_workbench.py`: local transition-rendering workbench and API.
+- `sequence_builder_app.py`: local served sequence-builder app that combines the static sequence UI with transition
+  rendering endpoints.
+
+Frontend bundles are no longer embedded directly in the Python modules:
+
+- `templates/*.html`: reusable HTML shells and control fragments.
+- `static/*.css`: packaged CSS for standalone exports and local apps.
+- `static/*.js`: packaged browser logic for the sequence builder, PaCMAP/UMAP visualizer, and workbench.
+- `frontend_assets.py`: loads packaged templates/static files and renders self-contained HTML documents.
+- `local_http.py`: shared helpers for JSON/text responses, byte-range file serving, and artifact routes used by the local
+  apps.
+
+The exporters still write single-file standalone HTML by inlining the packaged CSS and JS at export time. The local served
+apps use the same generated HTML surface, plus HTTP endpoints for audio/artifact access.
+
+For details on modifying browser behavior, see `docs/frontend_architecture.md`.
+
 ## Main Apps
 
 ### Sequence Builder
@@ -94,6 +120,9 @@ Default output:
 ```text
 data/exports/dj_sequence_builder.html
 ```
+
+This static export is self-contained and is useful for layout/debugging work. It can open from disk or be served from
+`data/exports/`, but local transition rendering and some audio/artifact routes require the served app.
 
 Run the served app when you want full local audio, artwork, waveform, and transition-render support:
 
@@ -160,6 +189,18 @@ uv run djprojectexploration-dj-pacmap \
 
 The older experimental UMAP and PaCMAP scripts have been retired. Use `djprojectexploration-dj-pacmap` for standalone
 HTML exports and reducer comparisons.
+
+To serve a generated static export for quick browser checks:
+
+```bash
+python3 -m http.server 8788 --directory data/exports
+```
+
+Then open the generated file, for example:
+
+```text
+http://127.0.0.1:8788/dj_sequence_builder.html
+```
 
 ## Transition Tools
 

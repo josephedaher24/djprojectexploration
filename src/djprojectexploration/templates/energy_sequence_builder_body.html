@@ -1,0 +1,116 @@
+<header class="app-header">
+  <h1>{{TITLE}}</h1>
+  <nav class="pane-tabs" aria-label="Builder panes">
+    <button class="tab-button active" data-pane-tab="explore">Explore</button>
+    <button class="tab-button" data-pane-tab="library">Library</button>
+    <button class="tab-button" data-pane-tab="diagnostics">Diagnostics</button>
+    <button class="tab-button" data-pane-tab="preview">Transition Preview</button>
+  </nav>
+</header>
+<section class="builder">
+  <section id="pane-explore" class="pane active">
+    <div class="top-workspace">
+      <div class="plot-column">
+        <div class="plot-pane">
+          {{PLOT_HTML}}
+          <canvas id="map-effects-canvas" class="map-effects-canvas" aria-hidden="true"></canvas>
+          <div id="song-hover-card" class="song-hover-card hidden"></div>
+        </div>
+        <div id="song-popover" class="song-panel hidden">
+          <div id="selected-track" class="song-panel-body"></div>
+          <div id="song-wave-player" class="wave-player">
+            <button id="song-player-toggle" class="player-toggle" type="button" aria-label="Play">Play</button>
+            <div class="wave-main">
+              <div class="wave-topline">
+                <span id="song-player-status" class="muted">Preview</span>
+                <span id="song-player-time" class="muted">0:00 / 0:00</span>
+              </div>
+              <canvas id="song-waveform" class="song-waveform" height="54"></canvas>
+            </div>
+          </div>
+          <audio id="track-audio" preload="metadata"></audio>
+          <div class="actions">
+            <button id="set-outgoing">Set Track 1</button>
+            <button id="set-incoming">Set Track 2</button>
+            <button id="append-selected">Append</button>
+            <button id="clear-transition">Clear</button>
+          </div>
+        </div>
+      </div>
+      <aside class="side-controls">
+        <div id="transition-badges" class="transition-badges"></div>
+        <div class="control-grid">
+          <label>Sequence length <input id="sequence-length" type="number" min="2" max="40" step="1"></label>
+          <label>Energy source
+            <select id="energy-source">
+              <option value="human">Tagged energy</option>
+              <option value="glm">Auto energy</option>
+            </select>
+          </label>
+          <label>Point color
+            <select id="color-mode">
+              <option value="genre">Genre</option>
+              <option value="energy">Energy</option>
+              <option value="tempo">Tempo</option>
+            </select>
+          </label>
+          <label>Map FX <input id="map-effects-enabled" type="checkbox" checked></label>
+          <label>Energy penalty <input id="energy-penalty-scale" type="range" min="0" max="10" step="0.05" value="2"></label>
+          <output id="energy-penalty-scale-val">2.00</output>
+          {{WEIGHT_CONTROLS_HTML}}
+        </div>
+        <div class="side-actions">
+          <button id="clear-last">Clear last</button>
+          <button id="reset-sequence">Reset sequence</button>
+          <button id="download-sequence">Download CSV</button>
+        </div>
+      </aside>
+    </div>
+    <div class="explore-lower-grid">
+      <div class="energy-column">
+        <h2>Energy Curve</h2>
+        <div id="energy-curve" class="energy-curve"></div>
+        <h2>Recommendations</h2>
+        <div id="recommendation-panel" class="recommendation-panel">Select a current track to score candidates.</div>
+      </div>
+      <div class="sequence-panel">
+        <h2>Sequence</h2>
+        <div id="sequence-list" class="sequence-list"></div>
+      </div>
+    </div>
+  </section>
+  <section id="pane-library" class="pane">
+    <div class="library-panel">
+      <div class="library-toolbar">
+        <label>Search <input id="library-search" type="search" placeholder="title, artist, key, genre, mix"></label>
+      </div>
+      <div id="library-table" class="library-table"></div>
+    </div>
+  </section>
+  <section id="pane-diagnostics" class="pane">
+    <div>
+      <h2>Selected Transition</h2>
+      <div id="current-transition-score" class="current-transition-score"></div>
+    </div>
+    <div>
+      <h2>Transition Diagnostics</h2>
+      <div id="transition-diagnostics" class="transition-diagnostics"></div>
+    </div>
+  </section>
+  <section id="pane-preview" class="pane">
+    <div id="transition-preview-panel" class="transition-preview-panel"></div>
+  </section>
+</section>
+<div id="global-player" class="global-player idle">
+  <div id="global-art" class="global-art art-placeholder">art</div>
+  <div class="global-track">
+    <div id="global-title" class="track-title">No track playing</div>
+    <div id="global-artist" class="track-artist muted">Select a track to preview</div>
+  </div>
+  <button id="global-toggle" class="player-toggle" type="button" aria-label="Play" disabled>Play</button>
+  <input id="global-scrub" class="scrub-range global-scrub" type="range" min="0" max="1" step="0.1" value="0">
+  <div id="global-time" class="scrub-time">0:00 / 0:00</div>
+  <label class="global-volume"><span>Vol</span><input id="global-volume" class="scrub-range" type="range" min="0" max="1" step="0.01" value="0.85"></label>
+  <button id="global-track1" type="button">Track 1</button>
+  <button id="global-track2" type="button">Track 2</button>
+</div>

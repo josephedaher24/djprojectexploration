@@ -1,0 +1,31 @@
+  :root { color-scheme: light; --line:#d9dee8; --ink:#17202a; --muted:#5b6678; }
+  body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 18px; color: var(--ink); background: #f6f8fb; }
+  h1 { font-size: 22px; margin: 0 0 14px; }
+  .workspace { display:grid; grid-template-columns:minmax(0, 1fr) 390px; gap:12px; align-items:start; }
+  .plot-pane { min-width:0; }
+  .side-panel { display:grid; gap:10px; position:sticky; top:12px; }
+  .detail-panel { display:grid; gap:10px; margin-top:12px; }
+  .box, .weights { border:1px solid var(--line); background:#fff; padding:10px; }
+  .control-grid { display:grid; gap:10px; align-items:center; }
+  .simplex-control { width:100%; display:block; touch-action:none; user-select:none; }
+  .simplex-area { fill:#fbfcff; stroke:#9aa8bc; stroke-width:1.5; }
+  .simplex-grid-line { stroke:#d8deea; stroke-width:0.8; }
+  .simplex-label { fill:#2f3a4c; font-size:13px; font-weight:600; text-anchor:middle; }
+  .simplex-handle { fill:#111827; stroke:#fff; stroke-width:4; cursor:grab; }
+  .simplex-handle:active { cursor:grabbing; }
+  .weights { display:grid; grid-template-columns: 72px 1fr 56px; gap:8px; align-items:center; }
+  .settings-panel h2 { font-size:14px; margin:0 0 8px; }
+  .settings-panel dl { display:grid; grid-template-columns: minmax(120px, auto) minmax(0, 1fr); gap:5px 10px; margin:0; font-size:12px; }
+  .settings-panel dt { color:var(--muted); }
+  .settings-panel dd { margin:0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap:anywhere; }
+  .muted { color:var(--muted); font-size:12px; }
+  audio { width:100%; display:block; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { border-bottom:1px solid #edf0f5; padding:5px 6px; vertical-align:top; }
+  th { position:sticky; top:0; background:#f9fafc; z-index:1; text-align:left; color:#3c4758; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .table-wrap { max-height:380px; overflow:auto; border:1px solid #edf0f5; }
+  @media (max-width: 980px) {
+    .workspace { grid-template-columns:1fr; }
+    .side-panel { position:static; }
+  }

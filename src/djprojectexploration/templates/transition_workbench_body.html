@@ -1,0 +1,45 @@
+<main>
+  <aside>
+    <h1>Transition Workbench</h1>
+    <div class="grid">
+      <label>Track 1<select id="from-track"></select></label>
+      <label>Track 1 cue<select id="from-cue"></select></label>
+      <label>Track 2<select id="to-track"></select></label>
+      <label>Track 2 cue<select id="to-cue"></select></label>
+      <div class="divider"></div>
+      <div class="row">
+        <label>Overlap bars<input id="overlap-bars" type="number" min="1" max="64" step="1" value="16"></label>
+        <label>Padding bars<input id="padding-bars" type="number" min="0" max="16" step="1" value="2"></label>
+      </div>
+      <div class="row">
+        <label>Front padding<input id="front-padding-bars" type="number" min="0" max="16" step="1" value="2"></label>
+        <label>Back padding<input id="back-padding-bars" type="number" min="0" max="16" step="1" value="2"></label>
+      </div>
+      <div class="row">
+        <label>Track 1 nudge<input id="from-nudge-beats" type="number" min="-16" max="16" step="0.25" value="0"></label>
+        <label>Track 2 nudge<input id="to-nudge-beats" type="number" min="-16" max="16" step="0.25" value="0"></label>
+      </div>
+      <div class="row">
+        <label>Track 1 pitch<select id="from-pitch-shift"></select></label>
+        <label>Track 2 pitch<select id="to-pitch-shift"></select></label>
+      </div>
+      <div id="key-preview" class="status">Keys update after tracks load</div>
+      <label>Preset<select id="preset"></select></label>
+      <label>Volume<select id="volume-mode"></select></label>
+      <label>EQ<select id="eq-mode"></select></label>
+      <label>Filter<select id="filter-mode"></select></label>
+      <div class="row">
+        <button id="render">Render</button>
+        <button id="swap" class="secondary">Swap</button>
+      </div>
+      <div id="status" class="status">Presets: {{PRESETS}}</div>
+    </div>
+  </aside>
+  <section>
+    <div class="topbar">
+      <div id="result-meta" class="meta">No render yet</div>
+      <div id="result-links" class="links"></div>
+    </div>
+    <div id="preview" class="empty">Render a transition to load the preview</div>
+  </section>
+</main>

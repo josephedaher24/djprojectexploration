@@ -13,14 +13,15 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from djprojectexploration.energy_sequence_builder import CONTROL_MODE_CHOICES, PROJECT_ROOT, export_dj_sequence
-from djprojectexploration.transition_preview import DEFAULT_OUTPUT_DIR
-from djprojectexploration.transition_workbench import (
-    DEFAULT_TRACKLISTS,
-    TransitionWorkbench,
-    _error_response,
-    _json_response,
-    _text_response,
+from djprojectexploration.local_http import (
+    artifact_route_parts,
+    error_response,
+    file_response,
+    json_response,
+    text_response,
 )
+from djprojectexploration.transition_preview import DEFAULT_OUTPUT_DIR
+from djprojectexploration.transition_workbench import DEFAULT_TRACKLISTS, TransitionWorkbench
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -34,61 +35,6 @@ def _tracklists_from_mix_slugs(project_root: Path, mix_slugs: list[str] | None) 
         project_root / "music" / mix_slug / f"{mix_slug.replace('-', '_')}_tracks.csv"
         for mix_slug in mix_slugs
     ]
-
-
-def _parse_range_header(value: str, file_size: int) -> tuple[int, int] | None:
-    """Parse a simple single byte range header."""
-    if not value or not value.startswith("bytes=") or file_size <= 0:
-        return None
-    range_text = value[len("bytes=") :].split(",", 1)[0].strip()
-    if "-" not in range_text:
-        return None
-    start_text, end_text = range_text.split("-", 1)
-    try:
-        if start_text == "":
-            suffix = int(end_text)
-            if suffix <= 0:
-                return None
-            start = max(0, file_size - suffix)
-            end = file_size - 1
-        else:
-            start = int(start_text)
-            end = int(end_text) if end_text else file_size - 1
-    except ValueError:
-        return None
-    if start < 0 or start >= file_size or end < start:
-        return None
-    return start, min(end, file_size - 1)
-
-
-def _serve_file_response(handler: BaseHTTPRequestHandler, path: Path, content_type: str) -> None:
-    file_size = path.stat().st_size
-    byte_range = _parse_range_header(handler.headers.get("Range", ""), file_size)
-    try:
-        if byte_range is None:
-            data = path.read_bytes()
-            handler.send_response(HTTPStatus.OK)
-            handler.send_header("Content-Type", content_type)
-            handler.send_header("Content-Length", str(len(data)))
-            handler.send_header("Accept-Ranges", "bytes")
-            handler.end_headers()
-            handler.wfile.write(data)
-            return
-
-        start, end = byte_range
-        length = end - start + 1
-        with path.open("rb") as handle:
-            handle.seek(start)
-            data = handle.read(length)
-        handler.send_response(HTTPStatus.PARTIAL_CONTENT)
-        handler.send_header("Content-Type", content_type)
-        handler.send_header("Content-Length", str(len(data)))
-        handler.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
-        handler.send_header("Accept-Ranges", "bytes")
-        handler.end_headers()
-        handler.wfile.write(data)
-    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
-        pass
 
 
 class SequenceBuilderApp:
@@ -152,16 +98,16 @@ def make_handler(app: SequenceBuilderApp) -> type[BaseHTTPRequestHandler]:
             parsed = urlparse(self.path)
             path = parsed.path
             if path in {"/", "/index.html"}:
-                _text_response(self, HTTPStatus.OK, app.html, "text/html; charset=utf-8")
+                text_response(self, HTTPStatus.OK, app.html, "text/html; charset=utf-8")
                 return
             if path == "/api/tracks":
                 try:
-                    _json_response(self, HTTPStatus.OK, app.workbench.tracks_payload())
+                    json_response(self, HTTPStatus.OK, app.workbench.tracks_payload())
                 except Exception as exc:
-                    _error_response(self, HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+                    error_response(self, HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
                 return
             if path == "/api/options":
-                _json_response(self, HTTPStatus.OK, app.workbench.options_payload())
+                json_response(self, HTTPStatus.OK, app.workbench.options_payload())
                 return
             if path.startswith("/artifacts/"):
                 self._serve_artifact(path)
@@ -169,12 +115,12 @@ def make_handler(app: SequenceBuilderApp) -> type[BaseHTTPRequestHandler]:
             if path.startswith("/assets/"):
                 self._serve_asset(path)
                 return
-            _error_response(self, HTTPStatus.NOT_FOUND, "Not found")
+            error_response(self, HTTPStatus.NOT_FOUND, "Not found")
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
             if parsed.path != "/api/render-transition":
-                _error_response(self, HTTPStatus.NOT_FOUND, "Not found")
+                error_response(self, HTTPStatus.NOT_FOUND, "Not found")
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -182,30 +128,30 @@ def make_handler(app: SequenceBuilderApp) -> type[BaseHTTPRequestHandler]:
                 payload = json.loads(body)
                 if not isinstance(payload, dict):
                     raise ValueError("Request body must be a JSON object.")
-                _json_response(self, HTTPStatus.OK, app.render_transition(payload))
+                json_response(self, HTTPStatus.OK, app.render_transition(payload))
             except Exception as exc:
-                _error_response(self, HTTPStatus.BAD_REQUEST, str(exc))
+                error_response(self, HTTPStatus.BAD_REQUEST, str(exc))
 
         def _serve_artifact(self, path: str) -> None:
-            parts = [unquote(part) for part in path.split("/") if part]
-            if len(parts) != 3:
-                _error_response(self, HTTPStatus.NOT_FOUND, "Artifact not found")
+            artifact_parts = artifact_route_parts(path)
+            if artifact_parts is None:
+                error_response(self, HTTPStatus.NOT_FOUND, "Artifact not found")
                 return
-            _, transition_id, filename = parts
+            transition_id, filename = artifact_parts
             artifact = app.artifact_path(transition_id, filename)
             if artifact is None:
-                _error_response(self, HTTPStatus.NOT_FOUND, "Artifact not found")
+                error_response(self, HTTPStatus.NOT_FOUND, "Artifact not found")
                 return
             content_type = mimetypes.guess_type(str(artifact))[0] or "application/octet-stream"
-            _serve_file_response(self, artifact, content_type)
+            file_response(self, artifact, content_type)
 
         def _serve_asset(self, path: str) -> None:
             asset = app.asset_path(path[len("/assets/") :])
             if asset is None:
-                _error_response(self, HTTPStatus.NOT_FOUND, "Asset not found")
+                error_response(self, HTTPStatus.NOT_FOUND, "Asset not found")
                 return
             content_type = mimetypes.guess_type(str(asset))[0] or "application/octet-stream"
-            _serve_file_response(self, asset, content_type)
+            file_response(self, asset, content_type)
 
     return Handler
 
