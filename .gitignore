@@ -24,5 +24,33 @@ data/snippets/
 data/exports/*.csv
 data/exports/*.txt
 
+# Generated media, analysis, and app artifacts
+data/artwork/
+data/waveform_features/
+data/waveform_peaks/
+data/transitions/
+data/exports/
+data/rekordbox/
+data/synthetic/
+data/groove_embeddings/
+data/maest_embeddings/
+data/chroma_embeddings/
+data/tempo_embeddings/
+data/deam_valence_arousal/
+data/energy_embeddings/
+data/multimodal_compatibility/
+
+# Local audio and generated music-side assets
+music/**/*.mp3
+music/**/*_chromagram.png
+music/**/*_cues.csv
+music/**/*_preview_sections.csv
+music/**/*_tracks_rekordbox.csv
+
+# Standalone visualization build artifacts
+pacmap/data*/
+pacmap/*.html
+pacmap/*.zip
+
 # Notebook export scratch scripts
 .tmp_*.py

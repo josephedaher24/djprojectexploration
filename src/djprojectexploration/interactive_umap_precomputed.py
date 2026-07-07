@@ -43,6 +43,59 @@ def _row_token(row: dict[str, str]) -> str | None:
     return None
 
 
+GENRE_SIMPLIFICATION_MAP = {
+    "alternative": "Alternative / Indie",
+    "electronica": "Alternative / Indie",
+    "experimental electronic": "Alternative / Indie",
+    "french pop": "Pop / Dance Pop",
+    "pop": "Pop / Dance Pop",
+    "dance pop": "Pop / Dance Pop",
+    "r&b": "Hip-Hop / R&B",
+    "rap": "Hip-Hop / R&B",
+    "hip hop": "Hip-Hop / R&B",
+    "dancehall": "Global / Dancehall",
+    "reggaeton": "Global / Dancehall",
+    "house": "House",
+    "deep house": "House",
+    "disco": "House",
+    "nu disco": "House",
+    "progressive house": "House",
+    "tech house": "House",
+    "bass house": "Bass / Dubstep",
+    "bass house]": "Bass / Dubstep",
+    "dubstep": "Bass / Dubstep",
+    "drum & bass": "Bass / Dubstep",
+    "future bass": "Bass / Dubstep",
+    "trap": "Bass / Dubstep",
+    "uk garage": "Bass / Dubstep",
+    "big room": "Electro / Big Room",
+    "electro house": "Electro / Big Room",
+    "future house": "Electro / Big Room",
+    "future rave": "Electro / Big Room",
+    "melodic techno": "Techno",
+    "techno": "Techno",
+    "synthwave": "Techno",
+    "progressive trance": "Trance",
+    "psytrance": "Trance",
+    "tech trance": "Trance",
+    "trance": "Trance",
+    "uplifting trance": "Trance",
+    "hardstyle": "Hard Dance",
+    "ambient": "Electronic / Other",
+    "chillout": "Electronic / Other",
+    "electronic": "Electronic / Other",
+    "other": "Electronic / Other",
+}
+
+
+def simplify_genre(raw_genre: str) -> str:
+    genre = str(raw_genre or "").strip()
+    if not genre:
+        return "Unknown"
+    key = " ".join(genre.lower().replace("_", " ").split())
+    return GENRE_SIMPLIFICATION_MAP.get(key, genre)
+
+
 def _resolve_audio_path(
     row: dict[str, str],
     fallback_filename: str,
@@ -132,7 +185,8 @@ def _load_combined_records_and_features(
             artists = (row.get("artists") or meta.artist or "").strip()
             key_tag = (row.get("key") or "").strip()
             bpm_tag = (row.get("bpm") or "").strip()
-            genre = (row.get("genre") or meta.genre or "Unknown").strip() or "Unknown"
+            raw_genre = (row.get("genre") or meta.genre or "Unknown").strip() or "Unknown"
+            genre = simplify_genre(raw_genre)
             track_num_tag = (row.get("track_number") or row.get("#") or str(meta.track_number)).strip()
             est_bpm = float(mix_features.tempo_bpm[local_i])
             est_conf = float(mix_features.tempo_confidence[local_i])
@@ -195,6 +249,7 @@ def _load_combined_records_and_features(
                     "title": title,
                     "artists": artists,
                     "genre": genre,
+                    "raw_genre": raw_genre,
                     "key": key_tag,
                     "csv_bpm": bpm_tag,
                     "est_bpm": est_bpm,
@@ -421,7 +476,7 @@ def _build_plot(
                 p["title"], p["artists"], p["genre"], p["key"], p["csv_bpm"],
                 p["est_bpm"], p["est_conf"], p["track_number"], p["filename"],
                 p["snippet_uri"], p["snippet_start"], p["snippet_end"], p["snippet_rms"],
-                p["idx"], p["mix_slug"],
+                p["idx"], p["mix_slug"], p.get("raw_genre", p["genre"]),
             ]
             for p in pts
         ]
@@ -436,6 +491,7 @@ def _build_plot(
                 "<b>%{customdata[0]}</b><br>"
                 "Artists: %{customdata[1]}<br>"
                 "Genre: %{customdata[2]}<br>"
+                "Tagged Genre: %{customdata[15]}<br>"
                 "Mix: %{customdata[14]}<br>"
                 "Key: %{customdata[3]}<br>"
                 "CSV BPM: %{customdata[4]}<br>"

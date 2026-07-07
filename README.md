@@ -1,8 +1,8 @@
 # djprojectexploration
 
-Exploration repo for DJ/music compatibility experiments. The project extracts audio features from local music
-collections, stores playlist-level embeddings, and generates standalone interactive HTML tools for exploring
-genre/tempo/key compatibility and sequence-building workflows.
+Exploration repo for DJ/music compatibility tooling. The project analyzes local audio collections, writes playlist-level
+feature bundles, and generates interactive tools for exploring track similarity, building energy-aware DJ sequences, and
+auditioning transitions.
 
 ```bash
 uv sync
@@ -10,136 +10,80 @@ uv sync
 
 ## Current Focus
 
-The current handoff-worthy work is centered on two generated HTML tools:
+The most active workflows are:
 
-- **Interactive DJ PaCMAP**: a draggable simplex visualization that blends Genre, Tempo, and Key weighting.
-- **DJ Sequence Builder**: an interactive track-selection and recommendation surface for building energy-aware sequences.
+- **DJ Sequence Builder**: a PaCMAP-based track browser, recommendation surface, sequence editor, library view, diagnostics
+  panel, and transition preview workflow.
+- **Interactive DJ PaCMAP**: a standalone PaCMAP visualization with controls for balancing style/genre against tempo,
+  groove, and key compatibility.
+- **Transition tools**: local transition rendering, waveform/automation visualization, and a small web workbench for
+  testing cue points, pitch shifts, crossfades, EQ, and filters.
+- **Playlist feature pipelines**: MAEST, chroma, tempo, groove, waveform, energy, and optional DEAM feature extraction into
+  compact NPZ files.
 
-Both tools are generated from Python and use local feature files plus cached audio snippets. The generated pages embed
-the visualization data and frontend JavaScript; audio snippets remain external `.wav` files.
+Generated HTML, snippets, artwork, waveforms, transition renders, and local audio are treated as disposable artifacts.
+Commit source code, docs, small CSV metadata, and intentionally shared feature bundles; avoid committing generated exports
+unless they are explicitly part of a handoff.
 
 ## Requirements
 
-- `numpy` and `scipy` for core numerical and DSP work
-- `librosa` for higher-level audio analysis
-- `essentia` for music/audio feature extraction
-- `soundfile` for reading and writing audio files
-- `matplotlib` for waveform and spectrogram visualization
-- `plotly` for standalone interactive HTML plots
-- `pacmap` and `umap-learn` for dimensionality reduction prototypes
+The project is managed with `uv` and targets Python 3.13+. Key dependencies include:
 
-## Model Downloads
+- `numpy`, `scipy`: numeric work, distance matrices, DSP
+- `librosa`, `soundfile`, `pyloudnorm`: audio loading, rendering, waveform and loudness features
+- `essentia`, `essentia-tensorflow`, `tensorflow`: MAEST, TempoCNN, DEAM, and related model inference
+- `plotly`, `pacmap`, `umap-learn`: interactive plots and dimensionality reduction
+- `mutagen`: MP3 duration/tag/artwork metadata
+- `matplotlib`, `kaleido`, Jupyter packages: exploratory analysis and export support
 
-Raw model files must be downloaded from [Essentia](https://essentia.upf.edu/models.html), including:
-- deam-msd-musicnn-2.pb
-- discogs-maest-30s-pw-519l-2.pb
-- msd-musicnn-1.pb
+Some code paths import `PIL.Image` for artwork extraction. If your environment does not already provide Pillow
+transitively, add it explicitly.
 
-## Development
+## Model Files
 
-```bash
-uv add <package>
-uv run python -m djprojectexploration
+Essentia model files are expected under `models/` when needed:
+
+```text
+models/discogs-maest-30s-pw-519l-2.pb
+models/deeptemp-k16-3.pb
+models/msd-musicnn-1.pb
+models/deam-msd-musicnn-2.pb
 ```
 
-Useful generated-file paths are ignored or treated as disposable handoff artifacts. Prefer committing source code,
-small CSV/NPZ input data, and documentation; share generated HTML/snippet bundles separately when possible.
+Raw models can be downloaded from Essentia's model catalog. Tempo tooling can also use `--auto-download-model` for the
+default TempoCNN model.
 
 ## Data Layout
 
-The repo currently uses CSV tracklists plus playlist-level NPZ feature bundles as the source of truth for the
-interactive generators.
-
-Important paths for the current `aries-mix + ara-mix` demo:
+The tools are organized around playlist CSVs plus playlist-level NPZ feature bundles.
 
 ```text
-music/aries-mix/aries_mix_tracks.csv
-music/ara-mix/ara_mix_tracks.csv
+music/<mix-slug>/<mix_slug>_tracks.csv
+music/<mix-slug>/<mix_slug>_cues.csv
+music/<mix-slug>/<mix_slug>_preview_sections.csv
 
-data/maest_embeddings/aries_mix_tracks.npz
-data/maest_embeddings/ara_mix_tracks.npz
-
-data/chroma_embeddings/aries_mix_tracks.npz
-data/chroma_embeddings/ara_mix_tracks.npz
-
-data/tempo_embeddings/aries_mix_tracks.npz
-data/tempo_embeddings/ara_mix_tracks.npz
-
+data/maest_embeddings/<csv-stem>.npz
+data/chroma_embeddings/<csv-stem>.npz
+data/tempo_embeddings/<csv-stem>.npz
+data/groove_embeddings/<csv-stem>.npz
+data/waveform_features/<csv-stem>.npz
+data/energy_features/<csv-stem>_energy_features.csv
 data/energy_embeddings/aries_ara_energy_features.npz
+
+data/snippets/<csv-stem>/
+data/artwork/
+data/transitions/
+data/exports/
 ```
 
-Snippet cache used by interactive playback:
+The default demo still centers on `aries-mix` and `ara-mix`, but most playlist commands accept either a tracklist path or
+repeatable `--mix` arguments.
 
-```text
-data/snippets/aries_mix_tracks/
-data/snippets/ara_mix_tracks/
-```
+## Main Apps
 
-Generated standalone HTML defaults:
+### Sequence Builder
 
-```text
-data/exports/aries_mix_tracks__ara_mix_tracks_interactive_dj_pacmap.html
-data/exports/dj_sequence_builder.html
-```
-
-For frontend work, treat `.npz` as the Python/backend numeric format and JSON/HTML as frontend export formats.
-Do not convert large embedding arrays to JSON unless the browser actually needs them.
-
-## Interactive DJ PaCMAP
-
-Generate the current PaCMAP-based DJ visualization:
-
-```bash
-uv run djprojectexploration-dj-pacmap
-```
-
-Equivalent module command:
-
-```bash
-.venv/bin/python -m djprojectexploration.interactive_pacmap_knn_simplex
-```
-
-Default output:
-
-```text
-data/exports/aries_mix_tracks__ara_mix_tracks_interactive_dj_pacmap.html
-```
-
-The page uses a draggable triangle/simplex control:
-
-- `Genre` is backed by MAEST similarity internally.
-- `Tempo` is backed by tempo similarity.
-- `Key` is backed by chroma/HPCP harmonic similarity internally.
-
-The generator precomputes PaCMAP layouts over a 3-way simplex grid and interpolates between them in the browser.
-Current defaults include:
-
-- `step=0.1`, producing 66 simplex layouts
-- `n_neighbors=8`
-- `MN_ratio=1.0`
-- `FP_ratio=1.5`
-- `distance=angular`
-- neighbor-aware traversal/alignment from a central simplex anchor
-
-Useful options:
-
-```bash
-uv run djprojectexploration-dj-pacmap \
-  --n-neighbors 10 \
-  --mn-ratio 0.8 \
-  --fp-ratio 1.8 \
-  --step 0.1
-```
-
-The previous longer command is still available for compatibility:
-
-```bash
-uv run djprojectexploration-pacmap-knn-simplex
-```
-
-## DJ Sequence Builder
-
-Generate the current sequence-builder page:
+Generate a standalone HTML snapshot:
 
 ```bash
 uv run djprojectexploration-dj-sequence
@@ -151,205 +95,216 @@ Default output:
 data/exports/dj_sequence_builder.html
 ```
 
-The page combines PaCMAP track selection with compatibility/recommendation controls and energy metadata loaded from:
+Run the served app when you want full local audio, artwork, waveform, and transition-render support:
+
+```bash
+uv run djprojectexploration-sequence-builder-app
+```
+
+Default URL:
 
 ```text
-data/energy_embeddings/aries_ara_energy_features.npz
+http://127.0.0.1:8770/
 ```
 
 Useful options:
 
 ```bash
-uv run djprojectexploration-dj-sequence \
-  --sequence-length 12 \
+uv run djprojectexploration-sequence-builder-app \
   --mix aries-mix \
-  --mix ara-mix
+  --mix ara-mix \
+  --sequence-length 12
 ```
 
-The previous longer command is still available:
+The sequence builder uses MAEST/style, tempo, groove, and chroma/key compatibility. In dynamic layout mode it precomputes a
+grid of PaCMAP layouts and interpolates between them in the browser:
 
 ```bash
-uv run djprojectexploration-energy-sequence-builder
+uv run djprojectexploration-sequence-builder-app --dynamic-layout --step 0.1
 ```
 
-## Sharing Artifacts
+### Interactive DJ PaCMAP
 
-For sharing a working demo without committing generated/audio files, create or use these archives:
+Generate the standalone PaCMAP visualization:
+
+```bash
+uv run djprojectexploration-dj-pacmap
+```
+
+Default output:
 
 ```text
-data/exports/dj_interactive_htmls.zip
-data/exports/dj_pacmap_snippets.zip
+data/exports/aries_mix_tracks__ara_mix_tracks_interactive_dj_pacmap.html
 ```
 
-The HTML zip contains generated standalone pages. The snippet zip contains:
+Useful options:
+
+```bash
+uv run djprojectexploration-dj-pacmap \
+  --control-mode genre-mixability \
+  --n-neighbors 10 \
+  --mn-ratio 0.5 \
+  --fp-ratio 1.5 \
+  --step 0.1
+```
+
+Compatibility aliases:
+
+```bash
+uv run djprojectexploration-pacmap-knn-simplex
+uv run djprojectexploration-pacmap-knn
+uv run djprojectexploration-umap-precomputed
+uv run djprojectexploration-umap-simplex
+```
+
+## Transition Tools
+
+Render a transition from a tracklist and cue table:
+
+```bash
+uv run djprojectexploration-transition-preview \
+  1 \
+  2 \
+  --tracklist music/aries-mix/aries_mix_tracks.csv \
+  --overlap-bars 16 \
+  --front-padding-bars 2 \
+  --back-padding-bars 2 \
+  --preset auto
+```
+
+Render output is written under `data/transitions/<transition-id>/`:
 
 ```text
-data/snippets/aries_mix_tracks/
-data/snippets/ara_mix_tracks/
+preview.wav
+transition.json
+transition_waveforms.json
+transition_visualizer.html
 ```
 
-When unpacking for playback, preserve the relative `data/exports` and `data/snippets` relationship or update snippet
-paths in the generated HTML.
-
-For a frontend handoff branch, usually commit:
-
-- source files under `src/djprojectexploration/`
-- `pyproject.toml` and `uv.lock`
-- small CSV and NPZ files needed to reproduce the two-mix demo
-- docs describing the data contract
-
-Usually do not commit:
-
-- `data/snippets/`
-- `data/exports/`
-- generated `.zip` bundles
-- large exploratory notebooks unless they are intentionally part of the handoff
-
-## Apple Music playlist exports
-
-Create metadata and file-path exports from a local Apple Music playlist without moving files into a new folder.
-
-Export tracks to CSV (`name,artist,album,genre,bpm,filepath`):
+Export a standalone visualizer for an existing render:
 
 ```bash
-scripts/music/export_playlist_tracks_csv.sh "My Playlist Name"
+uv run djprojectexploration-transition-visualizer data/transitions/<transition-id>
 ```
 
-Export just file paths:
+Run the transition workbench:
 
 ```bash
-scripts/music/export_playlist_filepaths.sh "My Playlist Name"
+uv run djprojectexploration-transition-workbench
 ```
 
-Both commands accept an optional second argument for output path:
+The sequence builder app reuses this backend through `POST /api/render-transition`.
+
+## Feature Pipelines
+
+Build one compressed NPZ per playlist:
+
+```bash
+uv run djprojectexploration-maest-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
+uv run djprojectexploration-chroma-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
+uv run djprojectexploration-tempo-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
+uv run djprojectexploration-groove-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
+uv run djprojectexploration-deam-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
+```
+
+Generate waveform features used by the served sequence builder:
+
+```bash
+uv run djprojectexploration-waveforms music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
+```
+
+Generate energy feature CSVs:
+
+```bash
+uv run djprojectexploration-energy-features music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
+```
+
+Useful common options:
+
+- `--output-file <path>` to override the exact output path
+- `--output-dir <path>` to override the default feature directory
+- `--skip-missing-audio` to skip rows whose audio files are unavailable
+- `--music-dir <path>` when the CSV has `mp3_name` but no absolute `filepath`
+
+## Cue, Preview, and Playlist Utilities
+
+Import Rekordbox cue points:
+
+```bash
+uv run djprojectexploration-rekordbox-cues \
+  path/to/rekordbox.xml \
+  --tracklist music/aries-mix/aries_mix_tracks.csv
+```
+
+Generate preview-section CSVs from snippet metadata:
+
+```bash
+uv run djprojectexploration-preview-sections
+```
+
+Create snippet caches for lightweight playback:
+
+```bash
+uv run djprojectexploration-snippet-cache music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
+```
+
+Export tracks from a local Apple Music playlist on macOS:
 
 ```bash
 scripts/music/export_playlist_tracks_csv.sh "My Playlist Name" data/exports/my_playlist_tracks.csv
 scripts/music/export_playlist_filepaths.sh "My Playlist Name" data/exports/my_playlist_filepaths.txt
 ```
 
-Compatibility wrappers also exist:
-- `scripts/playlist_csv.sh`
-- `scripts/playlist_files.sh`
-
-Notes:
-- Run these from macOS with the Music app library available.
-- Streaming-only tracks with no local file location are included in CSV metadata but have an empty `filepath`.
-- Path-only export skips tracks that have no local file location.
-
-## Playlist embedding pipelines (NPZ only)
-
-Build one compressed embedding file per playlist (no per-track embedding JSON files):
+Compatibility wrappers:
 
 ```bash
-uv run djprojectexploration-maest-playlist data/exports/dataset_tracks.csv
-uv run djprojectexploration-chroma-playlist data/exports/dataset_tracks.csv
-uv run djprojectexploration-tempo-playlist data/exports/dataset_tracks.csv
-uv run djprojectexploration-deam-playlist data/exports/dataset_tracks.csv
+scripts/playlist_csv.sh
+scripts/playlist_files.sh
 ```
 
-Defaults:
-- MAEST output: `data/maest_embeddings/<playlist>_tracks.npz`
-- Chroma output: `data/chroma_embeddings/<playlist>_tracks.npz`
-- Tempo output: `data/tempo_embeddings/<playlist>_tracks.npz`
-- DEAM output: `data/deam_embeddings/<playlist>_tracks.npz`
-- `<playlist>_tracks.npz` comes from the CSV filename stem (for example, `ara_mix_tracks.csv` -> `ara_mix_tracks.npz`)
+## Single-Track Extractors
 
-When your CSV does not include `filepath`, pass `--music-dir` to resolve `mp3_name`:
+These are useful for debugging individual audio files:
 
 ```bash
-uv run djprojectexploration-maest-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
-uv run djprojectexploration-chroma-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
-uv run djprojectexploration-tempo-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
-uv run djprojectexploration-deam-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
+uv run djprojectexploration-maest --audio-file path/to/file.mp3
+uv run djprojectexploration-chroma --audio-file path/to/file.mp3
+uv run djprojectexploration-tempo --audio-file path/to/file.mp3
+uv run djprojectexploration-groove --audio-file path/to/file.mp3
+uv run djprojectexploration-deam --audio-file path/to/file.mp3
 ```
 
-Useful options:
-- `--output-file <path>` to override the exact NPZ output path
-- `--skip-missing-audio` to skip tracks whose audio files are missing
-- Chroma-specific: `--exclude-key-features`, `--sample-rate`, `--frame-size`, `--hop-size`, `--chroma-bins`
-- Tempo-specific: `--model-file`, `--auto-download-model`, `--sample-rate`, `--snippet-length-sec`, `--window-sec`, `--hop-sec`, `--rms-percentile`
-- DEAM-specific: `--embedding-backend`, `--embedding-model-file`, `--regression-model-file`, `--embedding-output`, `--regression-output`, `--sample-rate`
-
-## Snippet cache (for sharing + interactive playback)
-
-Build a lightweight snippet cache (WAV files + manifest) from a playlist CSV:
+## Cleaning Generated Artifacts
 
 ```bash
-uv run djprojectexploration-snippet-cache data/exports/dataset_tracks.csv
+make clean-snippets
+make clean-transitions
+make clean-interactive-html
+make clean-generated
 ```
 
-Defaults:
-- Output dir: `data/snippets/<csv-stem>/`
-- Manifest: `data/snippets/<csv-stem>/snippets_manifest.csv`
-- Snippet length: `8.0s`
-- Snippet sample rate: `22050 Hz` (smaller cache files)
-- Selection strategy: highest RMS window within the middle `66%` of each track
+Generated paths such as `data/exports/`, `data/snippets/`, `data/transitions/`, `data/artwork/`, waveform caches, and local
+MP3 files are ignored for new files. Some historical artifacts may still be tracked; treat those intentionally when
+preparing commits.
 
-Useful options:
-- `--output-dir <path>` to override snippet cache location
-- `--music-dir <path>` when CSV does not include `filepath`
-- `--snippet-seconds <float>`
-- `--middle-fraction <float>`
-- `--hop-seconds <float>`
-- `--target-sample-rate <int>`
-- `--overwrite` to recompute existing snippet files
-- `--skip-missing-audio` to skip tracks with missing files
-
-## MAEST embeddings (Essentia)
+## Development Notes
 
 ```bash
-uv run djprojectexploration-maest \
-  --model-file models/discogs-maest-30s-pw-519l-2.pb \
-  --output-file music/maest_embedding_discogs-maest-30s-pw.json
+uv run python -m djprojectexploration
+uv run python -c "import essentia, librosa, numpy, scipy, soundfile, matplotlib; print('imports ok')"
 ```
 
-Notes:
-- `--audio-file` is optional; if omitted, the first `.mp3` in `music/` is used.
-- If you do not have MAEST support in your Essentia install, use a TensorFlow-enabled build such as `essentia-tensorflow`.
+When preparing a commit, usually include:
 
-## Chroma embeddings (Essentia HPCP)
+- source files under `src/djprojectexploration/`
+- scripts under `scripts/`
+- `pyproject.toml` and `uv.lock`
+- small tracklist/cue CSV metadata
+- documentation
 
-```bash
-uv run djprojectexploration-chroma \
-  --output-file music/chroma_embedding.json
-```
+Usually leave out:
 
-Notes:
-- `--audio-file` is optional; if omitted, the first `.mp3` in `music/` is used.
-- Default behavior is unit-sum normalization without centering (`center_baseline=None`).
-- Use `--center-baseline 0.0833333333` to enable 1/12 centering.
-- Use `--exclude-key-features` to return only the base beat-synchronous mean/std chroma embedding.
-
-## Tempo embeddings (Essentia TempoCNN)
-
-```bash
-uv run djprojectexploration-tempo \
-  --output-file music/tempo_embedding_tempocnn.json
-```
-
-Notes:
-- `--audio-file` is optional; if omitted, the first `.mp3` in `music/` is used.
-- The extractor returns single-track JSON with `tempo_bpm`, break-aware `confidence`, and local-window tempo/probability diagnostics.
-- By default it uses `models/deeptemp-k16-3.pb`; use `--auto-download-model` if the model is missing.
-- Useful controls: `--snippet-length-sec`, `--window-sec`, `--hop-sec`, `--rms-percentile`, `--sample-rate`.
-
-## DEAM valence/arousal embeddings (Essentia)
-
-```bash
-uv run djprojectexploration-deam \
-  --embedding-model-file models/msd-musicnn-1.pb \
-  --regression-model-file models/deam-msd-musicnn-2.pb \
-  --output-file music/deam_embedding_musicnn.npz
-```
-
-Notes:
-- `--audio-file` is optional; if omitted, the first `.mp3` in `music/` is used.
-- Output is a single-track NPZ with one-row `embeddings`, summary stats (`mean/min/max/std` for valence and arousal), and flattened raw segment series (`deam_valence_series_flat`, `deam_arousal_series_flat`).
-- Playlist NPZ output uses the same schema plus per-track `deam_series_start_index`/`deam_series_count` so variable-length series can be reconstructed per track.
-
-## Quick import check
-
-```bash
-.venv/bin/python -c "import essentia, librosa, numpy, scipy, soundfile, matplotlib; print('imports ok')"
-```
+- generated HTML and ZIP exports
+- audio snippets, waveform caches, artwork, transition renders
+- local MP3 files and metadata rewrites
+- large exploratory notebooks unless intentionally part of the change

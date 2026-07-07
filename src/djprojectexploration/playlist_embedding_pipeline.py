@@ -20,6 +20,7 @@ DEFAULT_MAEST_OUTPUT_DIR = PROJECT_ROOT / "data" / "maest_embeddings"
 DEFAULT_CHROMA_OUTPUT_DIR = PROJECT_ROOT / "data" / "chroma_embeddings"
 DEFAULT_TEMPO_OUTPUT_DIR = PROJECT_ROOT / "data" / "tempo_embeddings"
 DEFAULT_DEAM_OUTPUT_DIR = PROJECT_ROOT / "data" / "deam_embeddings"
+DEFAULT_GROOVE_OUTPUT_DIR = PROJECT_ROOT / "data" / "groove_embeddings"
 DEFAULT_MODEL_FILENAME = "discogs-maest-30s-pw-519l-2.pb"
 DEFAULT_OUTPUT_NODE = "PartitionedCall/Identity_7"
 DEFAULT_MODEL_FILE = PROJECT_ROOT / "models" / DEFAULT_MODEL_FILENAME
@@ -604,6 +605,216 @@ def create_tempo_playlist_embeddings_npz(
     return saved_path
 
 
+def create_groove_playlist_embeddings_npz(
+    tracklist_csv: str | Path,
+    *,
+    music_dir: str | Path | None = None,
+    model_file: str | Path | None = None,
+    auto_download_model: bool = False,
+    output_file: str | Path | None = None,
+    output_dir: str | Path = DEFAULT_GROOVE_OUTPUT_DIR,
+    skip_missing_audio: bool = False,
+    sample_rate: int = 44100,
+    tempocnn_sample_rate: int = 11025,
+    snippet_length_sec: float | None = None,
+    hop_length: int = 256,
+    n_fft: int = 2048,
+    use_csv_bpm: bool = True,
+    auto_phase_align: bool = True,
+    phase_align_mode: str = "adaptive",
+    phase_align_max_shift_sec: float = 0.18,
+    phase_align_step_sec: float = 0.002,
+    auto_prepend_start_beats: bool = True,
+    subdivisions_per_beat: int = 4,
+    beats_per_bar: int = 4,
+    phrase_bars: int = 1,
+    profile_mode: str = "phrase",
+    pooling_mode: str = "mean",
+    pooling_topk: int = 3,
+    normalize_per_beat: bool = True,
+) -> Path:
+    """Build groove embeddings for playlist tracks and save one NPZ collection."""
+    from djprojectexploration.groove_embedding import generate_groove_embedding
+    from djprojectexploration.tempo_embedding import DEFAULT_TEMPOCNN_MODEL_URL
+
+    csv_path = Path(tracklist_csv).expanduser().resolve()
+    tracks = load_playlist_tracks(
+        csv_path,
+        music_dir=music_dir,
+        skip_missing_audio=skip_missing_audio,
+    )
+
+    vectors: list[np.ndarray] = []
+    embedding_subtypes: list[str] = []
+    beat_profiles: list[np.ndarray] = []
+    phrase_profiles: list[np.ndarray] = []
+    band_names: list[str] | None = None
+
+    beat_bpms: list[float] = []
+    beat_bpm_seeds: list[float] = []
+    tempocnn_bpms: list[float] = []
+    beat_counts: list[int] = []
+    beat_sources: list[str] = []
+    phase_anchors: list[float] = []
+    phase_shifts: list[float] = []
+    phase_modes: list[str] = []
+    prepended_counts: list[int] = []
+    complete_phrases: list[int] = []
+    model_files: list[str] = []
+    manual_bpm_used: list[float] = []
+
+    local_start_index: list[int] = []
+    local_counts: list[int] = []
+    local_bpm_chunks: list[np.ndarray] = []
+    local_prob_chunks: list[np.ndarray] = []
+    cursor = 0
+
+    for track in tracks:
+        manual_bpm = None
+        if use_csv_bpm and track.bpm is not None and np.isfinite(float(track.bpm)) and float(track.bpm) > 0:
+            manual_bpm = float(track.bpm)
+        onset_time_sec = track.onset_time if track.onset_time is not None else 0.0
+        payload = generate_groove_embedding(
+            audio_file=track.audio_path,
+            sample_rate=int(sample_rate),
+            tempocnn_sample_rate=int(tempocnn_sample_rate),
+            model_file=model_file,
+            auto_download_model=bool(auto_download_model),
+            snippet_length_sec=snippet_length_sec,
+            hop_length=int(hop_length),
+            n_fft=int(n_fft),
+            manual_bpm=manual_bpm,
+            onset_time_sec=onset_time_sec,
+            auto_phase_align=bool(auto_phase_align),
+            phase_align_mode=phase_align_mode,
+            phase_align_max_shift_sec=float(phase_align_max_shift_sec),
+            phase_align_step_sec=float(phase_align_step_sec),
+            auto_prepend_start_beats=bool(auto_prepend_start_beats),
+            subdivisions_per_beat=int(subdivisions_per_beat),
+            beats_per_bar=int(beats_per_bar),
+            phrase_bars=int(phrase_bars),
+            pooling_mode=pooling_mode,
+            pooling_topk=int(pooling_topk),
+            profile_mode=profile_mode,
+            normalize_per_beat=bool(normalize_per_beat),
+        )
+
+        vectors.append(np.asarray(payload["embedding"], dtype=np.float32).reshape(-1))
+        embedding_subtypes.append(str(payload.get("embedding_subtype", "unknown")))
+        beat_profiles.append(np.asarray(payload.get("beat_profile", []), dtype=np.float32))
+        phrase_profiles.append(np.asarray(payload.get("phrase_profile", []), dtype=np.float32))
+        if band_names is None:
+            band_names = [str(name) for name in payload.get("band_names", [])]
+
+        beat_pooling = payload.get("beat_pooling", {})
+        beat_bpms.append(float(beat_pooling.get("bpm", np.nan)))
+        beat_bpm_seeds.append(float(beat_pooling.get("bpm_seed", np.nan)))
+        tempocnn_value = beat_pooling.get("tempocnn_bpm")
+        tempocnn_bpms.append(np.nan if tempocnn_value is None else float(tempocnn_value))
+        beat_counts.append(int(beat_pooling.get("beat_count", 0)))
+        beat_sources.append(str(beat_pooling.get("beat_source", "")))
+        phase_anchors.append(float(beat_pooling.get("phase_anchor_seconds", np.nan)))
+        phase_shifts.append(float(beat_pooling.get("phase_shift_seconds", 0.0)))
+        phase_modes.append(str(beat_pooling.get("phase_align_mode", "")))
+        prepended_counts.append(int(beat_pooling.get("prepended_start_beats", 0)))
+        complete_phrases.append(int(beat_pooling.get("complete_phrases", 0)))
+        manual_bpm_used.append(np.nan if manual_bpm is None else float(manual_bpm))
+
+        config = payload.get("config", {})
+        model_files.append(str(config.get("tempocnn_model_file") or ""))
+
+        local_bpm = np.asarray(payload.get("local_bpm", []), dtype=np.float32).reshape(-1)
+        local_prob = np.asarray(payload.get("local_probability", []), dtype=np.float32).reshape(-1)
+        n_local = int(min(local_bpm.size, local_prob.size))
+        local_bpm = local_bpm[:n_local]
+        local_prob = local_prob[:n_local]
+        local_start_index.append(cursor)
+        local_counts.append(n_local)
+        cursor += n_local
+        local_bpm_chunks.append(local_bpm)
+        local_prob_chunks.append(local_prob)
+
+    embeddings = np.vstack(vectors).astype(np.float32)
+    beat_profile_tensor = np.stack(beat_profiles).astype(np.float32)
+    phrase_profile_tensor = np.stack(phrase_profiles).astype(np.float32)
+
+    if output_file is None:
+        resolved_output_dir = Path(output_dir).expanduser().resolve()
+        resolved_output_file = resolved_output_dir / _default_npz_name(csv_path)
+    else:
+        resolved_output_file = Path(output_file).expanduser().resolve()
+
+    metadata = _metadata_arrays(tracks)
+
+    if cursor > 0:
+        local_bpm_flat = np.concatenate(local_bpm_chunks).astype(np.float32)
+        local_prob_flat = np.concatenate(local_prob_chunks).astype(np.float32)
+    else:
+        local_bpm_flat = np.array([], dtype=np.float32)
+        local_prob_flat = np.array([], dtype=np.float32)
+
+    extra = {
+        "groove_embedding_subtype": _string_array(embedding_subtypes),
+        "groove_band_names": _string_array(band_names or []),
+        "groove_beat_profile": beat_profile_tensor,
+        "groove_phrase_profile": phrase_profile_tensor,
+        "groove_bpm": np.asarray(beat_bpms, dtype=np.float32),
+        "groove_bpm_seed": np.asarray(beat_bpm_seeds, dtype=np.float32),
+        "groove_tempocnn_bpm": np.asarray(tempocnn_bpms, dtype=np.float32),
+        "groove_manual_bpm_used": np.asarray(manual_bpm_used, dtype=np.float32),
+        "groove_beat_count": np.asarray(beat_counts, dtype=np.int32),
+        "groove_beat_source": _string_array(beat_sources),
+        "groove_phase_anchor_seconds": np.asarray(phase_anchors, dtype=np.float32),
+        "groove_phase_shift_seconds": np.asarray(phase_shifts, dtype=np.float32),
+        "groove_phase_align_mode": _string_array(phase_modes),
+        "groove_prepended_start_beats": np.asarray(prepended_counts, dtype=np.int32),
+        "groove_complete_phrases": np.asarray(complete_phrases, dtype=np.int32),
+        "groove_tempocnn_model_file": _string_array(model_files),
+        "groove_local_start_index": np.asarray(local_start_index, dtype=np.int64),
+        "groove_local_count": np.asarray(local_counts, dtype=np.int32),
+        "groove_local_bpm_flat": local_bpm_flat,
+        "groove_local_probability_flat": local_prob_flat,
+        "groove_model_url": np.array(DEFAULT_TEMPOCNN_MODEL_URL, dtype=np.str_),
+        "config_sample_rate": np.array(sample_rate, dtype=np.int32),
+        "config_tempocnn_sample_rate": np.array(tempocnn_sample_rate, dtype=np.int32),
+        "config_snippet_length_sec": np.array(
+            np.nan if snippet_length_sec is None else float(snippet_length_sec),
+            dtype=np.float32,
+        ),
+        "config_hop_length": np.array(hop_length, dtype=np.int32),
+        "config_n_fft": np.array(n_fft, dtype=np.int32),
+        "config_use_csv_bpm": np.array(bool(use_csv_bpm), dtype=np.bool_),
+        "config_auto_phase_align": np.array(bool(auto_phase_align), dtype=np.bool_),
+        "config_phase_align_mode": np.array(str(phase_align_mode), dtype=np.str_),
+        "config_phase_align_max_shift_sec": np.array(phase_align_max_shift_sec, dtype=np.float32),
+        "config_phase_align_step_sec": np.array(phase_align_step_sec, dtype=np.float32),
+        "config_auto_prepend_start_beats": np.array(bool(auto_prepend_start_beats), dtype=np.bool_),
+        "config_subdivisions_per_beat": np.array(subdivisions_per_beat, dtype=np.int32),
+        "config_beats_per_bar": np.array(beats_per_bar, dtype=np.int32),
+        "config_phrase_bars": np.array(phrase_bars, dtype=np.int32),
+        "config_profile_mode": np.array(str(profile_mode), dtype=np.str_),
+        "config_pooling_mode": np.array(str(pooling_mode), dtype=np.str_),
+        "config_pooling_topk": np.array(pooling_topk, dtype=np.int32),
+        "config_normalize_per_beat": np.array(bool(normalize_per_beat), dtype=np.bool_),
+    }
+
+    saved_path = _save_collection_npz(
+        output_file=resolved_output_file,
+        embedding_type="groove",
+        playlist_csv=csv_path,
+        embeddings=embeddings,
+        metadata=metadata,
+        extra=extra,
+    )
+
+    print(f"Saved groove playlist collection: {_to_project_relpath(saved_path)}")
+    print(f"Tracks: {embeddings.shape[0]}")
+    print(f"Embedding dimension: {embeddings.shape[1]}")
+    print(f"Profile mode: {profile_mode}")
+    print(f"Use CSV BPM: {use_csv_bpm}")
+    return saved_path
+
+
 def create_deam_playlist_embeddings_npz(
     tracklist_csv: str | Path,
     *,
@@ -910,6 +1121,104 @@ def _tempo_cli_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _groove_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Create groove playlist embeddings and export one NPZ file.",
+    )
+    parser.add_argument(
+        "tracklist_csv",
+        type=Path,
+        help="Playlist CSV path (e.g. music/aries-mix/aries_mix_tracks.csv or Apple export CSV).",
+    )
+    parser.add_argument(
+        "--music-dir",
+        type=Path,
+        default=None,
+        help="Directory to resolve mp3_name when CSV has no filepath column.",
+    )
+    parser.add_argument(
+        "--model-file",
+        type=Path,
+        default=None,
+        help="TempoCNN graph (.pb). Defaults to models/deeptemp-k16-3.pb if needed.",
+    )
+    parser.add_argument(
+        "--auto-download-model",
+        action="store_true",
+        help="Download default TempoCNN model if --model-file/default model is missing.",
+    )
+    parser.add_argument(
+        "--output-file",
+        type=Path,
+        default=None,
+        help="Output NPZ file path. Defaults to data/groove_embeddings/<playlist>_tracks.npz",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_GROOVE_OUTPUT_DIR,
+        help="Output directory used when --output-file is omitted.",
+    )
+    parser.add_argument(
+        "--skip-missing-audio",
+        action="store_true",
+        help="Skip rows whose audio files do not exist instead of failing.",
+    )
+    parser.add_argument("--sample-rate", type=int, default=44100)
+    parser.add_argument("--tempocnn-sample-rate", type=int, default=11025)
+    parser.add_argument(
+        "--snippet-length-sec",
+        type=float,
+        default=None,
+        help="Optional max duration per track to analyze (seconds).",
+    )
+    parser.add_argument("--hop-length", type=int, default=256)
+    parser.add_argument("--n-fft", type=int, default=2048)
+    parser.add_argument(
+        "--ignore-csv-bpm",
+        action="store_true",
+        help="Ignore CSV bpm/onset-time and use TempoCNN for every track.",
+    )
+    parser.add_argument(
+        "--disable-phase-align",
+        action="store_true",
+        help="Disable onset-envelope phase alignment.",
+    )
+    parser.add_argument(
+        "--phase-align-mode",
+        choices=["full", "low_mid", "adaptive"],
+        default="adaptive",
+    )
+    parser.add_argument("--phase-align-max-shift-sec", type=float, default=0.18)
+    parser.add_argument("--phase-align-step-sec", type=float, default=0.002)
+    parser.add_argument(
+        "--disable-prepend-start-beats",
+        action="store_true",
+        help="Disable near-zero missing-start-beat repair.",
+    )
+    parser.add_argument("--subdivisions-per-beat", type=int, default=4)
+    parser.add_argument("--beats-per-bar", type=int, default=4)
+    parser.add_argument("--phrase-bars", type=int, default=1)
+    parser.add_argument(
+        "--profile-mode",
+        choices=["beat", "phrase"],
+        default="phrase",
+        help="Which profile to flatten as the exported embedding.",
+    )
+    parser.add_argument(
+        "--pooling-mode",
+        choices=["center", "mean", "max", "topk_mean"],
+        default="mean",
+    )
+    parser.add_argument("--pooling-topk", type=int, default=3)
+    parser.add_argument(
+        "--disable-normalize-per-beat",
+        action="store_true",
+        help="Disable per-beat activity normalization before averaging.",
+    )
+    return parser
+
+
 def _deam_cli_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Create DEAM valence/arousal playlist embeddings and export one NPZ file.",
@@ -1020,6 +1329,37 @@ def tempo_main() -> None:
         window_sec=float(args.window_sec),
         hop_sec=float(args.hop_sec),
         rms_percentile=float(args.rms_percentile),
+    )
+
+
+def groove_main() -> None:
+    args = _groove_cli_parser().parse_args()
+    create_groove_playlist_embeddings_npz(
+        args.tracklist_csv,
+        music_dir=args.music_dir,
+        model_file=args.model_file,
+        auto_download_model=bool(args.auto_download_model),
+        output_file=args.output_file,
+        output_dir=args.output_dir,
+        skip_missing_audio=bool(args.skip_missing_audio),
+        sample_rate=int(args.sample_rate),
+        tempocnn_sample_rate=int(args.tempocnn_sample_rate),
+        snippet_length_sec=args.snippet_length_sec,
+        hop_length=int(args.hop_length),
+        n_fft=int(args.n_fft),
+        use_csv_bpm=not bool(args.ignore_csv_bpm),
+        auto_phase_align=not bool(args.disable_phase_align),
+        phase_align_mode=str(args.phase_align_mode),
+        phase_align_max_shift_sec=float(args.phase_align_max_shift_sec),
+        phase_align_step_sec=float(args.phase_align_step_sec),
+        auto_prepend_start_beats=not bool(args.disable_prepend_start_beats),
+        subdivisions_per_beat=int(args.subdivisions_per_beat),
+        beats_per_bar=int(args.beats_per_bar),
+        phrase_bars=int(args.phrase_bars),
+        profile_mode=str(args.profile_mode),
+        pooling_mode=str(args.pooling_mode),
+        pooling_topk=int(args.pooling_topk),
+        normalize_per_beat=not bool(args.disable_normalize_per_beat),
     )
 
 

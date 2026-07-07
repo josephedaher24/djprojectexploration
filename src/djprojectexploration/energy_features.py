@@ -1,0 +1,797 @@
+"""Energy-model feature extraction for labeled DJ track CSVs.
+
+The extractor writes an enriched CSV: original metadata and labels are preserved,
+and deterministic audio/tempo features are appended for later model fitting.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import librosa
+import numpy as np
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "energy_features"
+DEFAULT_TEMPO_EMBEDDING_DIR = PROJECT_ROOT / "data" / "tempo_embeddings"
+EPS = 1e-12
+
+SPECTRAL_BANDS_HZ = {
+    "sub": (20.0, 60.0),
+    "bass": (60.0, 120.0),
+    "low_mid": (120.0, 250.0),
+    "mid": (250.0, 2000.0),
+    "high": (2000.0, 8000.0),
+}
+
+
+@dataclass(frozen=True)
+class EnergyTrack:
+    """Normalized row from a labeled energy CSV."""
+
+    row_index: int
+    row: dict[str, str]
+    track_number: int
+    title: str
+    artists: str
+    filename: str
+    audio_path: Path
+    genre: str
+    labeled_bpm: float | None
+    energy: float | None
+
+
+def _project_relpath(path: Path) -> str:
+    resolved = path.expanduser().resolve()
+    try:
+        return str(resolved.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(resolved)
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text == "":
+        return None
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    return number if np.isfinite(number) else None
+
+
+def _safe_feature(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+    return number if np.isfinite(number) else float("nan")
+
+
+def _csv_value(value: Any) -> Any:
+    if isinstance(value, float):
+        if not np.isfinite(value):
+            return ""
+        return f"{value:.8g}"
+    if isinstance(value, np.floating):
+        number = float(value)
+        if not np.isfinite(number):
+            return ""
+        return f"{number:.8g}"
+    return value
+
+
+def _resolve_audio_path(
+    row: dict[str, str],
+    *,
+    csv_dir: Path,
+    music_dir: Path | None,
+) -> Path | None:
+    filepath = (row.get("filepath") or row.get("location") or "").strip()
+    if filepath:
+        path = Path(filepath).expanduser()
+        if not path.is_absolute():
+            path = csv_dir / path
+        return path
+
+    filename = (
+        row.get("mp3_name")
+        or row.get("filename")
+        or row.get("file")
+        or row.get("name")
+        or row.get("title")
+        or ""
+    ).strip()
+    if not filename:
+        return None
+
+    rel = Path(filename).expanduser()
+    if rel.is_absolute():
+        return rel
+
+    candidates = [csv_dir / rel]
+    if music_dir is not None:
+        candidates.append(music_dir / rel.name)
+    candidates.extend(
+        [
+            PROJECT_ROOT / rel,
+            PROJECT_ROOT / "music" / rel.name,
+            csv_dir / rel.name,
+        ]
+    )
+    for candidate in candidates:
+        if candidate.expanduser().exists():
+            return candidate
+    return candidates[0]
+
+
+def load_energy_tracks(
+    input_csv: str | Path,
+    *,
+    music_dir: str | Path | None = None,
+    skip_missing_audio: bool = False,
+) -> list[EnergyTrack]:
+    """Load a labeled energy CSV and resolve each track's audio path."""
+    csv_path = Path(input_csv).expanduser().resolve()
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Input CSV not found: {csv_path}")
+
+    resolved_music_dir = None if music_dir is None else Path(music_dir).expanduser().resolve()
+    tracks: list[EnergyTrack] = []
+    skipped: list[tuple[int, str]] = []
+
+    with csv_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row_index, row in enumerate(reader, start=1):
+            track_number_raw = (row.get("track_number") or row.get("#") or "").strip()
+            if track_number_raw:
+                try:
+                    track_number = int(track_number_raw)
+                except ValueError:
+                    track_number = row_index
+            else:
+                track_number = row_index
+
+            audio_path = _resolve_audio_path(row, csv_dir=csv_path.parent, music_dir=resolved_music_dir)
+            if audio_path is None:
+                skipped.append((row_index, "<unresolved>"))
+                if skip_missing_audio:
+                    continue
+                raise ValueError(f"Could not resolve audio path for row {row_index} in {csv_path}")
+
+            resolved_audio = audio_path.expanduser().resolve()
+            if not resolved_audio.exists():
+                skipped.append((row_index, str(resolved_audio)))
+                if skip_missing_audio:
+                    continue
+                raise FileNotFoundError(f"Audio file not found for row {row_index}: {resolved_audio}")
+
+            title = (row.get("title") or row.get("name") or resolved_audio.stem).strip()
+            artists = (row.get("artists") or row.get("artist") or "").strip()
+            filename = (row.get("mp3_name") or row.get("filename") or resolved_audio.name).strip()
+            genre = (row.get("genre") or "").strip()
+            labeled_bpm = _optional_float(row.get("bpm"))
+            energy = _optional_float(row.get("energy"))
+
+            tracks.append(
+                EnergyTrack(
+                    row_index=row_index,
+                    row=dict(row),
+                    track_number=track_number,
+                    title=title,
+                    artists=artists,
+                    filename=filename,
+                    audio_path=resolved_audio,
+                    genre=genre,
+                    labeled_bpm=labeled_bpm,
+                    energy=energy,
+                )
+            )
+
+    if not tracks:
+        detail = " All rows were missing audio files." if skipped else ""
+        raise RuntimeError(f"No usable tracks found in {csv_path}.{detail}")
+    return tracks
+
+
+def default_output_file(input_csv: str | Path, output_dir: str | Path = DEFAULT_OUTPUT_DIR) -> Path:
+    csv_path = Path(input_csv).expanduser()
+    return Path(output_dir).expanduser().resolve() / f"{csv_path.stem}_energy_features.csv"
+
+
+def default_tempo_embeddings_file(input_csv: str | Path) -> Path | None:
+    csv_path = Path(input_csv).expanduser()
+    candidates = [
+        DEFAULT_TEMPO_EMBEDDING_DIR / f"{csv_path.stem}.npz",
+        DEFAULT_TEMPO_EMBEDDING_DIR / f"{csv_path.stem.replace('_energy', '_tracks')}.npz",
+        DEFAULT_TEMPO_EMBEDDING_DIR / f"{csv_path.stem.replace('_tracks', '')}_tracks.npz",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
+def _decode_np_string(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def load_tempo_embedding_lookup(path: str | Path | None) -> dict[str, dict[str, float]]:
+    """Load TempoCNN playlist NPZ values keyed by lowercase basename."""
+    if path is None:
+        return {}
+    npz_path = Path(path).expanduser().resolve()
+    if not npz_path.exists():
+        raise FileNotFoundError(f"Tempo embeddings NPZ not found: {npz_path}")
+
+    data = np.load(npz_path, allow_pickle=False)
+    filenames = [_decode_np_string(v) for v in data["filenames"]]
+    fields = {
+        "tempo_embedding_bpm": "tempo_bpm",
+        "tempo_embedding_confidence": "tempo_confidence",
+        "tempo_embedding_confidence_active_agreement": "tempo_confidence_active_agreement",
+        "tempo_embedding_mean_active_probability": "tempo_mean_active_probability",
+        "tempo_embedding_active_fraction": "tempo_active_fraction",
+        "tempo_embedding_active_windows": "tempo_active_windows",
+        "tempo_embedding_total_windows": "tempo_total_windows",
+    }
+
+    lookup: dict[str, dict[str, float]] = {}
+    for i, filename in enumerate(filenames):
+        key = Path(filename).name.lower()
+        row: dict[str, float] = {}
+        for output_name, npz_name in fields.items():
+            if npz_name in data.files and i < len(data[npz_name]):
+                row[output_name] = _safe_feature(data[npz_name][i])
+        lookup[key] = row
+    return lookup
+
+
+def _compute_tempo_embedding_features(
+    audio_path: Path,
+    *,
+    model_file: str | Path | None,
+    auto_download_model: bool,
+) -> dict[str, float]:
+    from djprojectexploration.tempo_embedding import generate_tempo_embedding
+
+    payload = generate_tempo_embedding(
+        audio_file=audio_path,
+        model_file=model_file,
+        auto_download_model=auto_download_model,
+    )
+    return {
+        "tempo_embedding_bpm": _safe_feature(payload.get("tempo_bpm")),
+        "tempo_embedding_confidence": _safe_feature(payload.get("confidence")),
+        "tempo_embedding_confidence_active_agreement": _safe_feature(
+            payload.get("confidence_active_agreement")
+        ),
+        "tempo_embedding_mean_active_probability": _safe_feature(payload.get("mean_prob_active")),
+        "tempo_embedding_active_fraction": _safe_feature(payload.get("active_fraction")),
+        "tempo_embedding_active_windows": _safe_feature(payload.get("active_windows")),
+        "tempo_embedding_total_windows": _safe_feature(payload.get("total_windows")),
+    }
+
+
+def _band_mask(freqs: np.ndarray, low_hz: float, high_hz: float) -> np.ndarray:
+    return (freqs >= float(low_hz)) & (freqs < float(high_hz))
+
+
+def _db_from_power(power: np.ndarray | float) -> np.ndarray | float:
+    return 10.0 * np.log10(np.maximum(power, EPS))
+
+
+def _mean_or_nan(values: np.ndarray) -> float:
+    arr = np.asarray(values, dtype=np.float64)
+    arr = arr[np.isfinite(arr)]
+    return float(np.mean(arr)) if arr.size else float("nan")
+
+
+def _std_or_nan(values: np.ndarray) -> float:
+    arr = np.asarray(values, dtype=np.float64)
+    arr = arr[np.isfinite(arr)]
+    return float(np.std(arr)) if arr.size else float("nan")
+
+
+def _var_or_nan(values: np.ndarray) -> float:
+    arr = np.asarray(values, dtype=np.float64)
+    arr = arr[np.isfinite(arr)]
+    return float(np.var(arr)) if arr.size else float("nan")
+
+
+def _spectral_tilt_db_per_oct(freqs: np.ndarray, mean_power: np.ndarray) -> float:
+    valid = (freqs >= 30.0) & (freqs <= 12000.0) & np.isfinite(mean_power) & (mean_power > 0.0)
+    if int(np.sum(valid)) < 3:
+        return float("nan")
+    x = np.log2(freqs[valid])
+    y = _db_from_power(mean_power[valid])
+    slope, _intercept = np.polyfit(x, y, deg=1)
+    return float(slope)
+
+
+def _chunk_slices(total_samples: int, sr: int, section_sec: float) -> list[slice]:
+    chunk = max(1, int(round(float(section_sec) * sr)))
+    slices = [slice(start, min(total_samples, start + chunk)) for start in range(0, total_samples, chunk)]
+    return [s for s in slices if s.stop - s.start > max(1, sr)]
+
+
+def _loudness_lufs(y: np.ndarray, sr: int) -> float:
+    try:
+        import pyloudnorm as pyln
+
+        meter = pyln.Meter(int(sr))
+        return _safe_feature(meter.integrated_loudness(np.asarray(y, dtype=np.float64)))
+    except Exception:
+        rms = float(np.sqrt(np.mean(np.square(y, dtype=np.float64)) + EPS))
+        return float(20.0 * np.log10(max(rms, EPS)))
+
+
+def _audio_duration_sec(path: Path) -> float:
+    try:
+        import soundfile as sf
+
+        info = sf.info(str(path))
+        if info.samplerate > 0 and info.frames > 0:
+            return float(info.frames) / float(info.samplerate)
+    except Exception:
+        pass
+    try:
+        return float(librosa.get_duration(path=str(path)))
+    except Exception:
+        return float("nan")
+
+
+def _section_features(
+    y: np.ndarray,
+    *,
+    sr: int,
+    hop_length: int,
+    section_sec: float,
+) -> dict[str, float]:
+    slices = _chunk_slices(int(y.size), int(sr), float(section_sec))
+    if not slices:
+        slices = [slice(0, int(y.size))]
+
+    section_loudness: list[float] = []
+    section_rms_db: list[float] = []
+    section_onset_density: list[float] = []
+    section_centroid: list[float] = []
+
+    for chunk in slices:
+        yc = y[chunk]
+        duration = float(yc.size) / float(sr)
+        if duration <= 0:
+            continue
+
+        loudness = _loudness_lufs(yc, sr)
+        rms = float(np.sqrt(np.mean(np.square(yc, dtype=np.float64)) + EPS))
+        rms_db = float(20.0 * np.log10(max(rms, EPS)))
+        onset_env = librosa.onset.onset_strength(y=yc, sr=sr, hop_length=hop_length)
+        onsets = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr, hop_length=hop_length)
+        centroid = librosa.feature.spectral_centroid(y=yc, sr=sr, hop_length=hop_length)
+
+        section_loudness.append(loudness)
+        section_rms_db.append(rms_db)
+        section_onset_density.append(float(len(onsets)) / duration)
+        section_centroid.append(_mean_or_nan(centroid))
+
+    loudness_arr = np.asarray(section_loudness, dtype=np.float64)
+    rms_arr = np.asarray(section_rms_db, dtype=np.float64)
+    onset_arr = np.asarray(section_onset_density, dtype=np.float64)
+    centroid_arr = np.asarray(section_centroid, dtype=np.float64)
+
+    if loudness_arr.size and np.any(np.isfinite(loudness_arr)):
+        peak_idx = int(np.nanargmax(loudness_arr))
+    elif rms_arr.size and np.any(np.isfinite(rms_arr)):
+        peak_idx = int(np.nanargmax(rms_arr))
+    else:
+        peak_idx = 0
+
+    median_loudness = float(np.nanmedian(loudness_arr)) if loudness_arr.size else float("nan")
+    median_rms = float(np.nanmedian(rms_arr)) if rms_arr.size else float("nan")
+    median_centroid = float(np.nanmedian(centroid_arr)) if centroid_arr.size else float("nan")
+
+    peak_loudness = _safe_feature(loudness_arr[peak_idx]) if loudness_arr.size else float("nan")
+    peak_rms = _safe_feature(rms_arr[peak_idx]) if rms_arr.size else float("nan")
+    peak_centroid = _safe_feature(centroid_arr[peak_idx]) if centroid_arr.size else float("nan")
+
+    return {
+        "max_30s_loudness_lufs": _mean_or_nan(np.array([np.nanmax(loudness_arr)])),
+        "max_30s_onset_density": _mean_or_nan(np.array([np.nanmax(onset_arr)])),
+        "peak_section_spectral_centroid_hz": peak_centroid,
+        "peak_section_loudness_lufs": peak_loudness,
+        "median_section_loudness_lufs": median_loudness,
+        "peak_section_loudness_minus_median_lu": peak_loudness - median_loudness,
+        "peak_section_rms_db": peak_rms,
+        "median_section_rms_db": median_rms,
+        "peak_section_rms_minus_median_db": peak_rms - median_rms,
+        "peak_section_centroid_minus_median_hz": peak_centroid - median_centroid,
+        "section_count_30s": float(len(slices)),
+    }
+
+
+def _beat_features(
+    y: np.ndarray,
+    *,
+    sr: int,
+    hop_length: int,
+    frame_length: int,
+    tempo_bpm: float | None,
+) -> dict[str, float]:
+    onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
+    beat_kwargs: dict[str, Any] = {
+        "onset_envelope": onset_env,
+        "sr": sr,
+        "hop_length": hop_length,
+        "trim": False,
+    }
+    if tempo_bpm is not None and np.isfinite(tempo_bpm) and tempo_bpm > 0:
+        beat_kwargs["bpm"] = float(tempo_bpm)
+
+    try:
+        _tempo, beat_frames = librosa.beat.beat_track(**beat_kwargs)
+    except Exception:
+        beat_frames = np.array([], dtype=int)
+
+    if beat_frames.size < 4:
+        return {
+            "beat_count": float(beat_frames.size),
+            "beat_rms_mean_db": float("nan"),
+            "beat_rms_std_db": float("nan"),
+            "downbeat_offbeat_energy_ratio": float("nan"),
+            "downbeat_phase_index": float("nan"),
+            "four_bar_phrase_energy_variance": float("nan"),
+        }
+
+    rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
+    beat_frames = beat_frames[beat_frames < rms.size]
+    if beat_frames.size < 4:
+        return {
+            "beat_count": float(beat_frames.size),
+            "beat_rms_mean_db": float("nan"),
+            "beat_rms_std_db": float("nan"),
+            "downbeat_offbeat_energy_ratio": float("nan"),
+            "downbeat_phase_index": float("nan"),
+            "four_bar_phrase_energy_variance": float("nan"),
+        }
+
+    beat_rms = rms[beat_frames]
+    beat_rms_db = 20.0 * np.log10(np.maximum(beat_rms, EPS))
+
+    phase_means = []
+    for phase in range(4):
+        values = beat_rms[phase::4]
+        phase_means.append(float(np.mean(values)) if values.size else float("nan"))
+    if np.any(np.isfinite(phase_means)):
+        downbeat_phase = int(np.nanargmax(np.asarray(phase_means, dtype=np.float64)))
+        downbeat_values = beat_rms[downbeat_phase::4]
+        offbeat_mask = np.ones(beat_rms.size, dtype=bool)
+        offbeat_mask[downbeat_phase::4] = False
+        offbeat_values = beat_rms[offbeat_mask]
+        ratio = float(np.mean(downbeat_values) / max(float(np.mean(offbeat_values)), EPS))
+    else:
+        downbeat_phase = -1
+        ratio = float("nan")
+
+    phrase_len = 16
+    phrase_means = [
+        float(np.mean(beat_rms[i : i + phrase_len]))
+        for i in range(0, beat_rms.size - phrase_len + 1, phrase_len)
+    ]
+
+    return {
+        "beat_count": float(beat_frames.size),
+        "beat_rms_mean_db": _mean_or_nan(beat_rms_db),
+        "beat_rms_std_db": _std_or_nan(beat_rms_db),
+        "downbeat_offbeat_energy_ratio": ratio,
+        "downbeat_phase_index": float(downbeat_phase),
+        "four_bar_phrase_energy_variance": _var_or_nan(np.asarray(phrase_means, dtype=np.float64)),
+    }
+
+
+def extract_audio_energy_features(
+    audio_path: str | Path,
+    *,
+    sample_rate: int = 22050,
+    analysis_seconds: float | None = None,
+    tempo_bpm: float | None = None,
+    section_sec: float = 30.0,
+) -> dict[str, float]:
+    """Extract deterministic audio features for perceived energy modeling."""
+    path = Path(audio_path).expanduser().resolve()
+    y, sr = librosa.load(
+        path,
+        sr=int(sample_rate),
+        mono=True,
+        duration=None if analysis_seconds is None else float(analysis_seconds),
+    )
+    y = np.asarray(y, dtype=np.float32)
+    analysis_duration = float(y.size) / float(sr) if sr > 0 else 0.0
+    if y.size == 0 or analysis_duration <= 0:
+        raise RuntimeError(f"Loaded empty audio for {path}")
+    source_duration = _audio_duration_sec(path)
+
+    n_fft = 4096
+    hop_length = 512
+    frame_length = 2048
+
+    stft = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
+    power = np.square(stft, dtype=np.float64)
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
+    mean_power = np.mean(power, axis=1)
+    total_power = float(np.sum(mean_power) + EPS)
+
+    centroid = librosa.feature.spectral_centroid(S=stft, sr=sr)
+    rolloff_05 = librosa.feature.spectral_rolloff(S=stft, sr=sr, roll_percent=0.05)
+    rolloff_85 = librosa.feature.spectral_rolloff(S=stft, sr=sr, roll_percent=0.85)
+    bandwidth = librosa.feature.spectral_bandwidth(S=stft, sr=sr)
+    rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
+    rms_db = 20.0 * np.log10(np.maximum(rms, EPS))
+
+    onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
+    onsets = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr, hop_length=hop_length)
+    onset_density = float(len(onsets)) / max(analysis_duration, EPS)
+    onset_magnitude = _mean_or_nan(onset_env[onsets]) if len(onsets) else 0.0
+
+    features: dict[str, float] = {
+        "duration_sec": source_duration,
+        "analysis_duration_sec": analysis_duration,
+        "spectral_centroid_hz": _mean_or_nan(centroid),
+        "spectral_spread_hz": _mean_or_nan(bandwidth),
+        "spectral_tilt_db_per_oct": _spectral_tilt_db_per_oct(freqs, mean_power),
+        "spectral_rolloff_05_hz": _mean_or_nan(rolloff_05),
+        "spectral_rolloff_85_hz": _mean_or_nan(rolloff_85),
+        "dynamic_range_db": float(np.nanpercentile(rms_db, 95) - np.nanpercentile(rms_db, 10)),
+        "rms_mean_db": _mean_or_nan(rms_db),
+        "rms_median_db": float(np.nanmedian(rms_db)),
+        "rms_std_db": _std_or_nan(rms_db),
+        "rms_iqr_db": float(np.nanpercentile(rms_db, 75) - np.nanpercentile(rms_db, 25)),
+        "top_quartile_rms": float(np.mean(rms[rms >= np.nanpercentile(rms, 75)])),
+        "top_quartile_rms_db": float(
+            20.0 * np.log10(max(float(np.mean(rms[rms >= np.nanpercentile(rms, 75)])), EPS))
+        ),
+        "crest_factor_db": float(
+            20.0 * np.log10(max(float(np.max(np.abs(y))), EPS))
+            - 20.0 * np.log10(max(float(np.sqrt(np.mean(np.square(y, dtype=np.float64)) + EPS)), EPS))
+        ),
+        "onset_density": onset_density,
+        "onset_magnitude": onset_magnitude,
+        "integrated_loudness_lufs": _loudness_lufs(y, sr),
+    }
+
+    for band_name, (low_hz, high_hz) in SPECTRAL_BANDS_HZ.items():
+        mask = _band_mask(freqs, low_hz, high_hz)
+        band_power = np.sum(mean_power[mask]) if np.any(mask) else float("nan")
+        features[f"{band_name}_band_energy_ratio"] = float(band_power / total_power)
+
+        band_by_frame = np.sum(power[mask, :], axis=0) if np.any(mask) else np.array([], dtype=np.float64)
+        if band_by_frame.size > 1:
+            flux = np.maximum(np.diff(np.sqrt(np.maximum(band_by_frame, 0.0))), 0.0)
+            features[f"band_flux_{band_name}"] = _mean_or_nan(flux)
+        else:
+            features[f"band_flux_{band_name}"] = float("nan")
+
+    low_mask = _band_mask(freqs, 20.0, 120.0)
+    features["low_band_energy_ratio"] = float(np.sum(mean_power[low_mask]) / total_power)
+
+    features.update(
+        _beat_features(
+            y,
+            sr=sr,
+            hop_length=hop_length,
+            frame_length=frame_length,
+            tempo_bpm=tempo_bpm,
+        )
+    )
+    features.update(
+        _section_features(
+            y,
+            sr=sr,
+            hop_length=hop_length,
+            section_sec=section_sec,
+        )
+    )
+    return features
+
+
+def extract_energy_feature_rows(
+    tracks: list[EnergyTrack],
+    *,
+    tempo_lookup: dict[str, dict[str, float]] | None = None,
+    compute_missing_tempo: bool = False,
+    tempo_model_file: str | Path | None = None,
+    auto_download_tempo_model: bool = False,
+    sample_rate: int = 22050,
+    analysis_seconds: float | None = None,
+    section_sec: float = 30.0,
+) -> list[dict[str, Any]]:
+    """Extract feature rows for a list of normalized tracks."""
+    tempo_lookup = tempo_lookup or {}
+    rows: list[dict[str, Any]] = []
+    total = len(tracks)
+    for index, track in enumerate(tracks, start=1):
+        print(f"[{index}/{total}] Extracting energy features: {track.title}")
+        output_row: dict[str, Any] = dict(track.row)
+        output_row.update(
+            {
+                "track_number": track.track_number,
+                "title": track.title,
+                "artists": track.artists,
+                "filename": track.filename,
+                "audio_path": _project_relpath(track.audio_path),
+                "genre": track.genre,
+                "labeled_bpm": "" if track.labeled_bpm is None else track.labeled_bpm,
+                "labeled_bpm_missing": bool(track.labeled_bpm is None or track.labeled_bpm <= 0),
+                "energy": "" if track.energy is None else track.energy,
+            }
+        )
+
+        tempo_features = dict(tempo_lookup.get(Path(track.filename).name.lower(), {}))
+        if not tempo_features:
+            tempo_features = dict(tempo_lookup.get(track.audio_path.name.lower(), {}))
+        if not tempo_features and compute_missing_tempo:
+            tempo_features = _compute_tempo_embedding_features(
+                track.audio_path,
+                model_file=tempo_model_file,
+                auto_download_model=auto_download_tempo_model,
+            )
+        output_row.update(tempo_features)
+
+        tempo_bpm = _optional_float(output_row.get("tempo_embedding_bpm"))
+        audio_features = extract_audio_energy_features(
+            track.audio_path,
+            sample_rate=sample_rate,
+            analysis_seconds=analysis_seconds,
+            tempo_bpm=tempo_bpm,
+            section_sec=section_sec,
+        )
+        output_row.update(audio_features)
+        rows.append(output_row)
+    return rows
+
+
+def write_feature_csv(rows: list[dict[str, Any]], output_file: str | Path) -> Path:
+    """Write rows to CSV using a stable union of encountered columns."""
+    output_path = Path(output_file).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames: list[str] = []
+    seen: set[str] = set()
+    preferred_prefix = [
+        "track_number",
+        "title",
+        "name",
+        "artists",
+        "artist",
+        "album",
+        "genre",
+        "filename",
+        "mp3_name",
+        "filepath",
+        "audio_path",
+        "energy",
+        "labeled_bpm",
+        "labeled_bpm_missing",
+        "tempo_embedding_bpm",
+        "tempo_embedding_confidence",
+    ]
+    for field in preferred_prefix:
+        if any(field in row for row in rows) and field not in seen:
+            fieldnames.append(field)
+            seen.add(field)
+    for row in rows:
+        for field in row.keys():
+            if field not in seen:
+                fieldnames.append(field)
+                seen.add(field)
+
+    with output_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: _csv_value(row.get(field, "")) for field in fieldnames})
+    return output_path
+
+
+def create_energy_feature_csv(
+    input_csv: str | Path,
+    *,
+    output_file: str | Path | None = None,
+    music_dir: str | Path | None = None,
+    tempo_embeddings: str | Path | None = None,
+    compute_missing_tempo: bool = False,
+    tempo_model_file: str | Path | None = None,
+    auto_download_tempo_model: bool = False,
+    skip_missing_audio: bool = False,
+    sample_rate: int = 22050,
+    analysis_seconds: float | None = None,
+    section_sec: float = 30.0,
+    max_tracks: int | None = None,
+) -> Path:
+    """Create an enriched energy-feature CSV from a labeled track CSV."""
+    tracks = load_energy_tracks(
+        input_csv,
+        music_dir=music_dir,
+        skip_missing_audio=skip_missing_audio,
+    )
+    if max_tracks is not None:
+        tracks = tracks[: int(max_tracks)]
+
+    tempo_file = Path(tempo_embeddings).expanduser().resolve() if tempo_embeddings is not None else None
+    if tempo_file is None:
+        tempo_file = default_tempo_embeddings_file(input_csv)
+
+    tempo_lookup = load_tempo_embedding_lookup(tempo_file) if tempo_file is not None else {}
+    rows = extract_energy_feature_rows(
+        tracks,
+        tempo_lookup=tempo_lookup,
+        compute_missing_tempo=compute_missing_tempo,
+        tempo_model_file=tempo_model_file,
+        auto_download_tempo_model=auto_download_tempo_model,
+        sample_rate=sample_rate,
+        analysis_seconds=analysis_seconds,
+        section_sec=section_sec,
+    )
+
+    resolved_output = default_output_file(input_csv) if output_file is None else Path(output_file)
+    saved_path = write_feature_csv(rows, resolved_output)
+    print(f"Saved energy feature CSV: {_project_relpath(saved_path)}")
+    print(f"Tracks: {len(rows)}")
+    if tempo_file is not None:
+        print(f"Tempo embeddings: {_project_relpath(tempo_file)}")
+    elif not compute_missing_tempo:
+        print("Tempo embeddings: none found; tempo_embedding_* fields were not added.")
+    return saved_path
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Extract energy-model features to CSV.")
+    parser.add_argument("input_csv", type=Path, help="Labeled track CSV.")
+    parser.add_argument("--output-file", type=Path, default=None)
+    parser.add_argument("--music-dir", type=Path, default=None)
+    parser.add_argument("--tempo-embeddings", type=Path, default=None, help="Tempo playlist NPZ.")
+    parser.add_argument("--compute-missing-tempo", action="store_true")
+    parser.add_argument("--tempo-model-file", type=Path, default=None)
+    parser.add_argument("--auto-download-tempo-model", action="store_true")
+    parser.add_argument("--skip-missing-audio", action="store_true")
+    parser.add_argument("--sample-rate", type=int, default=22050)
+    parser.add_argument(
+        "--analysis-seconds",
+        type=float,
+        default=None,
+        help="Optional seconds from the start of each track to analyze.",
+    )
+    parser.add_argument("--section-sec", type=float, default=30.0)
+    parser.add_argument("--max-tracks", type=int, default=None)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    create_energy_feature_csv(
+        args.input_csv,
+        output_file=args.output_file,
+        music_dir=args.music_dir,
+        tempo_embeddings=args.tempo_embeddings,
+        compute_missing_tempo=bool(args.compute_missing_tempo),
+        tempo_model_file=args.tempo_model_file,
+        auto_download_tempo_model=bool(args.auto_download_tempo_model),
+        skip_missing_audio=bool(args.skip_missing_audio),
+        sample_rate=int(args.sample_rate),
+        analysis_seconds=args.analysis_seconds,
+        section_sec=float(args.section_sec),
+        max_tracks=args.max_tracks,
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -452,17 +452,21 @@ def load_aries_mix_feature_set(
 
     with mix_csv.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
-        for row in reader:
+        for row_index, row in enumerate(reader, start=1):
             tn = (row.get("track_number") or row.get("#") or "").strip()
-            title = (row.get("title") or "").strip()
-            artist = (row.get("artists") or "").strip()
-            filename = (row.get("mp3_name") or "").strip()
+            title = (row.get("title") or row.get("name") or "").strip()
+            artist = (row.get("artists") or row.get("artist") or "").strip()
+            filename = (row.get("mp3_name") or row.get("filename") or "").strip()
+            if not filename:
+                filepath = (row.get("filepath") or row.get("location") or "").strip()
+                if filepath:
+                    filename = Path(filepath).name
             genre = (row.get("genre") or "").strip()
 
-            if not tn or not filename:
+            if not filename:
                 continue
             try:
-                track_number = int(tn)
+                track_number = int(tn) if tn else int(row_index)
             except ValueError:
                 continue
 

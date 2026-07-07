@@ -5,11 +5,12 @@ SHELL := /bin/bash
 DATA_DIR := data
 SNIPPETS_DIR := $(DATA_DIR)/snippets
 EXPORTS_DIR := $(DATA_DIR)/exports
+TRANSITIONS_DIR := $(DATA_DIR)/transitions
 
 CSV ?= $(EXPORTS_DIR)/dataset_tracks.csv
 CACHE ?= dataset_tracks
 
-.PHONY: help sync snippet-cache snippets-list snippets-size clean-snippets clean-snippet-cache clean-snippets-one clean-interactive-html clean-generated
+.PHONY: help sync snippet-cache snippets-list snippets-size clean-snippets clean-snippet-cache clean-snippets-one clean-transitions clean-interactive-html clean-generated
 
 help:
 	@echo "Available targets:"
@@ -19,8 +20,9 @@ help:
 	@echo "  make snippets-size        - Show snippet cache disk usage"
 	@echo "  make clean-snippets       - Remove all snippet caches under $(SNIPPETS_DIR)/"
 	@echo "  make clean-snippets-one CACHE=<name> - Remove one snippet cache directory"
+	@echo "  make clean-transitions    - Remove all transition renders under $(TRANSITIONS_DIR)/"
 	@echo "  make clean-interactive-html - Remove generated *interactive_pacmap.html exports"
-	@echo "  make clean-generated      - Clean snippets + interactive HTML exports"
+	@echo "  make clean-generated      - Clean snippets + transitions + interactive HTML exports"
 
 sync:
 	uv sync
@@ -53,10 +55,16 @@ clean-snippets-one:
 	@rm -rf "$(SNIPPETS_DIR)/$(CACHE)"
 	@echo "Done."
 
+clean-transitions:
+	@mkdir -p "$(TRANSITIONS_DIR)"
+	@echo "Removing all transition renders under $(TRANSITIONS_DIR)/..."
+	@find "$(TRANSITIONS_DIR)" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+	@echo "Done."
+
 clean-interactive-html:
 	@mkdir -p "$(EXPORTS_DIR)"
 	@echo "Removing generated interactive HTML files in $(EXPORTS_DIR)/..."
 	@find "$(EXPORTS_DIR)" -maxdepth 1 -type f -name '*interactive_pacmap.html' -print -delete
 	@echo "Done."
 
-clean-generated: clean-snippets clean-interactive-html
+clean-generated: clean-snippets clean-transitions clean-interactive-html
