@@ -37,7 +37,9 @@ data/maest_embeddings/
 data/chroma_embeddings/
 data/tempo_embeddings/
 data/deam_valence_arousal/
+data/energy_features/
 data/energy_embeddings/
+data/energy_models/
 data/multimodal_compatibility/
 
 # Local audio and generated music-side assets

@@ -11,6 +11,12 @@ from typing import Any
 
 import numpy as np
 
+from djprojectexploration.audio_snippets import (
+    DEFAULT_MIDDLE_FRACTION,
+    DEFAULT_SCAN_HOP_SECONDS,
+    DEFAULT_SNIPPET_SECONDS,
+    select_rms_focused_window,
+)
 from djprojectexploration.playlist_embedding_pipeline import (
     _default_npz_name,
     _metadata_arrays,
@@ -29,7 +35,7 @@ DEFAULT_ROW_BINS = 512
 DEFAULT_PREVIEW_BINS = 4096
 DEFAULT_DETAIL_BINS = 32_768
 DEFAULT_BAND_BINS = 8192
-WAVEFORM_FEATURE_VERSION = 2
+WAVEFORM_FEATURE_VERSION = 3
 
 
 def _string_array(values: list[str]) -> np.ndarray:
@@ -203,6 +209,15 @@ def generate_waveform_feature_payload(
     y = np.asarray(audio, dtype=np.float32).reshape(-1)
     duration_seconds = float(y.size / float(sr)) if sr > 0 else 0.0
     abs_y = np.abs(y)
+    preview_start_idx, preview_end_idx, preview_rms = select_rms_focused_window(
+        y,
+        int(sr),
+        snippet_seconds=DEFAULT_SNIPPET_SECONDS,
+        middle_fraction=DEFAULT_MIDDLE_FRACTION,
+        hop_seconds=DEFAULT_SCAN_HOP_SECONDS,
+    )
+    preview_start_seconds = preview_start_idx / float(sr) if sr > 0 else 0.0
+    preview_end_seconds = preview_end_idx / float(sr) if sr > 0 else 0.0
 
     row = _rms_profile(y, row_bins)
     preview = _peak_profile(abs_y, preview_bins)
@@ -222,6 +237,11 @@ def generate_waveform_feature_payload(
         "preview_bins": int(preview_bins),
         "detail_bins": int(detail_bins),
         "band_bins": int(band_bins),
+        "preview_start_seconds": float(preview_start_seconds),
+        "preview_end_seconds": float(preview_end_seconds),
+        "preview_duration_seconds": float(max(0.0, preview_end_seconds - preview_start_seconds)),
+        "preview_score": float(preview_rms),
+        "preview_method": "rms_middle_scan",
         "row_peaks": _quantize(row),
         "preview_peaks": _quantize(preview),
         "detail_peaks": _quantize(detail),
@@ -252,6 +272,11 @@ def _json_payload_for_track(track: PlaylistTrack, payload: dict[str, Any], *, tr
         "preview_bins": int(payload["preview_bins"]),
         "detail_bins": int(payload["detail_bins"]),
         "band_bins": int(payload["band_bins"]),
+        "preview_start_seconds": float(payload.get("preview_start_seconds", 0.0)),
+        "preview_end_seconds": float(payload.get("preview_end_seconds", 0.0)),
+        "preview_duration_seconds": float(payload.get("preview_duration_seconds", 0.0)),
+        "preview_score": float(payload.get("preview_score", 0.0)),
+        "preview_method": str(payload.get("preview_method") or "rms_middle_scan"),
         "row_peaks": np.asarray(payload["row_peaks"], dtype=np.uint8).tolist(),
         "preview_peaks": np.asarray(payload["preview_peaks"], dtype=np.uint8).tolist(),
         "detail_peaks": np.asarray(payload["detail_peaks"], dtype=np.uint8).tolist(),
@@ -320,6 +345,11 @@ def create_waveform_playlist_features_npz(
     json_paths: list[str] = []
     durations: list[float] = []
     sample_rates: list[int] = []
+    preview_starts: list[float] = []
+    preview_ends: list[float] = []
+    preview_durations: list[float] = []
+    preview_scores: list[float] = []
+    preview_methods: list[str] = []
     track_ids: list[str] = []
 
     for i, track in enumerate(tracks, start=1):
@@ -340,6 +370,11 @@ def create_waveform_playlist_features_npz(
                     "preview_bins": int(cached.get("preview_bins", preview_bins)),
                     "detail_bins": int(cached.get("detail_bins", detail_bins)),
                     "band_bins": int(cached.get("band_bins", band_bins)),
+                    "preview_start_seconds": float(cached.get("preview_start_seconds", 0.0)),
+                    "preview_end_seconds": float(cached.get("preview_end_seconds", 0.0)),
+                    "preview_duration_seconds": float(cached.get("preview_duration_seconds", 0.0)),
+                    "preview_score": float(cached.get("preview_score", 0.0)),
+                    "preview_method": str(cached.get("preview_method") or "rms_middle_scan"),
                     "row_peaks": np.asarray(cached.get("row_peaks", []), dtype=np.uint8),
                     "preview_peaks": np.asarray(cached.get("preview_peaks", []), dtype=np.uint8),
                     "detail_peaks": np.asarray(cached.get("detail_peaks", []), dtype=np.uint8),
@@ -405,6 +440,11 @@ def create_waveform_playlist_features_npz(
         json_paths.append(_to_project_relpath(json_path))
         durations.append(float(payload["duration_seconds"]))
         sample_rates.append(int(payload["sample_rate"]))
+        preview_starts.append(float(payload.get("preview_start_seconds", 0.0)))
+        preview_ends.append(float(payload.get("preview_end_seconds", 0.0)))
+        preview_durations.append(float(payload.get("preview_duration_seconds", 0.0)))
+        preview_scores.append(float(payload.get("preview_score", 0.0)))
+        preview_methods.append(str(payload.get("preview_method") or "rms_middle_scan"))
         track_ids.append(track_id)
         print(f"[{i:03d}/{len(tracks):03d}] waveform {track_id} {track.title}")
 
@@ -420,6 +460,11 @@ def create_waveform_playlist_features_npz(
         "waveform_json_paths": _string_array(json_paths),
         "duration_seconds": np.asarray(durations, dtype=np.float32),
         "sample_rate": np.asarray(sample_rates, dtype=np.int32),
+        "preview_start_seconds": np.asarray(preview_starts, dtype=np.float32),
+        "preview_end_seconds": np.asarray(preview_ends, dtype=np.float32),
+        "preview_duration_seconds": np.asarray(preview_durations, dtype=np.float32),
+        "preview_score": np.asarray(preview_scores, dtype=np.float32),
+        "preview_method": _string_array(preview_methods),
         "row_bins": np.array(int(row_bins), dtype=np.int32),
         "preview_bins": np.array(int(preview_bins), dtype=np.int32),
         "detail_bins": np.array(int(detail_bins), dtype=np.int32),
@@ -483,6 +528,10 @@ def load_waveform_feature_lookup(npz_path: str | Path) -> dict[str, dict[str, An
         detail_bins = int(np.asarray(data["detail_bins"]).reshape(-1)[0]) if "detail_bins" in data.files else 0
         band_bins = int(np.asarray(data["band_bins"]).reshape(-1)[0]) if "band_bins" in data.files else 0
         durations = np.asarray(data["duration_seconds"], dtype=np.float32) if "duration_seconds" in data.files else None
+        preview_starts = np.asarray(data["preview_start_seconds"], dtype=np.float32) if "preview_start_seconds" in data.files else None
+        preview_ends = np.asarray(data["preview_end_seconds"], dtype=np.float32) if "preview_end_seconds" in data.files else None
+        preview_scores = np.asarray(data["preview_score"], dtype=np.float32) if "preview_score" in data.files else None
+        preview_methods = np.asarray(data["preview_method"], dtype=np.str_) if "preview_method" in data.files else None
 
         lookup: dict[str, dict[str, Any]] = {}
         for i, filename in enumerate(filenames):
@@ -500,6 +549,14 @@ def load_waveform_feature_lookup(npz_path: str | Path) -> dict[str, dict[str, An
             }
             if durations is not None and i < durations.size and np.isfinite(float(durations[i])):
                 entry["duration_seconds"] = float(durations[i])
+            if preview_starts is not None and i < preview_starts.size and np.isfinite(float(preview_starts[i])):
+                entry["preview_start_seconds"] = float(preview_starts[i])
+            if preview_ends is not None and i < preview_ends.size and np.isfinite(float(preview_ends[i])):
+                entry["preview_end_seconds"] = float(preview_ends[i])
+            if preview_scores is not None and i < preview_scores.size and np.isfinite(float(preview_scores[i])):
+                entry["preview_score"] = float(preview_scores[i])
+            if preview_methods is not None and i < preview_methods.size:
+                entry["preview_method"] = str(preview_methods[i])
             lookup[_norm_token(filename)] = entry
             lookup[Path(filename).name.lower()] = entry
     return lookup

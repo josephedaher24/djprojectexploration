@@ -7,6 +7,9 @@ functions that export a single compressed NPZ collection per playlist.
 from __future__ import annotations
 
 import argparse
+import os
+import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,6 +33,26 @@ DEFAULT_GROOVE_OUTPUT_DIR = PROJECT_ROOT / "data" / "groove_embeddings"
 DEFAULT_MODEL_FILENAME = "discogs-maest-30s-pw-519l-2.pb"
 DEFAULT_OUTPUT_NODE = "PartitionedCall/Identity_7"
 DEFAULT_MODEL_FILE = PROJECT_ROOT / "models" / DEFAULT_MODEL_FILENAME
+
+
+@contextmanager
+def _suppress_native_stderr(enabled: bool = True):
+    if not enabled:
+        yield
+        return
+    try:
+        stderr_fd = sys.stderr.fileno()
+    except (AttributeError, OSError):
+        yield
+        return
+    saved_fd = os.dup(stderr_fd)
+    try:
+        with open(os.devnull, "w", encoding="utf-8") as devnull:
+            os.dup2(devnull.fileno(), stderr_fd)
+            yield
+    finally:
+        os.dup2(saved_fd, stderr_fd)
+        os.close(saved_fd)
 
 
 def _string_array(values: list[str]) -> np.ndarray:
@@ -66,6 +89,25 @@ def _default_npz_name(tracklist_csv: Path) -> str:
     if stem.endswith("_tracks"):
         return f"{stem}.npz"
     return f"{stem}_tracks.npz"
+
+
+def _tempo_bpm_lookup_from_npz(path: str | Path | None) -> dict[int, float]:
+    if path is None:
+        return {}
+    npz_path = Path(path).expanduser().resolve()
+    if not npz_path.exists():
+        return {}
+    with np.load(npz_path, allow_pickle=False) as data:
+        if "track_numbers" not in data.files or "tempo_bpm" not in data.files:
+            return {}
+        track_numbers = np.asarray(data["track_numbers"], dtype=np.int64).reshape(-1)
+        tempo_bpm = np.asarray(data["tempo_bpm"], dtype=np.float64).reshape(-1)
+        out: dict[int, float] = {}
+        for index, track_number in enumerate(track_numbers):
+            bpm = float(tempo_bpm[index]) if index < tempo_bpm.size else float("nan")
+            if np.isfinite(bpm) and bpm > 0:
+                out[int(track_number)] = bpm
+        return out
 
 
 def _save_collection_npz(
@@ -106,6 +148,8 @@ def create_maest_playlist_embeddings_npz(
     skip_missing_audio: bool = False,
 ) -> Path:
     """Build MAEST embeddings for playlist tracks and save one NPZ collection."""
+    from essentia.standard import TensorflowPredictMAEST
+
     from djprojectexploration.maest_embedding_extractor import extract_embedding
 
     csv_path = Path(tracklist_csv).expanduser().resolve()
@@ -125,9 +169,15 @@ def create_maest_playlist_embeddings_npz(
     vectors: list[np.ndarray] = []
     reductions: list[str] = []
     raw_shapes: list[str] = []
+    model = TensorflowPredictMAEST(graphFilename=str(resolved_model_file), output=output_node)
 
     for track in tracks:
-        vector, raw_shape, reduction = extract_embedding(track.audio_path, resolved_model_file, output_node)
+        vector, raw_shape, reduction = extract_embedding(
+            track.audio_path,
+            resolved_model_file,
+            output_node,
+            model=model,
+        )
         vectors.append(np.asarray(vector, dtype=np.float32).reshape(-1))
         reductions.append(reduction)
         raw_shapes.append("x".join(str(dim) for dim in raw_shape))
@@ -177,6 +227,7 @@ def create_chroma_playlist_embeddings_npz(
     chroma_bins: int = 12,
     include_key_features: bool = True,
     center_baseline: float | None = 1.0 / 12.0,
+    suppress_essentia_warnings: bool = True,
 ) -> Path:
     """Build chroma embeddings for playlist tracks and save one NPZ collection."""
     from djprojectexploration.chroma_embedding import generate_chroma_embedding
@@ -204,15 +255,16 @@ def create_chroma_playlist_embeddings_npz(
     beat_phase_anchors: list[float] = []
 
     for track in tracks:
-        payload = generate_chroma_embedding(
-            audio_file=track.audio_path,
-            sample_rate=sample_rate,
-            frame_size=frame_size,
-            hop_size=hop_size,
-            chroma_bins=chroma_bins,
-            include_key_features=include_key_features,
-            center_baseline=center_baseline,
-        )
+        with _suppress_native_stderr(suppress_essentia_warnings):
+            payload = generate_chroma_embedding(
+                audio_file=track.audio_path,
+                sample_rate=sample_rate,
+                frame_size=frame_size,
+                hop_size=hop_size,
+                chroma_bins=chroma_bins,
+                include_key_features=include_key_features,
+                center_baseline=center_baseline,
+            )
 
         vectors.append(np.asarray(payload["embedding"], dtype=np.float32).reshape(-1))
         embedding_subtypes.append(str(payload.get("embedding_type", "unknown")))
@@ -286,6 +338,8 @@ def create_chroma_playlist_embeddings_npz(
     print(f"Embedding dimension: {embeddings.shape[1]}")
     print(f"Include key features: {include_key_features}")
     print(f"Center baseline: {center_baseline}")
+    if suppress_essentia_warnings:
+        print("Suppressed repeated native Essentia warnings during chroma extraction.")
     return saved_path
 
 
@@ -306,6 +360,8 @@ def create_tempo_playlist_embeddings_npz(
     rms_percentile: float = 20.0,
 ) -> Path:
     """Build TempoCNN embeddings for playlist tracks and save one NPZ collection."""
+    from essentia.standard import TempoCNN
+
     from djprojectexploration.tempo_embedding import (
         DEFAULT_TEMPOCNN_MODEL_URL,
         generate_tempo_embedding,
@@ -323,6 +379,7 @@ def create_tempo_playlist_embeddings_npz(
         model_file=model_file,
         auto_download=bool(auto_download_model),
     )
+    model = TempoCNN(graphFilename=str(resolved_model_file))
 
     vectors: list[np.ndarray] = []
     tempo_bpms: list[float] = []
@@ -346,6 +403,7 @@ def create_tempo_playlist_embeddings_npz(
             audio_file=track.audio_path,
             model_file=resolved_model_file,
             auto_download_model=False,
+            model=model,
             sample_rate=int(sample_rate),
             resample_quality=int(resample_quality),
             snippet_length_sec=snippet_length_sec,
@@ -457,6 +515,7 @@ def create_groove_playlist_embeddings_npz(
     output_file: str | Path | None = None,
     output_dir: str | Path = DEFAULT_GROOVE_OUTPUT_DIR,
     skip_missing_audio: bool = False,
+    tempo_embeddings: str | Path | None = None,
     sample_rate: int = 44100,
     tempocnn_sample_rate: int = 11025,
     snippet_length_sec: float | None = None,
@@ -486,6 +545,7 @@ def create_groove_playlist_embeddings_npz(
         music_dir=music_dir,
         skip_missing_audio=skip_missing_audio,
     )
+    tempo_bpm_lookup = _tempo_bpm_lookup_from_npz(tempo_embeddings)
 
     vectors: list[np.ndarray] = []
     embedding_subtypes: list[str] = []
@@ -501,6 +561,8 @@ def create_groove_playlist_embeddings_npz(
     phase_anchors: list[float] = []
     phase_shifts: list[float] = []
     phase_modes: list[str] = []
+    phase_search_modes: list[str] = []
+    phase_search_max_shifts: list[float] = []
     prepended_counts: list[int] = []
     complete_phrases: list[int] = []
     model_files: list[str] = []
@@ -516,7 +578,9 @@ def create_groove_playlist_embeddings_npz(
         manual_bpm = None
         if use_csv_bpm and track.bpm is not None and np.isfinite(float(track.bpm)) and float(track.bpm) > 0:
             manual_bpm = float(track.bpm)
-        onset_time_sec = track.onset_time if track.onset_time is not None else 0.0
+        elif tempo_bpm_lookup:
+            manual_bpm = tempo_bpm_lookup.get(int(track.track_number))
+        onset_time_sec = track.onset_time
         payload = generate_groove_embedding(
             audio_file=track.audio_path,
             sample_rate=int(sample_rate),
@@ -559,6 +623,8 @@ def create_groove_playlist_embeddings_npz(
         phase_anchors.append(float(beat_pooling.get("phase_anchor_seconds", np.nan)))
         phase_shifts.append(float(beat_pooling.get("phase_shift_seconds", 0.0)))
         phase_modes.append(str(beat_pooling.get("phase_align_mode", "")))
+        phase_search_modes.append(str(beat_pooling.get("phase_align_search_mode", "")))
+        phase_search_max_shifts.append(float(beat_pooling.get("phase_align_search_max_shift_seconds", np.nan)))
         prepended_counts.append(int(beat_pooling.get("prepended_start_beats", 0)))
         complete_phrases.append(int(beat_pooling.get("complete_phrases", 0)))
         manual_bpm_used.append(np.nan if manual_bpm is None else float(manual_bpm))
@@ -610,6 +676,8 @@ def create_groove_playlist_embeddings_npz(
         "groove_phase_anchor_seconds": np.asarray(phase_anchors, dtype=np.float32),
         "groove_phase_shift_seconds": np.asarray(phase_shifts, dtype=np.float32),
         "groove_phase_align_mode": _string_array(phase_modes),
+        "groove_phase_align_search_mode": _string_array(phase_search_modes),
+        "groove_phase_align_search_max_shift_seconds": np.asarray(phase_search_max_shifts, dtype=np.float32),
         "groove_prepended_start_beats": np.asarray(prepended_counts, dtype=np.int32),
         "groove_complete_phrases": np.asarray(complete_phrases, dtype=np.int32),
         "groove_tempocnn_model_file": _string_array(model_files),
@@ -904,6 +972,11 @@ def _chroma_cli_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable appended key features (default is enabled).",
     )
+    parser.add_argument(
+        "--show-essentia-warnings",
+        action="store_true",
+        help="Show repeated native Essentia warnings during chroma extraction.",
+    )
     return parser
 
 
@@ -1006,6 +1079,12 @@ def _groove_cli_parser() -> argparse.ArgumentParser:
         "--skip-missing-audio",
         action="store_true",
         help="Skip rows whose audio files do not exist instead of failing.",
+    )
+    parser.add_argument(
+        "--tempo-embeddings",
+        type=Path,
+        default=None,
+        help="Optional TempoCNN playlist NPZ to reuse for BPM seeds before falling back to per-track TempoCNN.",
     )
     parser.add_argument("--sample-rate", type=int, default=44100)
     parser.add_argument("--tempocnn-sample-rate", type=int, default=11025)
@@ -1153,6 +1232,7 @@ def chroma_main() -> None:
         chroma_bins=int(args.chroma_bins),
         center_baseline=float(args.center_baseline),
         include_key_features=not bool(args.exclude_key_features),
+        suppress_essentia_warnings=not bool(args.show_essentia_warnings),
     )
 
 
@@ -1185,6 +1265,7 @@ def groove_main() -> None:
         output_file=args.output_file,
         output_dir=args.output_dir,
         skip_missing_audio=bool(args.skip_missing_audio),
+        tempo_embeddings=args.tempo_embeddings,
         sample_rate=int(args.sample_rate),
         tempocnn_sample_rate=int(args.tempocnn_sample_rate),
         snippet_length_sec=args.snippet_length_sec,

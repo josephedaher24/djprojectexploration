@@ -454,6 +454,7 @@ def generate_groove_embedding(
     local_probability = np.array([], dtype=np.float32)
     tempocnn_bpm = float("nan")
 
+    has_explicit_phase_anchor = onset_time_sec is not None
     phase_anchor_sec = 0.0 if onset_time_sec is None else float(onset_time_sec)
     if manual_bpm is None:
         tempocnn_bpm, local_bpm, local_probability, tempocnn_model_file = _tempocnn_tempo(
@@ -478,9 +479,17 @@ def generate_groove_embedding(
 
     phase_shift_sec = 0.0
     phase_align_mode_used = "none"
+    phase_align_search_mode = "explicit_onset_local" if has_explicit_phase_anchor else "missing_onset_full_beat"
+    phase_align_search_max_shift_sec = float(phase_align_max_shift_sec)
     phase_align_scores: dict[str, float] = {}
     phase_align_shifts: dict[str, float] = {}
     if auto_phase_align and beat_times.size >= 2:
+        if not has_explicit_phase_anchor and np.isfinite(bpm_seed) and bpm_seed > 0:
+            beat_period_sec = 60.0 / float(bpm_seed)
+            phase_align_search_max_shift_sec = max(
+                float(phase_align_step_sec),
+                0.5 * beat_period_sec,
+            )
         onset_env = librosa.onset.onset_strength(y=audio, sr=int(sample_rate), hop_length=int(hop_length))
         onset_env_times = librosa.times_like(onset_env, sr=int(sample_rate), hop_length=int(hop_length))
         phase_align_mode_used, phase_shift_sec, phase_align_scores, phase_align_shifts = _choose_phase_alignment(
@@ -494,7 +503,7 @@ def generate_groove_embedding(
             requested_mode=phase_align_mode,
             low_mid_weights=phase_align_low_mid_weights,
             adaptive_margin=float(phase_align_adaptive_margin),
-            max_shift_sec=float(phase_align_max_shift_sec),
+            max_shift_sec=phase_align_search_max_shift_sec,
             step_sec=float(phase_align_step_sec),
         )
         shifted = beat_times + float(phase_shift_sec)
@@ -503,6 +512,8 @@ def generate_groove_embedding(
         if shifted.size >= 2:
             beat_times = shifted
             beat_source = f"{beat_source}_phase_aligned_{phase_align_mode_used}"
+            if not has_explicit_phase_anchor:
+                beat_source = f"{beat_source}_full_beat_search"
 
     prepended_count = 0
     if auto_prepend_start_beats:
@@ -559,6 +570,8 @@ def generate_groove_embedding(
             "phase_anchor_seconds": float(phase_anchor_sec),
             "phase_shift_seconds": float(phase_shift_sec),
             "phase_align_mode": phase_align_mode_used,
+            "phase_align_search_mode": phase_align_search_mode,
+            "phase_align_search_max_shift_seconds": float(phase_align_search_max_shift_sec),
             "phase_align_scores": phase_align_scores,
             "phase_align_shifts": phase_align_shifts,
             "prepended_start_beats": int(prepended_count),
@@ -579,6 +592,7 @@ def generate_groove_embedding(
             "auto_phase_align": bool(auto_phase_align),
             "phase_align_mode": phase_align_mode,
             "phase_align_max_shift_sec": float(phase_align_max_shift_sec),
+            "phase_align_missing_onset_search": "full_beat",
             "phase_align_step_sec": float(phase_align_step_sec),
             "phase_align_low_mid_weights": [float(v) for v in phase_align_low_mid_weights],
             "phase_align_adaptive_margin": float(phase_align_adaptive_margin),

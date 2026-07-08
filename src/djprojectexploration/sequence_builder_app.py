@@ -20,6 +20,14 @@ from djprojectexploration.local_http import (
     json_response,
     text_response,
 )
+from djprojectexploration.pacmap_settings import (
+    PacmapSettings,
+    SequenceBuilderUiSettings,
+    add_pacmap_args,
+    pacmap_settings_from_args,
+    sequence_builder_ui_settings_from_args,
+)
+from djprojectexploration.tracklists import load_playlist_tracks
 from djprojectexploration.transition_preview import DEFAULT_OUTPUT_DIR
 from djprojectexploration.transition_workbench import DEFAULT_TRACKLISTS, TransitionWorkbench
 
@@ -47,14 +55,19 @@ class SequenceBuilderApp:
         energy_npz_path: Path | None,
         sequence_length: int,
         control_mode: str,
-        step: float,
-        static_layout: bool,
+        pacmap_settings: PacmapSettings,
+        ui_settings: SequenceBuilderUiSettings | None,
+        settings_preset_source: Path | None,
     ) -> None:
         self.project_root = project_root.expanduser().resolve()
         self.output_dir = output_dir.expanduser().resolve()
         self.tracklists = [path.expanduser().resolve() for path in tracklists]
         self.mix_slugs = [path.parent.name for path in self.tracklists]
         self.workbench = TransitionWorkbench(tracklists=self.tracklists, cue_tables=None, output_dir=self.output_dir)
+        self.audio_by_track_id: dict[str, Path] = {}
+        for source in self.workbench.sources:
+            for track in load_playlist_tracks(source.tracklist):
+                self.audio_by_track_id[f"{source.slug}:{track.track_number}"] = track.audio_path
         self.html_file = self.project_root / "data" / "exports" / "dj_sequence_builder_app.html"
         self.html_file = export_dj_sequence(
             project_root=self.project_root,
@@ -63,8 +76,9 @@ class SequenceBuilderApp:
             energy_npz_path=energy_npz_path,
             default_length=sequence_length,
             control_mode=control_mode,
-            step=step,
-            static_layout=static_layout,
+            pacmap_settings=pacmap_settings,
+            ui_settings=ui_settings,
+            settings_preset_source=settings_preset_source,
             app_mode=True,
         )
         self.html = self.html_file.read_text(encoding="utf-8")
@@ -85,6 +99,15 @@ class SequenceBuilderApp:
         if not candidate.exists() or not candidate.is_file():
             return None
         return candidate
+
+    def audio_path(self, track_id: str) -> Path | None:
+        path = self.audio_by_track_id.get(track_id)
+        if path is None:
+            return None
+        resolved = path.expanduser().resolve()
+        if not resolved.exists() or not resolved.is_file():
+            return None
+        return resolved
 
 
 def make_handler(app: SequenceBuilderApp) -> type[BaseHTTPRequestHandler]:
@@ -114,6 +137,9 @@ def make_handler(app: SequenceBuilderApp) -> type[BaseHTTPRequestHandler]:
                 return
             if path.startswith("/assets/"):
                 self._serve_asset(path)
+                return
+            if path.startswith("/audio/"):
+                self._serve_audio(path)
                 return
             error_response(self, HTTPStatus.NOT_FOUND, "Not found")
 
@@ -153,6 +179,15 @@ def make_handler(app: SequenceBuilderApp) -> type[BaseHTTPRequestHandler]:
             content_type = mimetypes.guess_type(str(asset))[0] or "application/octet-stream"
             file_response(self, asset, content_type)
 
+        def _serve_audio(self, path: str) -> None:
+            track_id = unquote(path[len("/audio/") :])
+            audio = app.audio_path(track_id)
+            if audio is None:
+                error_response(self, HTTPStatus.NOT_FOUND, "Audio not found")
+                return
+            content_type = mimetypes.guess_type(str(audio))[0] or "application/octet-stream"
+            file_response(self, audio, content_type)
+
     return Handler
 
 
@@ -166,8 +201,9 @@ def serve_sequence_builder_app(
     energy_npz_path: Path | None,
     sequence_length: int,
     control_mode: str,
-    step: float,
-    static_layout: bool,
+    pacmap_settings: PacmapSettings,
+    ui_settings: SequenceBuilderUiSettings | None,
+    settings_preset_source: Path | None,
 ) -> None:
     app = SequenceBuilderApp(
         project_root=project_root,
@@ -176,8 +212,9 @@ def serve_sequence_builder_app(
         energy_npz_path=energy_npz_path,
         sequence_length=sequence_length,
         control_mode=control_mode,
-        step=step,
-        static_layout=static_layout,
+        pacmap_settings=pacmap_settings,
+        ui_settings=ui_settings,
+        settings_preset_source=settings_preset_source,
     )
     server = ThreadingHTTPServer((host, port), make_handler(app))
     print(f"Sequence builder app: http://{host}:{port}/")
@@ -206,9 +243,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--energy-npz", type=Path, default=None)
     parser.add_argument("--sequence-length", type=int, default=10)
     parser.add_argument("--control-mode", choices=CONTROL_MODE_CHOICES, default="genre-mixability")
-    parser.add_argument("--step", type=float, default=0.1)
+    add_pacmap_args(parser, include_static_layout=False)
     parser.add_argument("--dynamic-layout", action="store_true", help="Generate the full dynamic PaCMAP layout grid at startup.")
     args = parser.parse_args(argv)
+    pacmap_settings = pacmap_settings_from_args(args)
+    ui_settings = sequence_builder_ui_settings_from_args(args)
+    if bool(args.dynamic_layout) or args.pacmap_preset is None:
+        pacmap_settings = PacmapSettings(
+            **{
+                **pacmap_settings.to_dict(),
+                "static_layout": not bool(args.dynamic_layout),
+            }
+        ).validate()
 
     project_root = args.project_root.expanduser().resolve()
     tracklists = args.tracklist or _tracklists_from_mix_slugs(project_root, args.mix_slugs)
@@ -221,8 +267,9 @@ def main(argv: list[str] | None = None) -> int:
         energy_npz_path=args.energy_npz,
         sequence_length=args.sequence_length,
         control_mode=args.control_mode,
-        step=args.step,
-        static_layout=not bool(args.dynamic_layout),
+        pacmap_settings=pacmap_settings,
+        ui_settings=ui_settings,
+        settings_preset_source=args.pacmap_preset,
     )
     return 0
 

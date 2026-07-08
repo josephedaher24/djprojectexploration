@@ -20,6 +20,7 @@ from djprojectexploration.interactive_visualization_common import (
     _load_combined_records_and_features,
     _neighbor_pairs_from_distance,
     _normalize_distance_matrix,
+    resolve_tracklist_sources,
 )
 from djprojectexploration.multimodal_compatibility import (
     _build_harmonic_kernel,
@@ -27,10 +28,15 @@ from djprojectexploration.multimodal_compatibility import (
     _pairwise_fifth_aware_similarity_matrix,
     _pairwise_tempo_similarity_matrix,
 )
+from djprojectexploration.pacmap_settings import (
+    DISTANCE_COMBINE_CHOICES,
+    LAYOUT_INIT_CHOICES,
+    PACMAP_PAIR_SOURCE_CHOICES,
+    PacmapSettings,
+    add_pacmap_args,
+    pacmap_settings_from_args,
+)
 
-PACMAP_PAIR_SOURCE_CHOICES = ("neighbors-only", "combined-all")
-DISTANCE_COMBINE_CHOICES = ("l2", "l1")
-LAYOUT_INIT_CHOICES = ("neighbor", "pca", "random")
 CONTROL_MODE_CHOICES = ("genre-mixability", "legacy-simplex", "legacy-discrete-simplex")
 REDUCER_CHOICES = ("pacmap", "umap")
 
@@ -155,18 +161,23 @@ def _component_matrices_3way(
 def _load_combined_groove_embeddings(
     *,
     project_root: Path,
-    mix_slugs: list[str],
+    mix_slugs: list[str] | None = None,
+    tracklist_paths: list[Path] | None = None,
     groove_dir: Path,
 ) -> np.ndarray:
     chunks: list[np.ndarray] = []
-    for mix_slug in mix_slugs:
-        csv_stem = f"{mix_slug.replace('-', '_')}_tracks"
+    for mix_slug, tracklist_csv in resolve_tracklist_sources(
+        project_root=project_root,
+        mix_slugs=mix_slugs,
+        tracklist_paths=tracklist_paths,
+    ):
+        csv_stem = tracklist_csv.stem
         groove_file = groove_dir / f"{csv_stem}.npz"
         if not groove_file.exists():
             raise FileNotFoundError(
                 f"Groove embedding collection not found: {groove_file}. "
                 "Generate it with `uv run djprojectexploration-groove-playlist "
-                f"music/{mix_slug}/{csv_stem}.csv`."
+                f"{tracklist_csv}`."
             )
         with np.load(groove_file) as data:
             embeddings = np.asarray(data["embeddings"], dtype=np.float32)
@@ -909,6 +920,7 @@ def _build_genre_mixability_html(
     click_links_per_song: int,
     bpm_color_scale_pct: float,
     generation_settings: dict[str, Any],
+    layout_selection_mode: str,
 ) -> str:
     record_payload = [
         {
@@ -941,7 +953,7 @@ def _build_genre_mixability_html(
             f'<script id="simplex-layouts-json" type="application/json">{_json_script_payload(layouts)}</script>',
             f'<script id="simplex-layout-entries-json" type="application/json">{_json_script_payload(layout_entries)}</script>',
             f'<script id="simplex-sim-json" type="application/json">{_json_script_payload(similarity_payload)}</script>',
-            f'<script id="simplex-config-json" type="application/json">{_json_script_payload({"step": step, "top_k_rows": top_k_rows, "temperature": temperature, "background_links_per_song": background_links_per_song, "click_links_per_song": click_links_per_song, "bpm_color_scale_pct": bpm_color_scale_pct, "control_mode": "genre-mixability"})}</script>',
+            f'<script id="simplex-config-json" type="application/json">{_json_script_payload({"step": step, "top_k_rows": top_k_rows, "temperature": temperature, "background_links_per_song": background_links_per_song, "click_links_per_song": click_links_per_song, "bpm_color_scale_pct": bpm_color_scale_pct, "control_mode": "genre-mixability", "layout_selection_mode": layout_selection_mode})}</script>',
         ]
     )
 
@@ -974,6 +986,8 @@ def export_dj_pacmap(
     *,
     project_root: Path = PROJECT_ROOT,
     mix_slugs: list[str] | None = None,
+    tracklist_paths: list[Path] | None = None,
+    dataset_name: str | None = None,
     output_file: Path | None = None,
     random_state: int = 7777,
     n_neighbors: int = 8,
@@ -992,18 +1006,38 @@ def export_dj_pacmap(
     control_mode: str = "genre-mixability",
     reducer: str = "pacmap",
     umap_min_dist: float = 0.1,
+    pacmap_settings: PacmapSettings | None = None,
 ) -> Path:
     if control_mode not in CONTROL_MODE_CHOICES:
         raise ValueError(f"control_mode must be one of {CONTROL_MODE_CHOICES}, got {control_mode!r}.")
     if reducer not in REDUCER_CHOICES:
         raise ValueError(f"reducer must be one of {REDUCER_CHOICES}, got {reducer!r}.")
 
+    if pacmap_settings is not None:
+        n_neighbors = pacmap_settings.n_neighbors
+        mn_ratio = pacmap_settings.mn_ratio
+        fp_ratio = pacmap_settings.fp_ratio
+        distance = pacmap_settings.distance
+        step = pacmap_settings.step
+        align_layouts = pacmap_settings.align_layouts
+        pair_source = pacmap_settings.pair_source
+        distance_combine = pacmap_settings.distance_combine
+        layout_init = pacmap_settings.layout_init
+        random_state = pacmap_settings.random_state
+        static_layout = pacmap_settings.static_layout
+        layout_selection_mode = pacmap_settings.layout_selection_mode
+    else:
+        static_layout = False
+        layout_selection_mode = "discrete" if control_mode == "legacy-discrete-simplex" else "interpolated"
+
     project_root = project_root.expanduser().resolve()
-    mix_slugs = mix_slugs or ["aries-mix", "ara-mix"]
-    dataset_tag = "__".join(
-        str((project_root / "music" / slug / f"{slug.replace('-', '_')}_tracks.csv").stem)
-        for slug in mix_slugs
+    sources = resolve_tracklist_sources(
+        project_root=project_root,
+        mix_slugs=mix_slugs,
+        tracklist_paths=tracklist_paths,
     )
+    mix_slugs = [slug for slug, _ in sources]
+    dataset_tag = dataset_name or "__".join(path.stem for _, path in sources)
     reducer_label = "PaCMAP" if reducer == "pacmap" else "UMAP"
     reducer_file_tag = "pacmap" if reducer == "pacmap" else "umap"
     output_file = output_file or (
@@ -1014,7 +1048,8 @@ def export_dj_pacmap(
 
     records, features = _load_combined_records_and_features(
         project_root=project_root,
-        mix_slugs=mix_slugs,
+        mix_slugs=None,
+        tracklist_paths=[path for _, path in sources],
         maest_dir=(project_root / "data" / "maest_embeddings"),
         chroma_dir=(project_root / "data" / "chroma_embeddings"),
         tempo_dir=(project_root / "data" / "tempo_embeddings"),
@@ -1041,7 +1076,7 @@ def export_dj_pacmap(
             harmonic_other_weight=0.0,
             harmonic_self_normalize=True,
         )
-        grid = _simplex_grid(step)
+        grid = [(0.6, 0.2, 0.2)] if static_layout else _simplex_grid(step)
         if reducer == "pacmap":
             layouts = _compute_pacmap_knn_simplex_layouts(
                 X_reference=features.maest,
@@ -1087,7 +1122,8 @@ def export_dj_pacmap(
     else:
         groove_embeddings = _load_combined_groove_embeddings(
             project_root=project_root,
-            mix_slugs=mix_slugs,
+            mix_slugs=None,
+            tracklist_paths=[path for _, path in sources],
             groove_dir=(project_root / "data" / "groove_embeddings"),
         )
         matrices = _component_matrices_4way(
@@ -1106,7 +1142,7 @@ def export_dj_pacmap(
             harmonic_other_weight=0.0,
             harmonic_self_normalize=True,
         )
-        grid4 = _simplex_grid_4way(step)
+        grid4 = [(0.5, 0.2, 0.2, 0.1)] if static_layout else _simplex_grid_4way(step)
         if reducer == "pacmap":
             layouts = _compute_pacmap_knn_4way_layouts(
                 X_reference=features.maest,
@@ -1167,13 +1203,14 @@ def export_dj_pacmap(
         show_grid=False,
     )
     generation_settings = {
-        "mix-slug": mix_slugs,
+        "dataset-name": dataset_name or "n/a",
+        "source": [str(path.relative_to(project_root)) if path.is_relative_to(project_root) else str(path) for _, path in sources],
         "output-file": output_file.relative_to(project_root)
         if output_file.is_relative_to(project_root)
         else output_file,
         "control-mode": control_mode,
         "reducer": reducer,
-        "layout-mode": "discrete" if control_mode == "legacy-discrete-simplex" else "interpolated",
+        "layout-mode": "static" if static_layout else layout_selection_mode,
         "distance-combine": distance_combine,
         "pair-source": pair_source if reducer == "pacmap" else "n/a",
         "layout-init": layout_init if reducer == "pacmap" else "n/a",
@@ -1212,7 +1249,7 @@ def export_dj_pacmap(
             click_links_per_song=click_links_per_song,
             bpm_color_scale_pct=bpm_color_scale_pct,
             generation_settings=generation_settings,
-            layout_mode="discrete" if control_mode == "legacy-discrete-simplex" else "interpolated",
+            layout_mode="discrete" if layout_selection_mode == "discrete" else "interpolated",
         )
     else:
         html = _build_genre_mixability_html(
@@ -1229,6 +1266,7 @@ def export_dj_pacmap(
             click_links_per_song=click_links_per_song,
             bpm_color_scale_pct=bpm_color_scale_pct,
             generation_settings=generation_settings,
+            layout_selection_mode="discrete" if layout_selection_mode == "discrete" else "interpolated",
         )
     output_file.write_text(html, encoding="utf-8")
     print(f"Loaded aligned tracks: {len(records)}")
@@ -1249,6 +1287,8 @@ def export_dj_pacmap(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the interactive DJ embedding HTML.")
     parser.add_argument("--mix-slug", action="append", dest="mix_slugs")
+    parser.add_argument("--tracklist", action="append", type=Path, default=None, help="Tracklist CSV to include; repeatable.")
+    parser.add_argument("--dataset-name", default=None, help="Dataset/output name used when --tracklist is provided.")
     parser.add_argument("--output-file", type=Path, default=None)
     parser.add_argument(
         "--reducer",
@@ -1256,19 +1296,13 @@ def _parse_args() -> argparse.Namespace:
         default="pacmap",
         help="Embedding reducer used to generate the precomputed layout grid.",
     )
-    parser.add_argument("--random-state", type=int, default=7777)
-    parser.add_argument("--n-neighbors", type=int, default=10)
-    parser.add_argument("--mn-ratio", type=float, default=0.5)
-    parser.add_argument("--fp-ratio", type=float, default=1.5)
-    parser.add_argument("--distance", default="angular")
     parser.add_argument(
         "--umap-min-dist",
         type=float,
         default=0.1,
         help="UMAP min_dist value when --reducer umap is selected.",
     )
-    parser.add_argument("--step", type=float, default=0.1)
-    parser.add_argument("--no-align-layouts", action="store_true")
+    add_pacmap_args(parser, include_static_layout=True)
     parser.add_argument("--background-links-per-song", type=int, default=3)
     parser.add_argument("--click-links-per-song", type=int, default=5)
     parser.add_argument("--bpm-color-scale-pct", type=float, default=0.10)
@@ -1282,59 +1316,21 @@ def _parse_args() -> argparse.Namespace:
             "`legacy-discrete-simplex` keeps the older simplex but snaps to exact precomputed layouts."
         ),
     )
-    parser.add_argument(
-        "--pair-source",
-        choices=PACMAP_PAIR_SOURCE_CHOICES,
-        default="neighbors-only",
-        help=(
-            "Which distances define PaCMAP pair constraints. "
-            "`neighbors-only` keeps existing behavior: nearest pairs use the weighted simplex distance, "
-            "while PaCMAP samples mid/far pairs from the MAEST reference features. "
-            "`combined-all` derives nearest, mid-near, and far pairs from the weighted simplex distance."
-        ),
-    )
-    parser.add_argument(
-        "--distance-combine",
-        choices=DISTANCE_COMBINE_CHOICES,
-        default="l2",
-        help=(
-            "How to combine normalized MAEST/tempo/chroma distances. "
-            "`l2` keeps existing root-weighted-squares behavior; "
-            "`l1` uses a weighted arithmetic mean for more linear modality balancing."
-        ),
-    )
-    parser.add_argument(
-        "--layout-init",
-        choices=LAYOUT_INIT_CHOICES,
-        default="neighbor",
-        help=(
-            "PaCMAP initialization for each simplex layout. "
-            "`neighbor` keeps existing behavior by initializing from a nearby already-computed simplex layout; "
-            "`pca` initializes each layout independently from PCA; "
-            "`random` initializes each layout independently at random."
-        ),
-    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
+    pacmap_settings = pacmap_settings_from_args(args)
     export_dj_pacmap(
         mix_slugs=args.mix_slugs,
+        tracklist_paths=args.tracklist,
+        dataset_name=args.dataset_name,
         output_file=args.output_file,
-        random_state=args.random_state,
-        n_neighbors=args.n_neighbors,
-        mn_ratio=args.mn_ratio,
-        fp_ratio=args.fp_ratio,
-        distance=args.distance,
-        step=args.step,
-        align_layouts=not args.no_align_layouts,
+        pacmap_settings=pacmap_settings,
         background_links_per_song=args.background_links_per_song,
         click_links_per_song=args.click_links_per_song,
         bpm_color_scale_pct=args.bpm_color_scale_pct,
-        pair_source=args.pair_source,
-        distance_combine=args.distance_combine,
-        layout_init=args.layout_init,
         control_mode=args.control_mode,
         reducer=args.reducer,
         umap_min_dist=args.umap_min_dist,

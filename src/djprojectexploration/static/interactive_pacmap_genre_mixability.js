@@ -17,6 +17,8 @@
     simplex: document.getElementById('simplex-control'),
     simplexHandle: document.getElementById('simplex-handle'),
     summary: document.getElementById('weight-summary'),
+    highlightLinkLimit: document.getElementById('highlight-link-limit'),
+    highlightLinkLimitVal: document.getElementById('highlight-link-limit-val'),
     meta: document.getElementById('track-meta'),
     audio: document.getElementById('track-audio'),
     panel: document.getElementById('similarity-panel'),
@@ -25,6 +27,7 @@
   let selectedIdx = null;
   let backgroundTraceIndices = [];
   let selectedTraceIndices = [];
+  let highlightedLinkLimit = Math.max(0, Number(config.click_links_per_song || 0));
 
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
   function fmt(v,d) { return Number(v || 0).toFixed(d); }
@@ -94,7 +97,7 @@
       return {entry, d2};
     }).sort((a,b) => a.d2 - b.d2).slice(0, 12);
     if (!ranked.length) return layouts['1.0,0.0,0.0,0.0'] || [];
-    if (ranked[0].d2 <= 1e-12) return ranked[0].entry.points;
+    if ((config.layout_selection_mode || 'interpolated') === 'discrete' || ranked[0].d2 <= 1e-12) return ranked[0].entry.points;
     const weightsLocal = ranked.map(r => 1 / Math.max(1e-9, r.d2));
     const sum = weightsLocal.reduce((a,b) => a + b, 0);
     return ranked[0].entry.points.map((_, idx) => {
@@ -176,6 +179,20 @@
         line: {color: colorForDelta(row.bpm_delta_frac, highlighted ? clamp(0.40 + prob * 2.2, 0.40, 0.90) : 0.13), width: highlighted ? clamp(1.8 + prob * 10.0, 1.8, 5.0) : 0.85, dash: highlighted ? 'solid' : 'dot'},
         hoverinfo: 'skip', showlegend: false,
       });
+      if (highlighted) {
+        traces.push({
+          type: 'scatter',
+          mode: 'markers+text',
+          x: [Number(dst[0])],
+          y: [Number(dst[1])],
+          marker: {size: 18, color: 'rgba(255,255,255,0.94)', line: {color: colorForDelta(row.bpm_delta_frac, 0.85), width: 2}},
+          text: [String(row.rank || traces.length + 1)],
+          textposition: 'middle center',
+          textfont: {size: 10, color: '#17202a'},
+          hovertemplate: '#' + esc(row.rank || '') + ' ' + esc(row.title || '') + '<extra></extra>',
+          showlegend: false,
+        });
+      }
     }
     return traces;
   }
@@ -190,7 +207,7 @@
   function renderSelectedLinks(w) {
     selectedTraceIndices = clearTraceSet(selectedTraceIndices);
     if (selectedIdx === null) return;
-    const limit = Math.max(0, Number(config.click_links_per_song || 0));
+    const limit = Math.max(0, Number(highlightedLinkLimit || 0));
     selectedTraceIndices = addTraceSet(linkTraces(selectedIdx, rankedRows(selectedIdx, w), limit, true));
   }
   function renderPanel(w) {
@@ -217,6 +234,7 @@
     els.teVal.textContent = fmt(w.mix.tempo, 3);
     els.grVal.textContent = fmt(w.mix.groove, 3);
     els.chVal.textContent = fmt(w.mix.chroma, 3);
+    if (els.highlightLinkLimitVal) els.highlightLinkLimitVal.textContent = String(Math.max(0, Number(highlightedLinkLimit || 0)));
     updateSimplexHandle(w.mix);
     els.summary.innerHTML = 'Global weights: Style <b>' + pct(w.maest) + '</b>, tempo <b>' + pct(w.tempo) + '</b>, groove <b>' + pct(w.groove) + '</b>, key <b>' + pct(w.chroma) + '</b>.';
     currentPoints = layoutInterpolatedPoints(w);
@@ -229,6 +247,15 @@
     if (el !== els.style) setMixSliders(mixWeightsRaw());
     renderAll();
   }));
+  if (els.highlightLinkLimit) {
+    els.highlightLinkLimit.value = String(highlightedLinkLimit);
+    if (els.highlightLinkLimitVal) els.highlightLinkLimitVal.textContent = String(highlightedLinkLimit);
+    els.highlightLinkLimit.addEventListener('input', () => {
+      highlightedLinkLimit = Math.max(0, Number(els.highlightLinkLimit.value || 0));
+      if (els.highlightLinkLimitVal) els.highlightLinkLimitVal.textContent = String(highlightedLinkLimit);
+      renderSelectedLinks(weights());
+    });
+  }
   if (els.simplex) {
     let draggingSimplex = false;
     els.simplex.addEventListener('pointerdown', ev => { draggingSimplex = true; els.simplex.setPointerCapture(ev.pointerId); setWeightsFromSimplexEvent(ev); });

@@ -1,0 +1,19 @@
+{
+  "n_neighbors": 15,
+  "MN_ratio": 1.0,
+  "FP_ratio": 1.0,
+  "distance": "angular",
+  "pair_source": "combined-all",
+  "distance_combine": "l1",
+  "layout_init": "pca",
+  "layout_selection_mode": "interpolated",
+  "step": 0.25,
+  "static_layout": false,
+  "random_state": 7777,
+  "ui": {
+    "latent_links_per_track": 3,
+    "recommended_links_highlight": 12,
+    "point_color": "genre",
+    "map_fx": true
+  }
+}

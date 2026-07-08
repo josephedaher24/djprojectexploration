@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import html
 import json
@@ -14,6 +15,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+import numpy as np
 
 from djprojectexploration.frontend_assets import frontend_asset_text, render_standalone_document
 from djprojectexploration.local_http import (
@@ -118,6 +121,35 @@ class TransitionWorkbench:
         self.sources_by_slug = {source.slug: source for source in self.sources}
         self.output_dir = output_dir.expanduser().resolve()
         self.generated_source_dir = self.output_dir / "_workbench_sources"
+        self._tempo_bpm_cache: dict[Path, dict[int, float]] = {}
+
+    def _tempo_embedding_path(self, source: TrackSource) -> Path:
+        return PROJECT_ROOT / "data" / "tempo_embeddings" / f"{source.tracklist.stem}.npz"
+
+    def _tempo_bpm_by_track(self, source: TrackSource) -> dict[int, float]:
+        path = self._tempo_embedding_path(source).expanduser().resolve()
+        if path in self._tempo_bpm_cache:
+            return self._tempo_bpm_cache[path]
+        values: dict[int, float] = {}
+        if path.exists():
+            with np.load(path, allow_pickle=True) as payload:
+                track_numbers = np.asarray(payload.get("track_numbers", []), dtype=np.int64).reshape(-1)
+                tempo_bpm = np.asarray(payload.get("tempo_bpm", []), dtype=np.float64).reshape(-1)
+                for index, track_number in enumerate(track_numbers):
+                    bpm = float(tempo_bpm[index]) if index < tempo_bpm.size else float("nan")
+                    if np.isfinite(bpm) and bpm > 0:
+                        values[int(track_number)] = bpm
+        self._tempo_bpm_cache[path] = values
+        return values
+
+    def _resolved_bpm(self, source: TrackSource, track: Any) -> float | None:
+        try:
+            bpm = float(track.bpm)
+        except (TypeError, ValueError):
+            bpm = float("nan")
+        if np.isfinite(bpm) and bpm > 0:
+            return bpm
+        return self._tempo_bpm_by_track(source).get(int(track.track_number))
 
     def _cues_by_track(self, source: TrackSource) -> dict[int, list[dict[str, Any]]]:
         cue_rows = read_csv_rows(source.cue_table, missing_ok=True)
@@ -150,6 +182,7 @@ class TransitionWorkbench:
         for source in self.sources:
             cues_by_track = self._cues_by_track(source)
             for track in load_playlist_tracks(source.tracklist):
+                bpm = self._resolved_bpm(source, track)
                 tracks.append(
                     {
                         "id": f"{source.slug}:{track.track_number}",
@@ -160,7 +193,7 @@ class TransitionWorkbench:
                         "artists": track.artists,
                         "filename": track.mp3_name,
                         "key": track.key,
-                        "bpm": track.bpm,
+                        "bpm": bpm,
                         "onset_time": track.onset_time,
                         "cues": cues_by_track.get(track.track_number, []),
                     }
@@ -273,6 +306,7 @@ class TransitionWorkbench:
                 (1, from_source, from_track),
                 (2, to_source, to_track),
             ):
+                bpm = self._resolved_bpm(source, track)
                 writer.writerow(
                     {
                         "track_number": rendered_track_number,
@@ -281,7 +315,7 @@ class TransitionWorkbench:
                         "mp3_name": track.mp3_name,
                         "filepath": str(track.audio_path),
                         "key": track.key,
-                        "bpm": "" if track.bpm is None else f"{float(track.bpm):.6f}".rstrip("0").rstrip("."),
+                        "bpm": "" if bpm is None else f"{float(bpm):.6f}".rstrip("0").rstrip("."),
                         "onset-time": ""
                         if track.onset_time is None
                         else f"{float(track.onset_time):.6f}".rstrip("0").rstrip("."),

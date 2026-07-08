@@ -61,7 +61,6 @@ The tools are organized around playlist CSVs plus playlist-level NPZ feature bun
 ```text
 music/<mix-slug>/<mix_slug>_tracks.csv
 music/<mix-slug>/<mix_slug>_cues.csv
-music/<mix-slug>/<mix_slug>_preview_sections.csv
 
 data/maest_embeddings/<csv-stem>.npz
 data/chroma_embeddings/<csv-stem>.npz
@@ -71,7 +70,6 @@ data/waveform_features/<csv-stem>.npz
 data/energy_features/<csv-stem>_energy_features.csv
 data/energy_embeddings/aries_ara_energy_features.npz
 
-data/snippets/<csv-stem>/
 data/artwork/
 data/transitions/
 data/exports/
@@ -102,9 +100,63 @@ For a fuller app-ready build, use the dataset orchestrator:
 uv run djprojectexploration-build-dataset path/to/music-folder --name my-set
 ```
 
-This creates `music/my-set/my_set_tracks.csv`, then runs snippet caching, waveform extraction, playlist embeddings,
-energy feature/NPZ export, and sequence-builder HTML export. Use `--skip-embeddings`, `--skip-energy`, or
-`--skip-app-export` while iterating.
+This creates `music/my-set/my_set_tracks.csv`, validates it, then runs waveform extraction, MAEST, chroma, tempo,
+groove, energy feature/NPZ export, sequence-builder HTML export, standalone PaCMAP export, and a build
+manifest. Each stage prints start/done timing so slow extraction steps are easier to spot. For an existing CSV, pass it
+explicitly:
+
+```bash
+uv run djprojectexploration-build-dataset path/to/music-folder \
+  --name my-set \
+  --tracklist path/to/my_tracks.csv
+```
+
+The build writes:
+
+```text
+data/exports/<name>_validation.json
+data/exports/<name>_build_manifest.json
+data/exports/<name>_sequence_builder.html
+data/exports/<name>_pacmap.html
+```
+
+By default, existing feature bundles are reused. Use `--force` to regenerate, `--skip-embeddings`, `--skip-energy`,
+`--skip-sequence-export`, or `--skip-pacmap-export` while iterating. In a full build, tempo is extracted once and then
+reused by groove and energy when those stages need BPM estimates.
+
+### Energy Features and Models
+
+Energy feature extraction reads the source audio files listed by the tracklist. By default it analyzes the full decoded
+song, not cached snippets. Use `--analysis-seconds` only when you intentionally want to analyze a prefix instead.
+
+Extract audio-derived energy features once:
+
+```bash
+uv run djprojectexploration-energy-features music/dj-dataset-1/dj_dataset_1_tracks.csv
+```
+
+Train and freeze a reusable model from labeled feature CSVs:
+
+```bash
+uv run djprojectexploration-energy-train-model \
+  data/energy_features/aries_mix_tracks_energy_features.csv \
+  data/energy_features/ara_mix_tracks_energy_features.csv \
+  --name full_tweedie_ridge_aries_ara
+```
+
+This writes `data/energy_models/full_tweedie_ridge_aries_ara.joblib` plus a JSON metadata sidecar. Apply that frozen
+model to any already-extracted feature CSV without re-reading audio. Predictions from a frozen model are clipped to the
+1-9 energy scale by default:
+
+```bash
+uv run djprojectexploration-energy-npz \
+  data/energy_features/dj_dataset_1_tracks_energy_features.csv \
+  --name dj_dataset_1_energy_features \
+  --model-file data/energy_models/full_tweedie_ridge_aries_ara.joblib
+```
+
+Omit `--model-file` when you want to refit directly from the provided feature CSV rows. That mode requires labeled
+`energy` values in the input CSVs.
 
 ## Source Layout
 
@@ -113,6 +165,9 @@ Most production code lives under `src/djprojectexploration/`. The main app/expor
 - `energy_sequence_builder.py`: builds the sequence-builder data payload, PaCMAP layouts, recommendations, and standalone
   HTML export.
 - `interactive_pacmap_knn_simplex.py`: canonical standalone PaCMAP/UMAP visualization exporter.
+- `pacmap_settings.py`: shared PaCMAP/reducer settings, defaults, validation, and CLI flags.
+- `tracklist_validation.py`: reusable tracklist validation summary used by dataset builds.
+- `dataset_builder.py`: full dataset orchestration for tracklists/folders, feature bundles, exports, and manifests.
 - `transition_workbench.py`: local transition-rendering workbench and API.
 - `sequence_builder_app.py`: local served sequence-builder app that combines the static sequence UI with transition
   rendering endpoints.
@@ -178,6 +233,39 @@ grid of PaCMAP layouts and interpolates between them in the browser:
 uv run djprojectexploration-sequence-builder-app --dynamic-layout --step 0.1
 ```
 
+Reusable PaCMAP settings can also be loaded from JSON presets. Explicit CLI flags override preset values:
+
+```bash
+uv run djprojectexploration-sequence-builder-app \
+  --mix aries-mix \
+  --mix ara-mix \
+  --pacmap-preset presets/pacmap/aries_ara_dynamic_pca.json
+```
+
+Sequence-builder presets can also include frontend visualization defaults under `ui`. These values are embedded into the
+generated app as `app_settings`, shown in the settings popup, and used to initialize the matching controls:
+
+```json
+{
+  "n_neighbors": 15,
+  "MN_ratio": 1.0,
+  "FP_ratio": 1.0,
+  "pair_source": "combined-all",
+  "distance_combine": "l1",
+  "layout_init": "pca",
+  "static_layout": false,
+  "ui": {
+    "latent_links_per_track": 3,
+    "recommended_links_highlight": 12,
+    "point_color": "genre",
+    "map_fx": true
+  }
+}
+```
+
+In the app, latent links are top-K weighted candidate links per track. Recommended links are the current selected track's
+ranked next-track recommendations highlighted on the map.
+
 ### Interactive DJ PaCMAP / UMAP
 
 Generate the standalone PaCMAP visualization:
@@ -201,7 +289,34 @@ uv run djprojectexploration-dj-pacmap \
   --n-neighbors 10 \
   --mn-ratio 0.5 \
   --fp-ratio 1.5 \
+  --pair-source combined-all \
+  --distance-combine l1 \
+  --layout-init neighbor \
+  --layout-selection-mode interpolated \
   --step 0.1
+```
+
+The same PaCMAP knobs are shared by the standalone PaCMAP exporter, the sequence-builder exporter, the served sequence
+builder app, and the dataset builder:
+
+- `--pacmap-preset presets/pacmap/<preset>.json`
+- `--n-neighbors`
+- `--mn-ratio`
+- `--fp-ratio`
+- `--pair-source {neighbors-only,combined-all}`
+- `--distance-combine {l2,l1}`
+- `--layout-init {neighbor,pca,random}`
+- `--layout-selection-mode {interpolated,discrete}`
+- `--step`
+- `--static-layout` where fixed-layout export is supported
+
+The standalone PaCMAP exporter also accepts existing tracklists directly:
+
+```bash
+uv run djprojectexploration-dj-pacmap \
+  --tracklist path/to/my_tracks.csv \
+  --dataset-name my-set \
+  --control-mode genre-mixability
 ```
 
 Generate the same interactive HTML shell with UMAP layouts instead of PaCMAP:
@@ -279,7 +394,17 @@ uv run djprojectexploration-groove-playlist music/ara-mix/ara_mix_tracks.csv --m
 uv run djprojectexploration-deam-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
 ```
 
-Generate waveform features used by the served sequence builder:
+When running standalone commands, pass a previously generated tempo NPZ to groove to avoid re-running TempoCNN for BPM
+seeding:
+
+```bash
+uv run djprojectexploration-groove-playlist music/ara-mix/ara_mix_tracks.csv \
+  --music-dir music/ara-mix \
+  --tempo-embeddings data/tempo_embeddings/ara_mix_tracks.npz
+```
+
+Generate waveform features used by the served sequence builder. This also stores the full-song peak-RMS preview window
+used as the default playback start:
 
 ```bash
 uv run djprojectexploration-waveforms music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix

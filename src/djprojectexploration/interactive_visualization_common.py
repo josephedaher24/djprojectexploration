@@ -25,6 +25,34 @@ from djprojectexploration.tracklists import read_csv_rows
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def source_slug_from_tracklist(tracklist_csv: Path) -> str:
+    parent = tracklist_csv.expanduser().resolve().parent.name
+    if parent and parent not in {"exports", "data"}:
+        return parent
+    stem = tracklist_csv.stem
+    return stem[:-7] if stem.endswith("_tracks") else stem
+
+
+def resolve_tracklist_sources(
+    *,
+    project_root: Path,
+    mix_slugs: list[str] | None = None,
+    tracklist_paths: list[Path] | None = None,
+) -> list[tuple[str, Path]]:
+    sources: list[tuple[str, Path]] = []
+    for mix_slug in mix_slugs or []:
+        tracklist_csv = project_root / "music" / mix_slug / f"{mix_slug.replace('-', '_')}_tracks.csv"
+        sources.append((mix_slug, tracklist_csv))
+    for path in tracklist_paths or []:
+        resolved = path.expanduser().resolve()
+        sources.append((source_slug_from_tracklist(resolved), resolved))
+    if not sources:
+        for mix_slug in ("aries-mix", "ara-mix"):
+            tracklist_csv = project_root / "music" / mix_slug / f"{mix_slug.replace('-', '_')}_tracks.csv"
+            sources.append((mix_slug, tracklist_csv))
+    return sources
+
+
 def _norm_token(value: str) -> str:
     return Path(str(value).strip()).name.lower()
 
@@ -129,7 +157,8 @@ def _resolve_audio_path(
 def _load_combined_records_and_features(
     *,
     project_root: Path,
-    mix_slugs: list[str],
+    mix_slugs: list[str] | None = None,
+    tracklist_paths: list[Path] | None = None,
     maest_dir: Path,
     chroma_dir: Path,
     tempo_dir: Path,
@@ -147,8 +176,11 @@ def _load_combined_records_and_features(
     combined_tempo_conf: list[float] = []
     records: list[dict[str, Any]] = []
 
-    for mix_slug in mix_slugs:
-        tracklist_csv = project_root / "music" / mix_slug / f"{mix_slug.replace('-', '_')}_tracks.csv"
+    for mix_slug, tracklist_csv in resolve_tracklist_sources(
+        project_root=project_root,
+        mix_slugs=mix_slugs,
+        tracklist_paths=tracklist_paths,
+    ):
         if not tracklist_csv.exists():
             raise FileNotFoundError(f"Tracklist CSV not found: {tracklist_csv}")
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,7 +22,10 @@ from djprojectexploration.tracklists import PROJECT_ROOT, optional_float, to_pro
 
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "energy_features"
 DEFAULT_ENERGY_EMBEDDING_DIR = PROJECT_ROOT / "data" / "energy_embeddings"
+DEFAULT_ENERGY_MODEL_DIR = PROJECT_ROOT / "data" / "energy_models"
 DEFAULT_TEMPO_EMBEDDING_DIR = PROJECT_ROOT / "data" / "tempo_embeddings"
+DEFAULT_ENERGY_TARGET_MIN = 1.0
+DEFAULT_ENERGY_TARGET_MAX = 9.0
 EPS = 1e-12
 
 SPECTRAL_BANDS_HZ = {
@@ -110,6 +114,7 @@ class EnergyModelResult:
     train_mae: float
     train_r2: float
     available: bool
+    estimator: Any | None = None
 
 
 def _project_relpath(path: Path) -> str:
@@ -925,6 +930,179 @@ def fit_full_energy_model(rows: list[dict[str, Any]], *, min_valid_features: int
         train_mae=float(mean_absolute_error(y_train, train_pred)),
         train_r2=_r2_score(y_train, train_pred),
         available=True,
+        estimator=final_model,
+    )
+
+
+def default_energy_model_path(
+    output_dir: str | Path = DEFAULT_ENERGY_MODEL_DIR,
+    *,
+    name: str = FULL_ENERGY_MODEL_NAME,
+) -> Path:
+    return Path(output_dir).expanduser().resolve() / f"{name}.joblib"
+
+
+def _model_metadata(
+    result: EnergyModelResult,
+    *,
+    training_rows: int,
+    labeled_rows: int,
+    target_min: float,
+    target_max: float,
+) -> dict[str, Any]:
+    return {
+        "model_name": result.model_name,
+        "created_utc": datetime.now(tz=timezone.utc).isoformat(),
+        "feature_names": list(result.feature_names),
+        "training_rows": int(training_rows),
+        "labeled_rows": int(labeled_rows),
+        "target_min": float(target_min),
+        "target_max": float(target_max),
+        "best_alpha": float(result.best_alpha),
+        "baseline_mae": float(result.baseline_mae),
+        "oof_mae": float(result.oof_mae),
+        "oof_r2": float(result.oof_r2),
+        "train_mae": float(result.train_mae),
+        "train_r2": float(result.train_r2),
+    }
+
+
+def save_energy_model_artifact(
+    result: EnergyModelResult,
+    output_file: str | Path,
+    *,
+    training_rows: int,
+    labeled_rows: int,
+    target_min: float,
+    target_max: float,
+    metadata_file: str | Path | None = None,
+) -> Path:
+    """Persist a fitted energy model pipeline and sidecar metadata."""
+    if not result.available or result.estimator is None:
+        raise RuntimeError("Cannot save an unavailable energy model.")
+    try:
+        import joblib
+    except ImportError as exc:
+        raise ImportError("Saving energy models requires joblib.") from exc
+
+    output_path = Path(output_file).expanduser().resolve()
+    metadata_path = (
+        Path(metadata_file).expanduser().resolve()
+        if metadata_file is not None
+        else output_path.with_suffix(".json")
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+
+    metadata = _model_metadata(
+        result,
+        training_rows=training_rows,
+        labeled_rows=labeled_rows,
+        target_min=target_min,
+        target_max=target_max,
+    )
+    artifact = {
+        "schema_version": 1,
+        "metadata": metadata,
+        "estimator": result.estimator,
+        "feature_names": list(result.feature_names),
+        "model_name": result.model_name,
+    }
+    joblib.dump(artifact, output_path)
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    print(f"Saved energy model: {_project_relpath(output_path)}")
+    print(f"Saved energy model metadata: {_project_relpath(metadata_path)}")
+    return output_path
+
+
+def load_energy_model_artifact(model_file: str | Path) -> dict[str, Any]:
+    """Load a frozen energy model artifact created by save_energy_model_artifact."""
+    try:
+        import joblib
+    except ImportError as exc:
+        raise ImportError("Loading energy models requires joblib.") from exc
+
+    path = Path(model_file).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Energy model artifact not found: {path}")
+    artifact = joblib.load(path)
+    if not isinstance(artifact, dict):
+        raise ValueError(f"Energy model artifact has unexpected format: {path}")
+    if "estimator" not in artifact or "feature_names" not in artifact:
+        raise ValueError(f"Energy model artifact is missing estimator/feature_names: {path}")
+    return artifact
+
+
+def train_energy_model_from_feature_csvs(
+    feature_csvs: list[str | Path],
+    *,
+    output_file: str | Path | None = None,
+    metadata_file: str | Path | None = None,
+    name: str = FULL_ENERGY_MODEL_NAME,
+    output_dir: str | Path = DEFAULT_ENERGY_MODEL_DIR,
+    target_min: float = DEFAULT_ENERGY_TARGET_MIN,
+    target_max: float = DEFAULT_ENERGY_TARGET_MAX,
+) -> Path:
+    """Train and freeze a reusable full energy model from labeled feature CSVs."""
+    rows = _read_feature_csvs(feature_csvs)
+    if not rows:
+        raise RuntimeError("No rows found in energy feature CSV inputs.")
+    result = fit_full_energy_model(rows)
+    y_all = np.asarray([_energy_value(row) for row in rows], dtype=np.float64)
+    labeled_values = y_all[np.isfinite(y_all)]
+    labeled_rows = int(labeled_values.size)
+    if not result.available:
+        raise RuntimeError(
+            "Energy model could not be trained. Provide feature CSVs with at least 6 labeled `energy` rows."
+        )
+    model_path = (
+        Path(output_file).expanduser().resolve()
+        if output_file is not None
+        else default_energy_model_path(output_dir, name=name)
+    )
+    save_energy_model_artifact(
+        result,
+        model_path,
+        training_rows=len(rows),
+        labeled_rows=labeled_rows,
+        target_min=float(target_min),
+        target_max=float(target_max),
+        metadata_file=metadata_file,
+    )
+    print(f"Training rows: {len(rows)}")
+    print(f"Labeled rows: {labeled_rows}")
+    print(f"Features retained: {len(result.feature_names)}")
+    print(f"Best alpha: {result.best_alpha:.4g}")
+    print(f"OOF MAE: {result.oof_mae:.3f}; train MAE: {result.train_mae:.3f}")
+    return model_path
+
+
+def predict_with_energy_model_artifact(rows: list[dict[str, Any]], model_file: str | Path) -> EnergyModelResult:
+    """Apply a frozen energy model artifact to feature rows."""
+    artifact = load_energy_model_artifact(model_file)
+    feature_names = [str(name) for name in artifact["feature_names"]]
+    estimator = artifact["estimator"]
+    metadata = artifact.get("metadata") if isinstance(artifact.get("metadata"), dict) else {}
+    X = _feature_matrix(rows, feature_names)
+    predictions = np.asarray(estimator.predict(X), dtype=np.float64)
+    target_min = _safe_feature(metadata.get("target_min"))
+    target_max = _safe_feature(metadata.get("target_max"))
+    if np.isfinite(target_min) and np.isfinite(target_max) and target_max >= target_min:
+        predictions = np.clip(predictions, target_min, target_max)
+    oof_predictions = np.full(len(rows), np.nan, dtype=np.float64)
+    return EnergyModelResult(
+        model_name=str(artifact.get("model_name") or metadata.get("model_name") or FULL_ENERGY_MODEL_NAME),
+        feature_names=feature_names,
+        predictions=predictions,
+        oof_predictions=oof_predictions,
+        best_alpha=_safe_feature(metadata.get("best_alpha")),
+        baseline_mae=_safe_feature(metadata.get("baseline_mae")),
+        oof_mae=_safe_feature(metadata.get("oof_mae")),
+        oof_r2=_safe_feature(metadata.get("oof_r2")),
+        train_mae=_safe_feature(metadata.get("train_mae")),
+        train_r2=_safe_feature(metadata.get("train_r2")),
+        available=True,
+        estimator=estimator,
     )
 
 
@@ -940,6 +1118,7 @@ def create_energy_embedding_npz(
     name: str = "energy_features",
     output_dir: str | Path = DEFAULT_ENERGY_EMBEDDING_DIR,
     model: str = "full",
+    model_file: str | Path | None = None,
 ) -> Path:
     """Create the canonical app-consumable energy NPZ from energy feature CSV rows."""
     rows = _read_feature_csvs(feature_csvs)
@@ -948,7 +1127,11 @@ def create_energy_embedding_npz(
     if model != "full":
         raise ValueError("Only model='full' is currently implemented.")
 
-    model_result = fit_full_energy_model(rows)
+    model_result = (
+        predict_with_energy_model_artifact(rows, model_file)
+        if model_file is not None
+        else fit_full_energy_model(rows)
+    )
     feature_names = list(model_result.feature_names or FULL_ENERGY_FEATURE_KEYS)
     embeddings = _feature_matrix(rows, feature_names).astype(np.float32)
 
@@ -1018,6 +1201,8 @@ def create_energy_embedding_npz(
     print(f"Tracks: {len(rows)}")
     print(f"Features retained: {len(feature_names)}")
     print(f"Full energy model available: {bool(model_result.available)}")
+    if model_file is not None:
+        print(f"Energy model artifact: {_project_relpath(Path(model_file).expanduser().resolve())}")
     if model_result.available:
         print(f"Best alpha: {model_result.best_alpha:.4g}")
         print(f"OOF MAE: {model_result.oof_mae:.3f}; train MAE: {model_result.train_mae:.3f}")
@@ -1110,6 +1295,29 @@ def parse_npz_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_ENERGY_EMBEDDING_DIR)
     parser.add_argument("--name", default="energy_features", help="Default output stem when --output-file is omitted.")
     parser.add_argument("--model", default="full", choices=["full"], help="Energy model spec to use.")
+    parser.add_argument(
+        "--model-file",
+        type=Path,
+        default=None,
+        help="Frozen energy model artifact to apply instead of fitting from the input rows.",
+    )
+    return parser.parse_args(argv)
+
+
+def parse_train_model_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train and freeze an energy model from labeled energy feature CSVs.")
+    parser.add_argument(
+        "feature_csv",
+        nargs="+",
+        type=Path,
+        help="Labeled energy feature CSV(s). Use djprojectexploration-energy-features first if needed.",
+    )
+    parser.add_argument("--output-file", type=Path, default=None)
+    parser.add_argument("--metadata-file", type=Path, default=None)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_ENERGY_MODEL_DIR)
+    parser.add_argument("--name", default=FULL_ENERGY_MODEL_NAME)
+    parser.add_argument("--target-min", type=float, default=DEFAULT_ENERGY_TARGET_MIN)
+    parser.add_argument("--target-max", type=float, default=DEFAULT_ENERGY_TARGET_MAX)
     return parser.parse_args(argv)
 
 
@@ -1140,6 +1348,21 @@ def energy_npz_main(argv: list[str] | None = None) -> int:
         name=str(args.name),
         output_dir=args.output_dir,
         model=str(args.model),
+        model_file=args.model_file,
+    )
+    return 0
+
+
+def energy_train_model_main(argv: list[str] | None = None) -> int:
+    args = parse_train_model_args(argv)
+    train_energy_model_from_feature_csvs(
+        [Path(path) for path in args.feature_csv],
+        output_file=args.output_file,
+        metadata_file=args.metadata_file,
+        name=str(args.name),
+        output_dir=args.output_dir,
+        target_min=float(args.target_min),
+        target_max=float(args.target_max),
     )
     return 0
 

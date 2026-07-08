@@ -61,10 +61,16 @@ def _reduce_to_track_embedding(raw_predictions: np.ndarray) -> tuple[np.ndarray,
     return flattened.mean(axis=0).astype(np.float32), "mean_over_segments_flattened"
 
 
-def extract_embedding(audio_file: Path, model_file: Path, output_node: str) -> tuple[np.ndarray, tuple[int, ...], str]:
+def extract_embedding(
+    audio_file: Path,
+    model_file: Path,
+    output_node: str,
+    *,
+    model: TensorflowPredictMAEST | None = None,
+) -> tuple[np.ndarray, tuple[int, ...], str]:
     audio = MonoLoader(filename=str(audio_file), sampleRate=16000, resampleQuality=4)()
-    model = TensorflowPredictMAEST(graphFilename=str(model_file), output=output_node)
-    raw_predictions = np.asarray(model(audio))
+    predictor = model or TensorflowPredictMAEST(graphFilename=str(model_file), output=output_node)
+    raw_predictions = np.asarray(predictor(audio))
     embedding, reduction = _reduce_to_track_embedding(raw_predictions)
     return embedding, tuple(raw_predictions.shape), reduction
 

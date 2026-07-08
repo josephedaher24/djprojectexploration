@@ -1,11 +1,21 @@
 <header class="app-header">
   <h1>{{TITLE}}</h1>
-  <nav class="pane-tabs" aria-label="Builder panes">
-    <button class="tab-button active" data-pane-tab="explore">Explore</button>
-    <button class="tab-button" data-pane-tab="library">Library</button>
-    <button class="tab-button" data-pane-tab="diagnostics">Diagnostics</button>
-    <button class="tab-button" data-pane-tab="preview">Transition Preview</button>
-  </nav>
+  <div class="app-nav-tools">
+    <nav class="pane-tabs" aria-label="Builder panes">
+      <button class="tab-button active" data-pane-tab="explore">Explore</button>
+      <button class="tab-button" data-pane-tab="library">Library</button>
+      <button class="tab-button" data-pane-tab="diagnostics">Diagnostics</button>
+      <button class="tab-button" data-pane-tab="preview">Transition Preview</button>
+    </nav>
+    <button id="settings-toggle" class="icon-button settings-toggle" type="button" aria-label="App settings" aria-controls="settings-popover" aria-expanded="false" title="App settings">⚙</button>
+  </div>
+  <section id="settings-popover" class="settings-popover hidden" role="dialog" aria-modal="false" aria-labelledby="settings-popover-title">
+    <div class="settings-popover-head">
+      <h2 id="settings-popover-title">App settings</h2>
+      <button id="settings-close" class="icon-button" type="button" aria-label="Close app settings" title="Close">×</button>
+    </div>
+    <div id="settings-content" class="settings-content"></div>
+  </section>
 </header>
 <section class="builder">
   <section id="pane-explore" class="pane active">
@@ -16,6 +26,7 @@
           <canvas id="map-effects-canvas" class="map-effects-canvas" aria-hidden="true"></canvas>
           <div id="song-hover-card" class="song-hover-card hidden"></div>
         </div>
+        <div id="map-color-legend" class="map-color-legend hidden"></div>
         <div id="song-popover" class="song-panel hidden">
           <div id="selected-track" class="song-panel-body"></div>
           <div id="song-wave-player" class="wave-player">
@@ -40,13 +51,18 @@
       <aside class="side-controls">
         <div id="transition-badges" class="transition-badges"></div>
         <div class="control-grid">
-          <label>Sequence length <input id="sequence-length" type="number" min="2" max="40" step="1"></label>
           <label>Energy source
             <select id="energy-source">
               <option value="human">Tagged energy</option>
               <option value="glm">Auto energy</option>
             </select>
           </label>
+          <label>Energy penalty <input id="energy-penalty-scale" type="range" min="0" max="10" step="0.05" value="2"></label>
+          <output id="energy-penalty-scale-val">2.00</output>
+          {{WEIGHT_CONTROLS_HTML}}
+        </div>
+        <div class="misc-control-grid" aria-label="Map and sequence options">
+          <label>Sequence length <input id="sequence-length" type="number" min="2" max="40" step="1"></label>
           <label>Point color
             <select id="color-mode">
               <option value="genre">Genre</option>
@@ -55,9 +71,14 @@
             </select>
           </label>
           <label>Map FX <input id="map-effects-enabled" type="checkbox" checked></label>
-          <label>Energy penalty <input id="energy-penalty-scale" type="range" min="0" max="10" step="0.05" value="2"></label>
-          <output id="energy-penalty-scale-val">2.00</output>
-          {{WEIGHT_CONTROLS_HTML}}
+          <label class="map-slider-control" title="Top-K weighted candidate links per track.">Latent top-K/track
+            <span class="map-slider-row"><input id="latent-links-per-track" type="range" min="0" max="8" step="1" value="3"><output id="latent-links-per-track-val">3</output></span>
+            <span class="control-note">weighted candidates per track</span>
+          </label>
+          <label class="map-slider-control" title="Current selected track's ranked next-track recommendations.">Selected rec links
+            <span class="map-slider-row"><input id="recommended-links-highlight" type="range" min="1" max="15" step="1" value="12"><output id="recommended-links-highlight-val">12</output></span>
+            <span class="control-note">selected track recommendations</span>
+          </label>
         </div>
         <div class="side-actions">
           <button id="clear-last">Clear last</button>
@@ -110,7 +131,7 @@
   <button id="global-toggle" class="player-toggle" type="button" aria-label="Play" disabled>Play</button>
   <input id="global-scrub" class="scrub-range global-scrub" type="range" min="0" max="1" step="0.1" value="0">
   <div id="global-time" class="scrub-time">0:00 / 0:00</div>
-  <label class="global-volume"><span>Vol</span><input id="global-volume" class="scrub-range" type="range" min="0" max="1" step="0.01" value="0.85"></label>
+  <label class="global-volume" title="Volume"><span class="volume-icon" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><path d="M3 12h7l8-8c1.1-1 3-.3 3 1.2v21.6c0 1.5-1.9 2.2-3 1.2l-8-8H3c-1.1 0-2-.9-2-2v-4c0-1.1.9-2 2-2Z"/><path d="M24 11c1.8 2.9 1.8 7.1 0 10"/><path d="M27.8 7.2c3.8 5.2 3.8 12.4 0 17.6"/></svg></span><span class="sr-only">Volume</span><input id="global-volume" class="scrub-range" type="range" min="0" max="1" step="0.01" value="0.85"></label>
   <button id="global-track1" type="button">Track 1</button>
   <button id="global-track2" type="button">Track 2</button>
 </div>

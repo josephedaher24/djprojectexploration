@@ -207,6 +207,7 @@ def generate_tempo_embedding(
     window_sec: float = DEFAULT_WINDOW_SEC,
     hop_sec: float = DEFAULT_HOP_SEC,
     rms_percentile: float = DEFAULT_RMS_PERCENTILE,
+    model: TempoCNN | None = None,
 ) -> dict[str, Any]:
     """Generate a tempo embedding payload for one track."""
     audio_path = Path(audio_file).expanduser().resolve()
@@ -227,7 +228,8 @@ def generate_tempo_embedding(
         audio = audio[: min(audio.size, max_samples)]
 
     duration_sec = float(audio.size) / float(sample_rate)
-    global_bpm, local_bpm_raw, local_probs_raw = TempoCNN(graphFilename=str(resolved_model_file))(audio)
+    predictor = model or TempoCNN(graphFilename=str(resolved_model_file))
+    global_bpm, local_bpm_raw, local_probs_raw = predictor(audio)
     global_bpm = float(global_bpm)
     local_bpm = np.asarray(local_bpm_raw, dtype=np.float32)
     local_probs = np.asarray(local_probs_raw, dtype=np.float32)
@@ -283,4 +285,3 @@ def generate_tempo_embedding(
         "model_file": _to_project_relpath(resolved_model_file),
         "model_url": model_url,
     }
-

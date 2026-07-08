@@ -5,6 +5,19 @@
   const layoutEntries = JSON.parse(document.getElementById('seq-layout-entries-json').textContent);
   const config = JSON.parse(document.getElementById('seq-config-json').textContent);
   const plot = document.getElementById('__PLOT_ID__');
+  const appSettings = config.app_settings || {};
+  appSettings.defaults = Object.assign({
+    latent_links_per_track: 3,
+    recommended_links_highlight: 12,
+    point_color: 'genre',
+    map_fx: true,
+  }, appSettings.defaults || {});
+  appSettings.current = Object.assign({}, appSettings.defaults, appSettings.current || {});
+  appSettings.behavior = Object.assign({
+    latent_links: 'Top-K weighted candidate links per track, using the current transition weight sliders.',
+    recommended_links: "Current selected track's ranked next-track recommendations highlighted on the map.",
+  }, appSettings.behavior || {});
+  config.app_settings = appSettings;
 
   const byIdx = new Map(records.map(r => [Number(r.idx), r]));
   let selectedIdx = null;
@@ -37,7 +50,6 @@
   let transitionRenderRequestId = 0;
   let mapTrailSegments = [];
   let mapEffectsFrame = null;
-  let strongestPairsCache = null;
   let previewAudioIdx = null;
   let previewAudioPlaying = false;
   let previewAudioContext = '';
@@ -79,6 +91,10 @@
     energySource: document.getElementById('energy-source'),
     colorMode: document.getElementById('color-mode'),
     mapEffectsEnabled: document.getElementById('map-effects-enabled'),
+    latentLinksPerTrack: document.getElementById('latent-links-per-track'),
+    latentLinksPerTrackVal: document.getElementById('latent-links-per-track-val'),
+    recommendedLinksHighlight: document.getElementById('recommended-links-highlight'),
+    recommendedLinksHighlightVal: document.getElementById('recommended-links-highlight-val'),
     penaltyScale: document.getElementById('energy-penalty-scale'),
     penaltyScaleVal: document.getElementById('energy-penalty-scale-val'),
     weightStyle: document.getElementById('weight-style'),
@@ -93,6 +109,10 @@
     weightGrooveVal: document.getElementById('weight-groove-val'),
     simplex: document.getElementById('simplex-control'),
     simplexHandle: document.getElementById('simplex-handle'),
+    settingsToggle: document.getElementById('settings-toggle'),
+    settingsClose: document.getElementById('settings-close'),
+    settingsPopover: document.getElementById('settings-popover'),
+    settingsContent: document.getElementById('settings-content'),
     tabButtons: Array.from(document.querySelectorAll('[data-pane-tab]')),
     panes: {
       explore: document.getElementById('pane-explore'),
@@ -122,6 +142,7 @@
     transitionDiagnostics: document.getElementById('transition-diagnostics'),
     currentTransitionScore: document.getElementById('current-transition-score'),
     mapEffects: document.getElementById('map-effects-canvas'),
+    mapColorLegend: document.getElementById('map-color-legend'),
     songHoverCard: document.getElementById('song-hover-card'),
     librarySearch: document.getElementById('library-search'),
     libraryTable: document.getElementById('library-table'),
@@ -174,6 +195,99 @@
   }
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  }
+  function formatSettingValue(value) {
+    if (value === null || value === undefined || value === '') return '<span class="muted">None</span>';
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (typeof value === 'number') return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(6)));
+    if (Array.isArray(value) || typeof value === 'object') {
+      return '<code>' + esc(JSON.stringify(value, null, 2)) + '</code>';
+    }
+    return esc(value);
+  }
+  function settingsRowsHtml(rows) {
+    return '<div class="settings-list">' + rows
+      .filter(row => row && row.length >= 2)
+      .map(row => '<div class="settings-row"><div class="settings-key">' + esc(row[0]) + '</div><div class="settings-value">' + formatSettingValue(row[1]) + '</div></div>')
+      .join('') + '</div>';
+  }
+  function settingsSectionHtml(title, rows) {
+    const filtered = rows.filter(row => row && row.length >= 2);
+    if (!filtered.length) return '';
+    return '<section class="settings-section"><h3>' + esc(title) + ' <span>' + filtered.length + '</span></h3>' + settingsRowsHtml(filtered) + '</section>';
+  }
+  function appSetting(key, fallback=null) {
+    return appSettings && appSettings.current && appSettings.current[key] !== undefined ? appSettings.current[key] : fallback;
+  }
+  function setAppSetting(key, value) {
+    if (!appSettings.current) appSettings.current = {};
+    appSettings.current[key] = value;
+  }
+  function currentUiSettingsRows() {
+    const row = (label, value) => [label, value];
+    return [
+      row('Active pane', activePane),
+      row('Track count', records.length),
+      row('Sequence length', sequenceLength),
+      row('Energy source', els.energySource ? els.energySource.value : ''),
+      row('Point color', appSetting('point_color', 'genre')),
+      row('Map effects', Boolean(appSetting('map_fx', true))),
+      row('Latent links per track', appSetting('latent_links_per_track', 3)),
+      row('Recommended links highlighted', appSetting('recommended_links_highlight', 12)),
+      row('Energy penalty', els.penaltyScale ? Number(els.penaltyScale.value) : null),
+      row('Current weights', weights()),
+      row('Preview preset', previewFormState.preset),
+      row('Preview volume mode', previewFormState.volume_mode),
+      row('Preview EQ mode', previewFormState.eq_mode),
+      row('Preview filter mode', previewFormState.filter_mode),
+    ];
+  }
+  function renderSettingsPanel() {
+    if (!els.settingsContent) return;
+    const generator = config.generator_settings || {};
+    const sections = [
+      settingsSectionHtml('Current UI', currentUiSettingsRows()),
+      settingsSectionHtml('Visualization settings payload', [
+        ['Preset source', appSettings.preset_source || 'None'],
+        ['Defaults', appSettings.defaults || {}],
+        ['Current', appSettings.current || {}],
+      ]),
+      settingsSectionHtml('Map link behavior', [
+        ['Latent links', appSettings.behavior && appSettings.behavior.latent_links],
+        ['Recommended links', appSettings.behavior && appSettings.behavior.recommended_links],
+      ]),
+      settingsSectionHtml('Generator arguments', [
+        ['Control mode', config.control_mode],
+        ['Static layout', Boolean(config.static_layout)],
+        ['Default length', config.default_length],
+        ['Temperature', config.temperature],
+        ['Top recommendation rows', config.top_k_rows],
+        ['App mode', Boolean(config.app_mode)],
+        ['Layout selection mode', config.layout_selection_mode || 'interpolated'],
+        ['Simplex grid step', generator.step],
+        ['Mix slugs', generator.mix_slugs],
+        ['Default weights', config.weights],
+      ]),
+      settingsSectionHtml('PaCMAP layout', Object.entries(generator.pacmap || {}).map(([key, value]) => [key, value])),
+      settingsSectionHtml('Similarity matrices', Object.entries(generator.similarity || {}).map(([key, value]) => [key, value])),
+      settingsSectionHtml('Paths and exports', Object.entries(generator.paths || {}).map(([key, value]) => [key, value])),
+      settingsSectionHtml('Runtime', [
+        ['Layout entries', Array.isArray(layoutEntries) ? layoutEntries.length : 0],
+        ['App runtime loaded', Boolean(appLoadDone)],
+        ['Runtime error', appOptions && appOptions.error ? appOptions.error : ''],
+      ]),
+    ];
+    els.settingsContent.innerHTML = sections.join('');
+  }
+  function setSettingsPanelOpen(open) {
+    if (!els.settingsPopover || !els.settingsToggle) return;
+    els.settingsPopover.classList.toggle('hidden', !open);
+    els.settingsToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) renderSettingsPanel();
+  }
+  function toggleSettingsPanel() {
+    const isOpen = els.settingsPopover && !els.settingsPopover.classList.contains('hidden');
+    setSettingsPanelOpen(!isOpen);
   }
   function reportUiError(scope, err) {
     const message = err && err.message ? err.message : String(err || 'Unknown error');
@@ -580,11 +694,11 @@
   }
   function audioUri(record) {
     record = canonicalRecord(record);
-    return String((record && (record.audio_uri || record.snippet_uri)) || '');
+    return String((record && record.audio_uri) || '');
   }
   function previewStart(record) {
     record = canonicalRecord(record);
-    const start = Number(record && record.snippet_start);
+    const start = Number(record && record.preview_start_seconds);
     const duration = Number(record && record.duration_seconds);
     if (!Number.isFinite(start) || start < 0) return 0;
     if (Number.isFinite(duration) && duration > 1) return clamp(start, 0, Math.max(0, duration - 1));
@@ -1351,6 +1465,30 @@
     if (mode === 'tempo') return Number(record.est_bpm);
     return NaN;
   }
+  function colorLegendGradient(mode) {
+    if (mode === 'energy') {
+      return 'linear-gradient(90deg, #440154 0%, #31688e 38%, #35b779 72%, #fde725 100%)';
+    }
+    return 'linear-gradient(90deg, #30123b 0%, #4663d8 20%, #1bcfd4 42%, #a4fc3c 62%, #f89540 82%, #7a0403 100%)';
+  }
+  function renderMapColorLegend(mode, extent) {
+    if (!els.mapColorLegend) return;
+    if (mode === 'genre') {
+      els.mapColorLegend.classList.add('hidden');
+      els.mapColorLegend.innerHTML = '';
+      return;
+    }
+    const min = Number(extent && extent.min);
+    const max = Number(extent && extent.max);
+    const mid = (min + max) / 2;
+    const places = mode === 'energy' ? 1 : 0;
+    const label = value => Number.isFinite(value) ? fmt(value, places) : '';
+    els.mapColorLegend.classList.remove('hidden');
+    els.mapColorLegend.innerHTML =
+      '<span class="map-color-legend-title">' + esc(extent.title) + '</span>' +
+      '<span class="map-color-ramp" style="background:' + colorLegendGradient(mode) + '"></span>' +
+      '<span class="map-color-range"><span>' + label(min) + '</span><span>' + label(mid) + '</span><span>' + label(max) + '</span></span>';
+  }
   const simplexVertices = {
     tempo: { x: 180, y: 34 },
     groove: { x: 44, y: 270 },
@@ -1404,9 +1542,10 @@
   }
   function applyPointColorMode() {
     if (!window.Plotly || !plot || !baseTraceIndices.length) return;
-    const mode = els.colorMode ? els.colorMode.value : 'genre';
+    const mode = appSetting('point_color', els.colorMode ? els.colorMode.value : 'genre');
 
     if (mode === 'genre') {
+      renderMapColorLegend(mode, null);
       for (const traceIdx of baseTraceIndices) {
         const marker = JSON.parse(JSON.stringify(originalBaseMarkers.get(traceIdx) || {}));
         Plotly.restyle(plot, { marker: [marker], showlegend: [true] }, [traceIdx]);
@@ -1416,7 +1555,8 @@
     }
 
     const extent = colorScaleExtent(mode);
-    baseTraceIndices.forEach((traceIdx, traceOrder) => {
+    renderMapColorLegend(mode, extent);
+    baseTraceIndices.forEach(traceIdx => {
       const trace = plot.data[traceIdx] || {};
       const custom = Array.isArray(trace.customdata) ? trace.customdata : [];
       const values = custom.map(row => pointColorValue(Array.isArray(row) ? row[0] : NaN, mode));
@@ -1426,8 +1566,7 @@
         colorscale: mode === 'energy' ? 'Viridis' : 'Turbo',
         cmin: extent.min,
         cmax: extent.max,
-        showscale: traceOrder === 0,
-        colorbar: { title: { text: extent.title }, thickness: 14, x: 1.02, y: 0.52, len: 0.72 },
+        showscale: false,
         line: { color: 'black', width: 0.5 },
       };
       Plotly.restyle(plot, { marker: [marker], showlegend: [false] }, [traceIdx]);
@@ -1448,6 +1587,33 @@
     if (s <= 1e-12) return { maest: 1/3, chroma: 1/3, tempo: 1/3, groove: 0 };
     return { maest: ma/s, chroma: ch/s, tempo: te/s, groove: 0 };
   }
+  function latentLinksPerTrack() {
+    return clamp(Math.round(Number(appSetting('latent_links_per_track', els.latentLinksPerTrack ? els.latentLinksPerTrack.value : 3))), 0, 8);
+  }
+  function recommendedLinksHighlight() {
+    return clamp(Math.round(Number(appSetting('recommended_links_highlight', els.recommendedLinksHighlight ? els.recommendedLinksHighlight.value : 12))), 1, 15);
+  }
+  function updateMapLinkSettingLabels() {
+    if (els.latentLinksPerTrackVal) els.latentLinksPerTrackVal.textContent = String(latentLinksPerTrack());
+    if (els.recommendedLinksHighlightVal) els.recommendedLinksHighlightVal.textContent = String(recommendedLinksHighlight());
+  }
+  function applyAppSettingsToControls() {
+    if (els.colorMode) els.colorMode.value = String(appSetting('point_color', 'genre'));
+    if (els.mapEffectsEnabled) els.mapEffectsEnabled.checked = Boolean(appSetting('map_fx', true));
+    if (els.latentLinksPerTrack) els.latentLinksPerTrack.value = String(latentLinksPerTrack());
+    if (els.recommendedLinksHighlight) els.recommendedLinksHighlight.value = String(recommendedLinksHighlight());
+    updateMapLinkSettingLabels();
+  }
+  function weightedCandidateScore(c) {
+    const w = weights();
+    const useNorm = config.control_mode === 'genre-mixability';
+    const styleScore = useNorm ? Number(c.maest_score_norm ?? c.maest_similarity ?? 0) : Number(c.maest_similarity || 0);
+    const tempoScore = useNorm ? Number(c.tempo_score_norm ?? c.tempo_similarity ?? 0) : Number(c.tempo_similarity || 0);
+    const grooveScore = useNorm ? Number(c.groove_score_norm ?? c.groove_similarity ?? 0) : 0;
+    const keyScore = useNorm ? Number(c.chroma_score_norm ?? c.chroma_similarity ?? 0) : Number(c.chroma_similarity || 0);
+    const score = w.maest * styleScore + w.tempo * tempoScore + w.groove * grooveScore + w.chroma * keyScore;
+    return Number.isFinite(score) ? score : 0;
+  }
   function layoutInterpolatedPoints(w) {
     if (!Array.isArray(layoutEntries) || !layoutEntries.length) {
       return records.map(r => idxToPoint[String(r.idx)] || [0, 0]);
@@ -1458,7 +1624,9 @@
       return { entry, d2 };
     }).sort((a,b) => a.d2 - b.d2).slice(0, 12);
     if (!ranked.length) return records.map(r => idxToPoint[String(r.idx)] || [0, 0]);
-    if (ranked[0].d2 <= 1e-12) return ranked[0].entry.points;
+    if ((config.layout_selection_mode || 'interpolated') === 'discrete' || ranked[0].d2 <= 1e-12) {
+      return ranked[0].entry.points;
+    }
     const weightsLocal = ranked.map(r => 1 / Math.max(1e-9, r.d2));
     const sum = weightsLocal.reduce((a,b) => a + b, 0);
     return ranked[0].entry.points.map((_, idx) => {
@@ -1621,27 +1789,30 @@
     });
     ctx.restore();
   }
-  function strongestConnectionPairs(limit=42) {
-    if (strongestPairsCache) return strongestPairsCache.slice(0, limit);
-    const pairs = [];
-    const seen = new Set();
+  function strongestConnectionPairs() {
+    const perTrack = latentLinksPerTrack();
+    if (perTrack <= 0) return [];
+    const byPair = new Map();
     Object.keys(simMap || {}).forEach(srcKey => {
       const src = Number(srcKey);
       const group = simMap[srcKey] || {};
       const candidates = Array.isArray(group.candidates) ? group.candidates : [];
-      candidates.slice(0, 4).forEach(c => {
-        const dst = Number(c.idx);
-        if (!Number.isFinite(src) || !Number.isFinite(dst) || src === dst) return;
-        const key = src < dst ? src + ':' + dst : dst + ':' + src;
-        if (seen.has(key)) return;
-        seen.add(key);
-        const score = Number(c.maest_score_norm ?? c.maest_similarity ?? c.compatibility_score ?? 0);
-        pairs.push({ src, dst, score: Number.isFinite(score) ? score : 0 });
-      });
+      candidates
+        .map(c => ({ c, score: weightedCandidateScore(c) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, perTrack)
+        .forEach(item => {
+          const c = item.c;
+          const dst = Number(c.idx);
+          if (!Number.isFinite(src) || !Number.isFinite(dst) || src === dst) return;
+          const key = src < dst ? src + ':' + dst : dst + ':' + src;
+          const prev = byPair.get(key);
+          if (!prev || item.score > prev.score) byPair.set(key, { src, dst, score: item.score });
+        });
     });
+    const pairs = Array.from(byPair.values());
     pairs.sort((a, b) => b.score - a.score);
-    strongestPairsCache = pairs;
-    return strongestPairsCache.slice(0, limit);
+    return pairs;
   }
   function drawStrongestConnections(ctx) {
     const pairs = strongestConnectionPairs();
@@ -1649,11 +1820,10 @@
       const a = plotPointPx(currentPoint(pair.src));
       const b = plotPointPx(currentPoint(pair.dst));
       if (!a || !b) return;
-      const alpha = 0.026 + (1 - i / Math.max(1, pairs.length)) * 0.034;
+      const alpha = 0.035 + (1 - i / Math.max(1, pairs.length)) * 0.055;
       ctx.save();
       ctx.strokeStyle = 'rgba(248, 250, 252, ' + alpha.toFixed(3) + ')';
-      ctx.lineWidth = 0.55;
-      ctx.setLineDash([2, 8]);
+      ctx.lineWidth = 0.65;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
@@ -1716,7 +1886,7 @@
       ctx.restore();
     }
 
-    const rows = rankedRecommendations().slice(0, 12);
+    const rows = rankedRecommendations().slice(0, recommendedLinksHighlight());
     const src = selectedIdx === null ? null : plotPointPx(currentPoint(selectedIdx));
     if (src && rows.length) {
       const finals = rows.map(r => Number(r.finalScore)).filter(Number.isFinite);
@@ -2096,7 +2266,7 @@
       customdata: [pathCustom],
     });
 
-    const rows = rankedRecommendations().slice(0, Math.min(10, Number(config.top_k_rows || 25)));
+    const rows = rankedRecommendations().slice(0, Math.min(recommendedLinksHighlight(), Number(config.top_k_rows || 25)));
     const linkX = [];
     const linkY = [];
     const recX = [];
@@ -2183,14 +2353,16 @@
     }
     const sortTh = (key, label, cls='') => {
       const indicator = librarySort === key ? (libraryDir === 'asc' ? '▲' : '▼') : '';
-      return '<th ' + (cls ? 'class="' + cls + '" ' : '') + 'data-library-sort="' + esc(key) + '" data-sort-indicator="' + indicator + '">' + esc(label) + '</th>';
+      return '<th ' + (cls ? 'class="' + cls + '" ' : '') + 'data-library-sort="' + esc(key) + '" data-sort-indicator="' + indicator + '">' + label + '</th>';
     };
     let html = '<table><thead><tr>' +
       sortTh('title', 'Track') +
       sortTh('artists', 'Artist') +
-      sortTh('key', 'Key') +
-      sortTh('est_bpm', 'BPM', 'num') +
-      sortTh('duration_seconds', 'Duration', 'num') +
+      sortTh('key', 'Key', 'short center') +
+      sortTh('est_bpm', 'BPM', 'short center') +
+      sortTh('human_energy', 'Tagged<br>energy', 'short center wrap-head') +
+      sortTh('glm_energy', 'Auto<br>energy', 'short center wrap-head') +
+      sortTh('duration_seconds', 'Duration', 'short center') +
       sortTh('raw_genre', 'Genre') +
       '<th>Actions</th></tr></thead><tbody>';
     rows.forEach(r => {
@@ -2198,12 +2370,15 @@
       if (Number(r.idx) === selectedIdx) rowClasses.push('selected-slot');
       if (Number(r.idx) === previewAudioIdx) rowClasses.push(previewAudioPlaying ? 'now-playing' : 'now-playing-paused');
       const rowClass = rowClasses.length ? ' class="' + rowClasses.join(' ') + '"' : '';
+      const titleAttr = [r.title, r.artists].filter(Boolean).join(' - ');
       html += '<tr data-library-row-idx="' + r.idx + '"' + rowClass + '>' +
-        '<td>' + trackSummaryHtml(r, { size: 'compact', showArt: true }) + '</td>' +
+        '<td class="library-title-cell" title="' + esc(titleAttr) + '"><div class="library-title-summary">' + artworkHtml(r) + '<span>' + esc(r.title) + '</span></div></td>' +
         '<td>' + esc(r.artists) + '</td>' +
-        '<td>' + keyHtml(r.key) + '</td>' +
-        '<td class="num">' + roundedBpm(r) + '</td>' +
-        '<td class="num">' + esc(durationText(r)) + '</td>' +
+        '<td class="center">' + keyHtml(r.key) + '</td>' +
+        '<td class="center">' + roundedBpm(r) + '</td>' +
+        '<td class="center">' + (Number.isFinite(Number(r.human_energy)) ? fmt(r.human_energy, 2) : '') + '</td>' +
+        '<td class="center">' + (Number.isFinite(Number(r.glm_energy)) ? fmt(r.glm_energy, 2) : '') + '</td>' +
+        '<td class="center">' + esc(durationText(r)) + '</td>' +
         '<td>' + esc(rawGenre(r)) + '</td>' +
         '<td><div class="library-actions">' +
         rowPlayerHtml(r) +
@@ -2928,6 +3103,11 @@
           selectInput('volume_mode', 'Volume', volumeModes, previewFormState.volume_mode) +
           selectInput('eq_mode', 'EQ', eqModes, previewFormState.eq_mode) +
           selectInput('filter_mode', 'Filter', filterModes, previewFormState.filter_mode) +
+          '</div>' +
+          '<div class="fx-legend" aria-label="Automation curve legend">' +
+          '<span class="fx-item"><span class="fx-icon" aria-hidden="true">VOL</span><span class="fx-line volume"></span>Volume line</span>' +
+          '<span class="fx-item"><span class="fx-icon" aria-hidden="true">EQ</span><span class="fx-line eq"></span>EQ line</span>' +
+          '<span class="fx-item"><span class="fx-icon" aria-hidden="true">FLT</span><span class="fx-line filter"></span>Filter line</span>' +
           '</div></section>' +
           '<div class="preview-render-actions">' +
           automationSummaryHtml() +
@@ -3302,6 +3482,9 @@
     if (activePane === 'library') safeUi('library render', renderLibrary);
     safeUi('transition badges render', renderTransitionBadges);
     safeUi('audio ui sync', syncAudioUi);
+    if (els.settingsPopover && !els.settingsPopover.classList.contains('hidden')) {
+      safeUi('settings render', renderSettingsPanel);
+    }
   }
   function renderAll() {
     safeUi('weight labels', updateWeightLabels);
@@ -3328,6 +3511,9 @@
     if (activePane === 'preview') safeUi('transition preview render', renderTransitionPreview);
     safeUi('transition badges render', renderTransitionBadges);
     safeUi('audio ui sync', syncAudioUi);
+    if (els.settingsPopover && !els.settingsPopover.classList.contains('hidden')) {
+      safeUi('settings render', renderSettingsPanel);
+    }
   }
   function downloadCsv() {
     const targets = targetCurve();
@@ -3351,6 +3537,7 @@
   }
 
   els.sequenceLength.value = String(sequenceLength);
+  applyAppSettingsToControls();
   if (config.control_mode === 'genre-mixability') {
     if (els.weightStyle) els.weightStyle.value = String((config.weights && config.weights.maest) || 0.45);
     setMixSliders({
@@ -3363,16 +3550,50 @@
     if (els.weightChroma) els.weightChroma.value = String((config.weights && config.weights.chroma) || 0.25);
     if (els.weightTempo) els.weightTempo.value = String((config.weights && config.weights.tempo) || 0.15);
   }
+  if (els.settingsToggle) {
+    els.settingsToggle.addEventListener('click', ev => {
+      ev.stopPropagation();
+      toggleSettingsPanel();
+    });
+  }
+  if (els.settingsClose) {
+    els.settingsClose.addEventListener('click', ev => {
+      ev.stopPropagation();
+      setSettingsPanelOpen(false);
+    });
+  }
+  document.addEventListener('click', ev => {
+    if (!els.settingsPopover || els.settingsPopover.classList.contains('hidden')) return;
+    if (els.settingsPopover.contains(ev.target) || (els.settingsToggle && els.settingsToggle.contains(ev.target))) return;
+    setSettingsPanelOpen(false);
+  });
+  document.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') setSettingsPanelOpen(false);
+  });
   els.tabButtons.forEach(btn => btn.addEventListener('click', () => setActivePane(btn.getAttribute('data-pane-tab') || 'explore')));
   els.sequenceLength.addEventListener('change', () => setSequenceLength(els.sequenceLength.value));
   els.energySource.addEventListener('change', renderAll);
-  els.colorMode.addEventListener('change', renderAll);
+  els.colorMode.addEventListener('change', () => {
+    setAppSetting('point_color', els.colorMode.value);
+    renderAll();
+  });
   if (els.mapEffectsEnabled) els.mapEffectsEnabled.addEventListener('change', () => {
+    setAppSetting('map_fx', Boolean(els.mapEffectsEnabled.checked));
     if (!els.mapEffectsEnabled.checked && els.mapEffects) {
       const ctx = els.mapEffects.getContext('2d');
       if (ctx) ctx.clearRect(0, 0, els.mapEffects.width, els.mapEffects.height);
       mapTrailSegments = [];
     }
+    renderAll();
+  });
+  if (els.latentLinksPerTrack) els.latentLinksPerTrack.addEventListener('input', () => {
+    setAppSetting('latent_links_per_track', clamp(Math.round(Number(els.latentLinksPerTrack.value)), 0, 8));
+    updateMapLinkSettingLabels();
+    renderAll();
+  });
+  if (els.recommendedLinksHighlight) els.recommendedLinksHighlight.addEventListener('input', () => {
+    setAppSetting('recommended_links_highlight', clamp(Math.round(Number(els.recommendedLinksHighlight.value)), 1, 15));
+    updateMapLinkSettingLabels();
     renderAll();
   });
   els.penaltyScale.addEventListener('input', renderAll);

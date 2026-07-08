@@ -55,6 +55,7 @@ djprojectexploration-dj-sequence = "djprojectexploration.energy_sequence_builder
 djprojectexploration-energy-sequence-builder = "djprojectexploration.energy_sequence_builder:main"
 djprojectexploration-energy-features = "djprojectexploration.energy_features:main"
 djprojectexploration-energy-npz = "djprojectexploration.energy_features:energy_npz_main"
+djprojectexploration-energy-train-model = "djprojectexploration.energy_features:energy_train_model_main"
 djprojectexploration-waveforms = "djprojectexploration.waveform_features:main"
 djprojectexploration-sequence-builder-app = "djprojectexploration.sequence_builder_app:main"
 djprojectexploration-dj-pacmap = "djprojectexploration.interactive_pacmap_knn_simplex:main"

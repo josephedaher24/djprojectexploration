@@ -12,11 +12,11 @@ import sys
 import webbrowser
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import numpy as np
 import plotly.graph_objects as go
 
-from djprojectexploration.audio_snippets import ensure_cached_snippet
 from djprojectexploration.frontend_assets import frontend_asset_text, render_standalone_document
 from djprojectexploration.interactive_pacmap_knn_simplex import (
     _build_similarity_payload_4way,
@@ -24,6 +24,16 @@ from djprojectexploration.interactive_pacmap_knn_simplex import (
     _compute_pacmap_knn_4way_layouts,
     _load_combined_groove_embeddings,
     _simplex_grid_4way,
+)
+from djprojectexploration.pacmap_settings import (
+    DISTANCE_COMBINE_CHOICES,
+    LAYOUT_INIT_CHOICES,
+    PACMAP_PAIR_SOURCE_CHOICES,
+    PacmapSettings,
+    SequenceBuilderUiSettings,
+    add_pacmap_args,
+    pacmap_settings_from_args,
+    sequence_builder_ui_settings_from_args,
 )
 from djprojectexploration.interactive_visualization_common import simplify_genre
 from djprojectexploration.multimodal_compatibility import (
@@ -108,6 +118,10 @@ def _app_asset_uri(path: str) -> str:
     except ValueError:
         return ""
     return "/assets/" + rel.as_posix()
+
+
+def _app_audio_uri(track_id: str) -> str:
+    return "/audio/" + quote(str(track_id), safe="")
 
 
 def _extract_mp3_metadata(
@@ -252,7 +266,6 @@ def _load_combined_records_and_features(
             raise FileNotFoundError(f"Tracklist CSV not found: {tracklist_csv}")
 
         music_dir = tracklist_csv.parent
-        snippet_cache_dir = project_root / "data" / "snippets" / tracklist_csv.stem
         mix_features = load_aries_mix_feature_set(
             mix_csv_path=tracklist_csv,
             maest_dir=maest_dir,
@@ -297,6 +310,7 @@ def _load_combined_records_and_features(
             raw_genre = (row.get("genre") or meta.genre or "Unknown").strip() or "Unknown"
             genre = simplify_genre(raw_genre)
             track_num_tag = (row.get("track_number") or row.get("#") or str(meta.track_number)).strip()
+            track_id = f"{mix_slug}:{track_num_tag}"
             est_bpm = float(mix_features.tempo_bpm[local_i])
             est_conf = float(mix_features.tempo_confidence[local_i])
             audio_path = _resolve_audio_path(
@@ -331,33 +345,10 @@ def _load_combined_records_and_features(
             if not np.isfinite(duration_seconds) and waveform_meta.get("duration_seconds") is not None:
                 duration_seconds = float(waveform_meta["duration_seconds"])
 
-            try:
-                snippet = ensure_cached_snippet(
-                    audio_path=audio_path,
-                    output_dir=snippet_cache_dir,
-                    key=meta.filename,
-                    snippet_seconds=8.0,
-                    middle_fraction=0.66,
-                    hop_seconds=0.25,
-                    overwrite=False,
-                    project_root=project_root,
-                )
-            except Exception:
-                snippet = None
-
-            if snippet is None:
-                snippet_uri = ""
-                snippet_path = ""
-                snippet_start = 0.0
-                snippet_end = 0.0
-                snippet_rms = 0.0
-            else:
-                snippet_file = snippet.snippet_path.resolve()
-                snippet_path = str(snippet_file)
-                snippet_start = float(snippet.start_seconds)
-                snippet_end = float(snippet.end_seconds)
-                snippet_rms = float(snippet.rms)
-                snippet_uri = Path(os.path.relpath(snippet_file, html_output_dir.resolve())).as_posix()
+            preview_start = float(waveform_meta.get("preview_start_seconds") or 0.0)
+            preview_end = float(waveform_meta.get("preview_end_seconds") or 0.0)
+            preview_score = float(waveform_meta.get("preview_score") or 0.0)
+            preview_method = str(waveform_meta.get("preview_method") or "waveform_rms_middle_scan")
 
             combined_metadata.append(
                 SongMetadata(
@@ -377,7 +368,7 @@ def _load_combined_records_and_features(
             records.append(
                 {
                     "idx": global_idx,
-                    "track_id": f"{mix_slug}:{track_num_tag}",
+                    "track_id": track_id,
                     "global_track_number": int(global_track_number),
                     "track_number": str(track_num_tag),
                     "filename": meta.filename,
@@ -405,11 +396,15 @@ def _load_combined_records_and_features(
                     "waveform_preview_max": waveform_meta.get("waveform_preview_max") or [],
                     "waveform_detail_bins": int(waveform_meta.get("waveform_detail_bins") or 0),
                     "waveform_band_bins": int(waveform_meta.get("waveform_band_bins") or 0),
-                    "snippet_uri": snippet_uri,
-                    "snippet_path": snippet_path,
-                    "snippet_start": snippet_start,
-                    "snippet_end": snippet_end,
-                    "snippet_rms": snippet_rms,
+                    "preview_start_seconds": preview_start,
+                    "preview_end_seconds": preview_end,
+                    "preview_score": preview_score,
+                    "preview_method": preview_method,
+                    "snippet_uri": "",
+                    "snippet_path": "",
+                    "snippet_start": preview_start,
+                    "snippet_end": preview_end,
+                    "snippet_rms": preview_score,
                     "human_energy": float(energy_values.get("human_energy", 5.0)),
                     "glm_energy": float(energy_values.get("glm_energy", np.nan)),
                 }
@@ -653,6 +648,9 @@ def _build_html(
     temperature: float,
     top_k_rows: int,
     app_mode: bool = False,
+    generator_settings: dict[str, Any] | None = None,
+    app_settings: dict[str, Any] | None = None,
+    layout_selection_mode: str = "interpolated",
 ) -> str:
     idx_to_point = {
         str(i): [float(coords[i, 0]), float(coords[i, 1])]
@@ -680,7 +678,7 @@ def _build_html(
             "est_conf": float(r["est_conf"]),
             "mix_slug": str(r["mix_slug"]),
             "audio_path": str(r["audio_path"]),
-            "audio_uri": _app_asset_uri(str(r["audio_path"])) if app_mode else str(r.get("audio_uri") or ""),
+            "audio_uri": _app_audio_uri(str(r["track_id"])) if app_mode else str(r.get("audio_uri") or ""),
             "duration_seconds": float(r["duration_seconds"]) if np.isfinite(float(r["duration_seconds"])) else None,
             "duration_text": str(r.get("duration_text") or ""),
             "artwork_uri": _app_asset_uri(str(r["artwork_path"])) if app_mode else str(r.get("artwork_uri") or ""),
@@ -695,7 +693,11 @@ def _build_html(
             "waveform_preview_max": list(r.get("waveform_preview_max") or []),
             "waveform_detail_bins": int(r.get("waveform_detail_bins") or 0),
             "waveform_band_bins": int(r.get("waveform_band_bins") or 0),
-            "snippet_uri": _app_asset_uri(str(r["snippet_path"])) if app_mode else str(r["snippet_uri"]),
+            "preview_start_seconds": float(r.get("preview_start_seconds") or 0.0),
+            "preview_end_seconds": float(r.get("preview_end_seconds") or 0.0),
+            "preview_score": float(r.get("preview_score") or 0.0),
+            "preview_method": str(r.get("preview_method") or ""),
+            "snippet_uri": "" if app_mode else str(r["snippet_uri"]),
             "snippet_path": str(r["snippet_path"]),
             "snippet_start": float(r["snippet_start"]),
             "snippet_end": float(r["snippet_end"]),
@@ -729,7 +731,7 @@ def _build_html(
             f'<script id="seq-sim-json" type="application/json">{_json_script_payload(similarity_payload_out)}</script>',
             f'<script id="seq-points-json" type="application/json">{_json_script_payload(idx_to_point)}</script>',
             f'<script id="seq-layout-entries-json" type="application/json">{_json_script_payload(layout_entries)}</script>',
-            f'<script id="seq-config-json" type="application/json">{_json_script_payload({"default_length": default_length, "weights": default_weights, "control_mode": control_mode, "static_layout": static_layout, "temperature": temperature, "top_k_rows": top_k_rows, "app_mode": bool(app_mode)})}</script>',
+            f'<script id="seq-config-json" type="application/json">{_json_script_payload({"default_length": default_length, "weights": default_weights, "control_mode": control_mode, "static_layout": static_layout, "temperature": temperature, "top_k_rows": top_k_rows, "app_mode": bool(app_mode), "layout_selection_mode": layout_selection_mode, "generator_settings": generator_settings or {}, "app_settings": app_settings or {}})}</script>',
         ]
     )
 
@@ -766,24 +768,119 @@ def export_dj_sequence(
     control_mode: str = "genre-mixability",
     step: float = 0.1,
     static_layout: bool = False,
+    n_neighbors: int = 10,
+    mn_ratio: float = 0.5,
+    fp_ratio: float = 1.5,
+    distance: str = "angular",
+    random_state: int = 7777,
+    align_layouts: bool = True,
+    pair_source: str = "combined-all",
+    distance_combine: str = "l1",
+    layout_init: str = "neighbor",
+    layout_selection_mode: str = "interpolated",
+    pacmap_settings: PacmapSettings | None = None,
+    ui_settings: SequenceBuilderUiSettings | None = None,
+    settings_preset_source: Path | None = None,
     open_browser: bool = False,
     app_mode: bool = False,
 ) -> Path:
     project_root = project_root.expanduser().resolve()
+    if pacmap_settings is not None:
+        step = pacmap_settings.step
+        static_layout = pacmap_settings.static_layout
+        pair_source = pacmap_settings.pair_source
+        distance_combine = pacmap_settings.distance_combine
+        layout_init = pacmap_settings.layout_init
+        layout_selection_mode = pacmap_settings.layout_selection_mode
+        n_neighbors = pacmap_settings.n_neighbors
+        mn_ratio = pacmap_settings.mn_ratio
+        fp_ratio = pacmap_settings.fp_ratio
+        distance = pacmap_settings.distance
+        random_state = pacmap_settings.random_state
+        align_layouts = pacmap_settings.align_layouts
+    ui_defaults = SequenceBuilderUiSettings()
+    ui_current = (ui_settings or ui_defaults).validate()
+    app_settings: dict[str, Any] = {
+        "defaults": ui_defaults.to_dict(),
+        "current": ui_current.to_dict(),
+        "preset_source": str(settings_preset_source.expanduser().resolve()) if settings_preset_source else None,
+        "behavior": {
+            "latent_links": "Top-K weighted candidate links per track, using the current transition weight sliders.",
+            "recommended_links": "Current selected track's ranked next-track recommendations highlighted on the map.",
+        },
+    }
     if control_mode not in CONTROL_MODE_CHOICES:
         raise ValueError(f"control_mode must be one of {CONTROL_MODE_CHOICES}, got {control_mode!r}.")
+    if pair_source not in PACMAP_PAIR_SOURCE_CHOICES:
+        raise ValueError(f"pair_source must be one of {PACMAP_PAIR_SOURCE_CHOICES}, got {pair_source!r}.")
+    if distance_combine not in DISTANCE_COMBINE_CHOICES:
+        raise ValueError(f"distance_combine must be one of {DISTANCE_COMBINE_CHOICES}, got {distance_combine!r}.")
+    if layout_init not in LAYOUT_INIT_CHOICES:
+        raise ValueError(f"layout_init must be one of {LAYOUT_INIT_CHOICES}, got {layout_init!r}.")
+    if layout_selection_mode not in {"interpolated", "discrete"}:
+        raise ValueError("layout_selection_mode must be either 'interpolated' or 'discrete'.")
     mix_slugs = mix_slugs or ["aries-mix", "ara-mix"]
     output_file = output_file or (project_root / "data" / "exports" / "dj_sequence_builder.html")
     output_file = output_file.expanduser().resolve()
     energy_npz_path = energy_npz_path or (project_root / "data" / "energy_embeddings" / "aries_ara_energy_features.npz")
+    maest_dir = project_root / "data" / "maest_embeddings"
+    chroma_dir = project_root / "data" / "chroma_embeddings"
+    tempo_dir = project_root / "data" / "tempo_embeddings"
+    groove_dir = project_root / "data" / "groove_embeddings"
+    similarity_temperature = 0.08
+    top_k_rows = 25
+    matrix_settings: dict[str, Any] = {
+        "tempo_bandwidth": 0.06,
+        "tempo_decay": 0.5,
+        "tempo_allow_octave": True,
+        "tempo_octave_penalty": 0.5,
+        "tempo_similarity_shape": "gaussian",
+        "tempo_softflat_sharpness": 8.0,
+        "tempo_use_confidence": False,
+        "harmonic_exact_weight": 1.0,
+        "harmonic_first_fifth_weight": 0.0,
+        "harmonic_second_fifth_weight": 0.0,
+        "harmonic_other_weight": 0.0,
+        "harmonic_self_normalize": True,
+    }
+    pacmap_settings: dict[str, Any] = {
+        "n_components": 2,
+        "n_neighbors": int(n_neighbors),
+        "MN_ratio": float(mn_ratio),
+        "FP_ratio": float(fp_ratio),
+        "pair_neighbors": "custom neighbor pairs from combined distance",
+        "pair_MN": "custom mid-near pairs from combined distance" if pair_source == "combined-all" else None,
+        "pair_FP": "custom far pairs from combined distance" if pair_source == "combined-all" else None,
+        "distance": str(distance),
+        "lr": 1.0,
+        "num_iters": [100, 100, 250],
+        "verbose": False,
+        "apply_pca": True,
+        "intermediate": False,
+        "intermediate_snapshots": [0, 10, 30, 60, 100, 120, 140, 170, 200, 250, 300, 350, 450],
+        "random_state": int(random_state),
+        "save_tree": False,
+        "knn_backend": "faiss",
+        "align": bool(align_layouts),
+        "pair_source": pair_source,
+        "distance_combine": distance_combine,
+        "layout_init": layout_init,
+        "fit_transform_init": (
+            "pca for first layout, previous layout for neighbor-initialized layouts"
+            if layout_init == "neighbor"
+            else layout_init
+        ),
+        "layout_selection_mode": layout_selection_mode,
+        "layout_mode": "static" if static_layout else "dynamic",
+    }
 
     records, features = _load_combined_records_and_features(
         project_root=project_root,
         mix_slugs=mix_slugs,
         energy_npz_path=energy_npz_path,
-        maest_dir=project_root / "data" / "maest_embeddings",
-        chroma_dir=project_root / "data" / "chroma_embeddings",
-        tempo_dir=project_root / "data" / "tempo_embeddings",
+        maest_dir=maest_dir,
+        chroma_dir=chroma_dir,
+        tempo_dir=tempo_dir,
         html_output_dir=output_file.parent,
     )
     default_weights = (
@@ -794,27 +891,16 @@ def export_dj_sequence(
     groove_embeddings = _load_combined_groove_embeddings(
         project_root=project_root,
         mix_slugs=mix_slugs,
-        groove_dir=project_root / "data" / "groove_embeddings",
+        groove_dir=groove_dir,
     )
     matrices = _component_matrices_4way(
         features,
         groove_embeddings=groove_embeddings,
-        tempo_bandwidth=0.06,
-        tempo_decay=0.5,
-        tempo_allow_octave=True,
-        tempo_octave_penalty=0.5,
-        tempo_similarity_shape="gaussian",
-        tempo_softflat_sharpness=8.0,
-        tempo_use_confidence=False,
-        harmonic_exact_weight=1.0,
-        harmonic_first_fifth_weight=0.0,
-        harmonic_second_fifth_weight=0.0,
-        harmonic_other_weight=0.0,
-        harmonic_self_normalize=True,
+        **matrix_settings,
     )
     similarity_payload = _build_similarity_payload(
         records=records,
-        temperature=0.08,
+        temperature=similarity_temperature,
         maest_similarity=matrices["maest_similarity"],
         tempo_similarity=matrices["tempo_similarity"],
         groove_similarity=matrices["groove_similarity"],
@@ -823,6 +909,11 @@ def export_dj_sequence(
         tempo_distance=matrices["tempo_distance"],
         groove_distance=matrices["groove_distance"],
         chroma_distance=matrices["chroma_distance"],
+    )
+    pacmap_settings["n_samples"] = int(features.maest.shape[0])
+    pacmap_settings["effective_n_neighbors"] = min(
+        max(1, int(pacmap_settings["n_neighbors"])),
+        int(features.maest.shape[0]) - 1,
     )
     layouts = None
     coords: np.ndarray
@@ -835,15 +926,15 @@ def export_dj_sequence(
             D_groove=matrices["groove_distance"],
             D_chroma=matrices["chroma_distance"],
             grid=[static_weights],
-            n_neighbors=10,
-            mn_ratio=0.5,
-            fp_ratio=1.5,
-            distance="angular",
-            random_state=7777,
-            align=True,
-            pair_source="neighbors-only",
-            distance_combine="l2",
-            layout_init="neighbor",
+            n_neighbors=int(pacmap_settings["effective_n_neighbors"]),
+            mn_ratio=float(pacmap_settings["MN_ratio"]),
+            fp_ratio=float(pacmap_settings["FP_ratio"]),
+            distance=str(pacmap_settings["distance"]),
+            random_state=int(pacmap_settings["random_state"]),
+            align=bool(pacmap_settings["align"]),
+            pair_source=str(pacmap_settings["pair_source"]),
+            distance_combine=str(pacmap_settings["distance_combine"]),
+            layout_init=str(pacmap_settings["layout_init"]),
         )
         coords = np.asarray(next(iter(static_layouts.values())), dtype=np.float32)
     elif control_mode == "genre-mixability":
@@ -854,19 +945,49 @@ def export_dj_sequence(
             D_groove=matrices["groove_distance"],
             D_chroma=matrices["chroma_distance"],
             grid=_simplex_grid_4way(step),
-            n_neighbors=10,
-            mn_ratio=0.5,
-            fp_ratio=1.5,
-            distance="angular",
-            random_state=7777,
-            align=True,
-            pair_source="neighbors-only",
-            distance_combine="l2",
-            layout_init="neighbor",
+            n_neighbors=int(pacmap_settings["effective_n_neighbors"]),
+            mn_ratio=float(pacmap_settings["MN_ratio"]),
+            fp_ratio=float(pacmap_settings["FP_ratio"]),
+            distance=str(pacmap_settings["distance"]),
+            random_state=int(pacmap_settings["random_state"]),
+            align=bool(pacmap_settings["align"]),
+            pair_source=str(pacmap_settings["pair_source"]),
+            distance_combine=str(pacmap_settings["distance_combine"]),
+            layout_init=str(pacmap_settings["layout_init"]),
         )
         coords = np.asarray(next(iter(layouts.values())), dtype=np.float32)
     else:
-        coords = _compute_pacmap_coords(features, random_state=7777, n_neighbors=10)
+        pacmap_settings = {
+            "n_components": 2,
+            "random_state": 7777,
+            "n_neighbors": 10,
+            "MN_ratio": 0.5,
+            "FP_ratio": 1.5,
+            "pair_neighbors": None,
+            "pair_MN": None,
+            "pair_FP": None,
+            "distance": "euclidean",
+            "lr": 1.0,
+            "num_iters": [100, 100, 250],
+            "verbose": False,
+            "apply_pca": True,
+            "intermediate": False,
+            "intermediate_snapshots": [0, 10, 30, 60, 100, 120, 140, 170, 200, 250, 300, 350, 450],
+            "save_tree": False,
+            "knn_backend": "faiss",
+            "fit_transform_init": None,
+            "layout_mode": "legacy-weights",
+        }
+        pacmap_settings["n_samples"] = int(features.maest.shape[0])
+        pacmap_settings["effective_n_neighbors"] = min(
+            int(pacmap_settings["n_neighbors"]),
+            max(2, int(features.maest.shape[0]) - 1),
+        )
+        coords = _compute_pacmap_coords(
+            features,
+            random_state=int(pacmap_settings["random_state"]),
+            n_neighbors=int(pacmap_settings["effective_n_neighbors"]),
+        )
 
     title = "DJ Sequence Builder"
     plot_div_id = "dj_sequence_builder_pacmap"
@@ -883,9 +1004,26 @@ def export_dj_sequence(
         default_weights=default_weights,
         control_mode=control_mode,
         static_layout=static_layout,
-        temperature=0.08,
-        top_k_rows=25,
+        temperature=similarity_temperature,
+        top_k_rows=top_k_rows,
         app_mode=bool(app_mode),
+        layout_selection_mode=layout_selection_mode,
+        app_settings=app_settings,
+        generator_settings={
+            "mix_slugs": mix_slugs,
+            "step": step,
+            "pacmap": pacmap_settings,
+            "similarity": matrix_settings,
+            "paths": {
+                "project_root": str(project_root),
+                "output_file": str(output_file),
+                "energy_npz_path": str(energy_npz_path),
+                "maest_dir": str(maest_dir),
+                "chroma_dir": str(chroma_dir),
+                "tempo_dir": str(tempo_dir),
+                "groove_dir": str(groove_dir),
+            },
+        },
     )
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -903,23 +1041,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sequence-length", type=int, default=10)
     parser.add_argument("--mix", action="append", dest="mix_slugs", default=None, help="Mix slug to include; repeatable.")
     parser.add_argument("--control-mode", choices=CONTROL_MODE_CHOICES, default="genre-mixability")
-    parser.add_argument("--step", type=float, default=0.1, help="Simplex grid step for dynamic PaCMAP layouts.")
+    add_pacmap_args(parser, include_static_layout=True)
     parser.add_argument(
         "--static",
         action="store_true",
+        default=None,
         dest="static_layout",
         help="Keep the PaCMAP layout fixed at the default weights while controls still update transition scoring.",
     )
     parser.add_argument("--open", action="store_true", help="Open the exported HTML in a browser.")
     args = parser.parse_args(argv)
+    pacmap_settings = pacmap_settings_from_args(args)
+    ui_settings = sequence_builder_ui_settings_from_args(args)
 
     output_file = export_dj_sequence(
         output_file=args.output_file,
         energy_npz_path=args.energy_npz,
         default_length=args.sequence_length,
         control_mode=args.control_mode,
-        step=args.step,
-        static_layout=bool(args.static_layout),
+        pacmap_settings=pacmap_settings,
+        ui_settings=ui_settings,
+        settings_preset_source=args.pacmap_preset,
         mix_slugs=args.mix_slugs,
         open_browser=bool(args.open),
     )
