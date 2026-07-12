@@ -86,7 +86,7 @@ class PacmapSettings:
 @dataclass(frozen=True)
 class SequenceBuilderUiSettings:
     latent_links_per_track: int = 3
-    recommended_links_highlight: int = 12
+    recommended_links_highlight: int = 25
     point_color: str = "genre"
     map_fx: bool = True
 
@@ -95,8 +95,10 @@ class SequenceBuilderUiSettings:
             raise ValueError("ui.latent_links_per_track must be >= 0.")
         if self.recommended_links_highlight < 1:
             raise ValueError("ui.recommended_links_highlight must be >= 1.")
-        if self.point_color not in {"genre", "energy", "tempo"}:
-            raise ValueError("ui.point_color must be one of {'genre', 'energy', 'tempo'}.")
+        if self.point_color not in {"genre", "energy", "tempo", "key", "target", "energy_residual"}:
+            raise ValueError(
+                "ui.point_color must be one of {'genre', 'energy', 'tempo', 'key', 'target', 'energy_residual'}."
+            )
         return self
 
     def to_dict(self) -> dict[str, Any]:

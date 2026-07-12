@@ -63,6 +63,7 @@ music/<mix-slug>/<mix_slug>_tracks.csv
 music/<mix-slug>/<mix_slug>_cues.csv
 
 data/maest_embeddings/<csv-stem>.npz
+data/maest_embeddings/<csv-stem>_peak30.npz
 data/chroma_embeddings/<csv-stem>.npz
 data/tempo_embeddings/<csv-stem>.npz
 data/groove_embeddings/<csv-stem>.npz
@@ -126,8 +127,11 @@ reused by groove and energy when those stages need BPM estimates.
 
 ### Energy Features and Models
 
-Energy feature extraction reads the source audio files listed by the tracklist. By default it analyzes the full decoded
-song, not cached snippets. Use `--analysis-seconds` only when you intentionally want to analyze a prefix instead.
+Energy feature extraction reads the source audio files listed by the tracklist, not cached snippets. By default it
+analyzes the full decoded song and also finds the highest-RMS 30-second window using a sliding RMS window. Extracted
+columns are namespaced as `full_*` and `peak30_*`, with peak-window metadata such as `peak30_start_sec`,
+`peak30_end_sec`, and `peak30_window_rms_db`. Use `--analysis-seconds` only when you intentionally want to analyze a
+prefix instead of the full song.
 
 Extract audio-derived energy features once:
 
@@ -135,7 +139,17 @@ Extract audio-derived energy features once:
 uv run djprojectexploration-energy-features music/dj-dataset-1/dj_dataset_1_tracks.csv
 ```
 
-Train and freeze a reusable model from labeled feature CSVs:
+Compare handcrafted feature sets from labeled feature CSVs:
+
+```bash
+uv run djprojectexploration-energy-compare-models \
+  data/energy_features/dj_dataset_1_tracks_energy_features.csv
+```
+
+Available handcrafted feature sets include `full_only`, `peak30_only`, `full_plus_peak30`, and no-BPM variants such as
+`full_plus_peak30_no_bpm`. The default handcrafted set is `full_plus_peak30_no_bpm`.
+
+Train and freeze a reusable handcrafted model from labeled feature CSVs:
 
 ```bash
 uv run djprojectexploration-energy-train-model \
@@ -157,6 +171,26 @@ uv run djprojectexploration-energy-npz \
 
 Omit `--model-file` when you want to refit directly from the provided feature CSV rows. That mode requires labeled
 `energy` values in the input CSVs.
+
+The default app energy NPZ model is currently `maest_full_plus_peak30_pca64_ridge`. It fits a ridge model using PCA-64
+components from full-track MAEST embeddings plus PCA-64 components from peak30 MAEST embeddings, then writes both the
+manual labels and predicted energy values for the sequence builder. This default requires matching MAEST files in
+`data/maest_embeddings/`:
+
+```text
+data/maest_embeddings/<tracklist-stem>.npz
+data/maest_embeddings/<tracklist-stem>_peak30.npz
+```
+
+Create the default MAEST-backed energy NPZ:
+
+```bash
+uv run djprojectexploration-energy-npz \
+  data/energy_features/dj_dataset_1_tracks_energy_features.csv \
+  --name dj_dataset_1_energy_features
+```
+
+Use `--model full` when you want the older handcrafted-only fit instead of the MAEST-backed default.
 
 ## Source Layout
 
@@ -226,11 +260,17 @@ uv run djprojectexploration-sequence-builder-app \
   --sequence-length 12
 ```
 
-The sequence builder uses MAEST/style, tempo, groove, and chroma/key compatibility. In dynamic layout mode it precomputes a
-grid of PaCMAP layouts and interpolates between them in the browser:
+The sequence builder uses MAEST/style, tempo, groove, and chroma/key compatibility. By default, the served app precomputes
+a dynamic grid of PaCMAP layouts and interpolates between them in the browser:
 
 ```bash
-uv run djprojectexploration-sequence-builder-app --dynamic-layout --step 0.1
+uv run djprojectexploration-sequence-builder-app --step 0.1
+```
+
+For a faster fixed-layout startup:
+
+```bash
+uv run djprojectexploration-sequence-builder-app --static-layout
 ```
 
 Reusable PaCMAP settings can also be loaded from JSON presets. Explicit CLI flags override preset values:
@@ -256,7 +296,7 @@ generated app as `app_settings`, shown in the settings popup, and used to initia
   "static_layout": false,
   "ui": {
     "latent_links_per_track": 3,
-    "recommended_links_highlight": 12,
+    "recommended_links_highlight": 25,
     "point_color": "genre",
     "map_fx": true
   }
@@ -264,7 +304,27 @@ generated app as `app_settings`, shown in the settings popup, and used to initia
 ```
 
 In the app, latent links are top-K weighted candidate links per track. Recommended links are the current selected track's
-ranked next-track recommendations highlighted on the map.
+ranked next-track recommendations highlighted on the map. Point coloring supports `genre`, `energy`, `tempo`, `key`, and
+`target`; `target` colors each track by selected energy minus the active target energy slot.
+
+Recent sequence-builder interaction conventions:
+
+- Double-click a map point to set or clear Track 1, the locked source for recommendations.
+- Single-click another point while Track 1 is set to select Track 2, the candidate target.
+- Adding a candidate to the sequence promotes it to Track 1.
+- Recommendation rows can be searched and pinned; multiple pins are allowed and are reset when the recommendation source
+  changes.
+- The main map supports Plotly zoom/pan plus keyboard controls: `+` or `i` to zoom in, `-` to zoom out, arrow keys to pan,
+  and `R` to reset. Press `?` in the app for the full shortcut panel.
+
+For the current energy curve dataset preset:
+
+```bash
+uv run djprojectexploration-sequence-builder-app \
+  --mix energycurvedataset \
+  --energy-npz data/energy_embeddings/energycurvedataset_energy_features.npz \
+  --pacmap-preset presets/pacmap/energycurvedataset_dynamic.json
+```
 
 ### Interactive DJ PaCMAP / UMAP
 
@@ -394,6 +454,15 @@ uv run djprojectexploration-groove-playlist music/ara-mix/ara_mix_tracks.csv --m
 uv run djprojectexploration-deam-playlist music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
 ```
 
+Generate peak-RMS 30-second MAEST embeddings for the same playlist when using the default MAEST-backed energy model:
+
+```bash
+uv run djprojectexploration-maest-playlist \
+  music/ara-mix/ara_mix_tracks.csv \
+  --music-dir music/ara-mix \
+  --section peak30
+```
+
 When running standalone commands, pass a previously generated tempo NPZ to groove to avoid re-running TempoCNN for BPM
 seeding:
 
@@ -425,9 +494,10 @@ uv run djprojectexploration-energy-npz \
   --name aries_ara_energy_features
 ```
 
-The NPZ writer implements the replaceable full energy model from `notebooks/energy_analysis.ipynb`: BPM plus simple,
-advanced, and loudness/RMS audio features with a Gaussian Tweedie/ridge pipeline. If labeled `energy` values are present,
-it fits the model and writes `glm_energy_pred`; otherwise it still writes the canonical NPZ with unavailable predictions.
+By default, the NPZ writer fits the MAEST full+peak30 PCA64 ridge model described above. Pass `--model full` to fit a
+handcrafted ridge model using one of the `--feature-set` options. If labeled `energy` values are present, the writer
+stores fitted predictions and out-of-fold diagnostics fields; otherwise it still writes the canonical NPZ with unavailable
+predictions.
 
 Useful common options:
 

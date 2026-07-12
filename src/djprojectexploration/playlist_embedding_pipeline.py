@@ -84,11 +84,15 @@ def _metadata_arrays(tracks: list[PlaylistTrack]) -> dict[str, np.ndarray]:
     }
 
 
-def _default_npz_name(tracklist_csv: Path) -> str:
+def _default_npz_name(tracklist_csv: Path, *, variant: str | None = None) -> str:
     stem = tracklist_csv.stem
     if stem.endswith("_tracks"):
-        return f"{stem}.npz"
-    return f"{stem}_tracks.npz"
+        base = stem
+    else:
+        base = f"{stem}_tracks"
+    if variant:
+        return f"{base}_{variant}.npz"
+    return f"{base}.npz"
 
 
 def _tempo_bpm_lookup_from_npz(path: str | Path | None) -> dict[int, float]:
@@ -146,11 +150,19 @@ def create_maest_playlist_embeddings_npz(
     output_file: str | Path | None = None,
     output_dir: str | Path = DEFAULT_MAEST_OUTPUT_DIR,
     skip_missing_audio: bool = False,
+    suppress_essentia_warnings: bool = True,
+    section: str = "full",
+    peak_window_sec: float = 30.0,
+    peak_hop_sec: float = 1.0,
 ) -> Path:
     """Build MAEST embeddings for playlist tracks and save one NPZ collection."""
     from essentia.standard import TensorflowPredictMAEST
 
-    from djprojectexploration.maest_embedding_extractor import extract_embedding
+    from djprojectexploration.maest_embedding_extractor import extract_embedding, extract_peak_rms_embedding
+
+    section = str(section).lower().strip()
+    if section not in {"full", "peak30"}:
+        raise ValueError(f"Unsupported MAEST section: {section!r}. Expected 'full' or 'peak30'.")
 
     csv_path = Path(tracklist_csv).expanduser().resolve()
     tracks = load_playlist_tracks(
@@ -169,33 +181,64 @@ def create_maest_playlist_embeddings_npz(
     vectors: list[np.ndarray] = []
     reductions: list[str] = []
     raw_shapes: list[str] = []
-    model = TensorflowPredictMAEST(graphFilename=str(resolved_model_file), output=output_node)
-
-    for track in tracks:
-        vector, raw_shape, reduction = extract_embedding(
-            track.audio_path,
-            resolved_model_file,
-            output_node,
-            model=model,
-        )
-        vectors.append(np.asarray(vector, dtype=np.float32).reshape(-1))
-        reductions.append(reduction)
-        raw_shapes.append("x".join(str(dim) for dim in raw_shape))
+    peak_start_sec: list[float] = []
+    peak_end_sec: list[float] = []
+    peak_window_rms_db: list[float] = []
+    with _suppress_native_stderr(suppress_essentia_warnings):
+        model = TensorflowPredictMAEST(graphFilename=str(resolved_model_file), output=output_node)
+        total = len(tracks)
+        for index, track in enumerate(tracks, start=1):
+            print(f"[{index}/{total}] Extracting MAEST {section} embedding: {track.title}", flush=True)
+            if section == "peak30":
+                vector, raw_shape, reduction, start_sec, end_sec, rms_db = extract_peak_rms_embedding(
+                    track.audio_path,
+                    resolved_model_file,
+                    output_node,
+                    model=model,
+                    window_sec=float(peak_window_sec),
+                    hop_sec=float(peak_hop_sec),
+                )
+                peak_start_sec.append(float(start_sec))
+                peak_end_sec.append(float(end_sec))
+                peak_window_rms_db.append(float(rms_db))
+            else:
+                vector, raw_shape, reduction = extract_embedding(
+                    track.audio_path,
+                    resolved_model_file,
+                    output_node,
+                    model=model,
+                )
+                peak_start_sec.append(np.nan)
+                peak_end_sec.append(np.nan)
+                peak_window_rms_db.append(np.nan)
+            vectors.append(np.asarray(vector, dtype=np.float32).reshape(-1))
+            reductions.append(reduction)
+            raw_shapes.append("x".join(str(dim) for dim in raw_shape))
+        del model
 
     embeddings = np.vstack(vectors).astype(np.float32)
 
     if output_file is None:
         resolved_output_dir = Path(output_dir).expanduser().resolve()
-        resolved_output_file = resolved_output_dir / _default_npz_name(csv_path)
+        resolved_output_file = resolved_output_dir / _default_npz_name(
+            csv_path,
+            variant=None if section == "full" else section,
+        )
     else:
         resolved_output_file = Path(output_file).expanduser().resolve()
 
     metadata = _metadata_arrays(tracks)
     extra = {
+        "maest_section": np.array(section, dtype=np.str_),
         "maest_model_file": np.array(_to_project_relpath(resolved_model_file), dtype=np.str_),
         "maest_output_node": np.array(output_node, dtype=np.str_),
         "maest_reductions": _string_array(reductions),
         "maest_raw_prediction_shapes": _string_array(raw_shapes),
+        "maest_peak_start_sec": np.asarray(peak_start_sec, dtype=np.float32),
+        "maest_peak_end_sec": np.asarray(peak_end_sec, dtype=np.float32),
+        "maest_peak_window_rms_db": np.asarray(peak_window_rms_db, dtype=np.float32),
+        "config_peak_window_sec": np.array(float(peak_window_sec), dtype=np.float32),
+        "config_peak_hop_sec": np.array(float(peak_hop_sec), dtype=np.float32),
     }
 
     saved_path = _save_collection_npz(
@@ -210,6 +253,7 @@ def create_maest_playlist_embeddings_npz(
     print(f"Saved MAEST playlist collection: {_to_project_relpath(saved_path)}")
     print(f"Tracks: {embeddings.shape[0]}")
     print(f"Embedding dimension: {embeddings.shape[1]}")
+    print(f"Section: {section}")
     print(f"Model: {_to_project_relpath(resolved_model_file)}")
     return saved_path
 
@@ -906,6 +950,24 @@ def _maest_cli_parser() -> argparse.ArgumentParser:
         help="TensorFlow output node for MAEST embeddings.",
     )
     parser.add_argument(
+        "--section",
+        choices=["full", "peak30"],
+        default="full",
+        help="Audio section to embed. 'full' preserves the existing full-track segment average; 'peak30' embeds the highest-RMS sliding window.",
+    )
+    parser.add_argument(
+        "--peak-window-sec",
+        type=float,
+        default=30.0,
+        help="Peak-RMS window length in seconds when --section peak30 is used.",
+    )
+    parser.add_argument(
+        "--peak-hop-sec",
+        type=float,
+        default=1.0,
+        help="Sliding RMS hop length in seconds when --section peak30 is used.",
+    )
+    parser.add_argument(
         "--output-file",
         type=Path,
         default=None,
@@ -921,6 +983,11 @@ def _maest_cli_parser() -> argparse.ArgumentParser:
         "--skip-missing-audio",
         action="store_true",
         help="Skip rows whose audio files do not exist instead of failing.",
+    )
+    parser.add_argument(
+        "--show-essentia-warnings",
+        action="store_true",
+        help="Show native Essentia/TensorFlow stderr warnings. Hidden by default.",
     )
     return parser
 
@@ -1215,6 +1282,10 @@ def maest_main() -> None:
         output_file=args.output_file,
         output_dir=args.output_dir,
         skip_missing_audio=bool(args.skip_missing_audio),
+        suppress_essentia_warnings=not bool(args.show_essentia_warnings),
+        section=str(args.section),
+        peak_window_sec=float(args.peak_window_sec),
+        peak_hop_sec=float(args.peak_hop_sec),
     )
 
 

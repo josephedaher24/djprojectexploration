@@ -613,6 +613,7 @@ def _build_plot(records: list[dict[str, Any]], coords: np.ndarray, *, plot_div_i
         title={"text": "", "x": 0.5, "xanchor": "center"},
         autosize=True,
         height=650,
+        dragmode="pan",
         margin={"t": 10, "r": 10, "b": 72, "l": 10},
         legend_title_text="Genre",
         legend={"orientation": "h", "x": 0.0, "y": -0.08, "xanchor": "left", "yanchor": "top"},
@@ -629,7 +630,17 @@ def _build_plot(records: list[dict[str, Any]], coords: np.ndarray, *, plot_div_i
     )
     fig.update_xaxes(title_text="", showticklabels=False, showgrid=False, zeroline=False, visible=False)
     fig.update_yaxes(title_text="", showticklabels=False, showgrid=False, zeroline=False, visible=False)
-    return fig.to_html(include_plotlyjs=True, full_html=False, div_id=plot_div_id, config={"responsive": True})
+    return fig.to_html(
+        include_plotlyjs=True,
+        full_html=False,
+        div_id=plot_div_id,
+        config={
+            "responsive": True,
+            "scrollZoom": True,
+            "displayModeBar": True,
+            "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+        },
+    )
 
 
 def _build_html(
@@ -838,7 +849,7 @@ def export_dj_sequence(
         "tempo_softflat_sharpness": 8.0,
         "tempo_use_confidence": False,
         "harmonic_exact_weight": 1.0,
-        "harmonic_first_fifth_weight": 0.0,
+        "harmonic_first_fifth_weight": 0.2,
         "harmonic_second_fifth_weight": 0.0,
         "harmonic_other_weight": 0.0,
         "harmonic_self_normalize": True,

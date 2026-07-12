@@ -24,6 +24,7 @@ except ImportError as exc:
 DEFAULT_MODEL_FILENAME = "discogs-maest-30s-pw-519l-2.pb"
 DEFAULT_OUTPUT_NODE = "PartitionedCall/Identity_7"
 DEFAULT_OUTPUT_FILENAME = "maest_embedding_discogs-maest-30s-pw.json"
+EPS = 1e-12
 
 
 def _to_project_relpath(path: Path, project_root: Path) -> str:
@@ -61,6 +62,60 @@ def _reduce_to_track_embedding(raw_predictions: np.ndarray) -> tuple[np.ndarray,
     return flattened.mean(axis=0).astype(np.float32), "mean_over_segments_flattened"
 
 
+def _rms_db(audio: np.ndarray) -> float:
+    rms = float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)) + EPS))
+    return float(20.0 * np.log10(max(rms, EPS)))
+
+
+def _highest_rms_window(
+    audio: np.ndarray,
+    *,
+    sample_rate: int,
+    window_sec: float = 30.0,
+    hop_sec: float = 1.0,
+) -> tuple[np.ndarray, float, float, float]:
+    """Return the highest-RMS sliding window and its start/end/RMS metadata."""
+    total_samples = int(audio.size)
+    if total_samples <= 0 or sample_rate <= 0:
+        return audio, 0.0, 0.0, float("nan")
+
+    window = min(total_samples, max(1, int(round(float(window_sec) * sample_rate))))
+    hop = max(1, int(round(float(hop_sec) * sample_rate)))
+    if total_samples <= window:
+        return audio, 0.0, float(total_samples) / float(sample_rate), _rms_db(audio)
+
+    starts = np.arange(0, total_samples - window + 1, hop, dtype=np.int64)
+    final_start = int(total_samples - window)
+    if starts.size == 0 or int(starts[-1]) != final_start:
+        starts = np.append(starts, final_start)
+
+    power = np.square(audio, dtype=np.float64)
+    cumulative = np.concatenate(([0.0], np.cumsum(power)))
+    window_energy = cumulative[starts + window] - cumulative[starts]
+    best_start = int(starts[int(np.argmax(window_energy))])
+    best_end = best_start + window
+    best = audio[best_start:best_end]
+    return (
+        best,
+        float(best_start) / float(sample_rate),
+        float(best_end) / float(sample_rate),
+        _rms_db(best),
+    )
+
+
+def extract_embedding_from_audio(
+    audio: np.ndarray,
+    model_file: Path,
+    output_node: str,
+    *,
+    model: TensorflowPredictMAEST | None = None,
+) -> tuple[np.ndarray, tuple[int, ...], str]:
+    predictor = model or TensorflowPredictMAEST(graphFilename=str(model_file), output=output_node)
+    raw_predictions = np.asarray(predictor(audio))
+    embedding, reduction = _reduce_to_track_embedding(raw_predictions)
+    return embedding, tuple(raw_predictions.shape), reduction
+
+
 def extract_embedding(
     audio_file: Path,
     model_file: Path,
@@ -69,10 +124,33 @@ def extract_embedding(
     model: TensorflowPredictMAEST | None = None,
 ) -> tuple[np.ndarray, tuple[int, ...], str]:
     audio = MonoLoader(filename=str(audio_file), sampleRate=16000, resampleQuality=4)()
-    predictor = model or TensorflowPredictMAEST(graphFilename=str(model_file), output=output_node)
-    raw_predictions = np.asarray(predictor(audio))
-    embedding, reduction = _reduce_to_track_embedding(raw_predictions)
-    return embedding, tuple(raw_predictions.shape), reduction
+    return extract_embedding_from_audio(audio, model_file, output_node, model=model)
+
+
+def extract_peak_rms_embedding(
+    audio_file: Path,
+    model_file: Path,
+    output_node: str,
+    *,
+    model: TensorflowPredictMAEST | None = None,
+    window_sec: float = 30.0,
+    hop_sec: float = 1.0,
+) -> tuple[np.ndarray, tuple[int, ...], str, float, float, float]:
+    sample_rate = 16000
+    audio = MonoLoader(filename=str(audio_file), sampleRate=sample_rate, resampleQuality=4)()
+    peak_audio, start_sec, end_sec, rms_db = _highest_rms_window(
+        audio,
+        sample_rate=sample_rate,
+        window_sec=window_sec,
+        hop_sec=hop_sec,
+    )
+    embedding, raw_shape, reduction = extract_embedding_from_audio(
+        peak_audio,
+        model_file,
+        output_node,
+        model=model,
+    )
+    return embedding, raw_shape, reduction, start_sec, end_sec, rms_db
 
 
 def parse_args() -> argparse.Namespace:

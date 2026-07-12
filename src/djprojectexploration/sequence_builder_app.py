@@ -244,15 +244,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sequence-length", type=int, default=10)
     parser.add_argument("--control-mode", choices=CONTROL_MODE_CHOICES, default="genre-mixability")
     add_pacmap_args(parser, include_static_layout=False)
-    parser.add_argument("--dynamic-layout", action="store_true", help="Generate the full dynamic PaCMAP layout grid at startup.")
+    parser.add_argument(
+        "--dynamic-layout",
+        action="store_true",
+        help="Generate the full dynamic PaCMAP layout grid at startup. This is the default unless --static-layout is passed.",
+    )
+    parser.add_argument(
+        "--static-layout",
+        action="store_true",
+        help="Generate one fixed/default PaCMAP layout for faster startup.",
+    )
     args = parser.parse_args(argv)
     pacmap_settings = pacmap_settings_from_args(args)
     ui_settings = sequence_builder_ui_settings_from_args(args)
-    if bool(args.dynamic_layout) or args.pacmap_preset is None:
+    use_dynamic_layout = not bool(args.static_layout)
+    if bool(args.dynamic_layout) or bool(args.static_layout) or args.pacmap_preset is None:
         pacmap_settings = PacmapSettings(
             **{
                 **pacmap_settings.to_dict(),
-                "static_layout": not bool(args.dynamic_layout),
+                "static_layout": not use_dynamic_layout,
             }
         ).validate()
 

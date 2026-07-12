@@ -23,6 +23,7 @@ CUE_COLUMN_BY_NAME = {
     "OUT 2": "out_2_seconds",
 }
 OUTPUT_COLUMNS = [
+    "rekordbox_key",
     "rekordbox_bpm",
     "rekordbox_onset_time",
     "in_1_seconds",
@@ -64,6 +65,7 @@ class RekordboxTrack:
     artist: str
     location: str
     path: Path | None
+    key: str
     bpm: float | None
     onset_time: float | None
     cues: list[RekordboxCue]
@@ -109,6 +111,7 @@ def parse_rekordbox_xml(xml_path: Path) -> list[RekordboxTrack]:
         artist = elem.attrib.get("Artist", "").strip()
         location = elem.attrib.get("Location", "").strip()
         path = _location_to_path(location)
+        key = elem.attrib.get("Tonality", "").strip()
 
         tempos = elem.findall("TEMPO")
         first_tempo = tempos[0] if tempos else None
@@ -147,6 +150,7 @@ def parse_rekordbox_xml(xml_path: Path) -> list[RekordboxTrack]:
                 artist=artist,
                 location=location,
                 path=path,
+                key=key,
                 bpm=bpm,
                 onset_time=onset,
                 cues=cues,
@@ -243,6 +247,10 @@ def import_rekordbox_cues(
         if record is None:
             continue
         matched += 1
+        if record.key:
+            row["rekordbox_key"] = record.key
+            if overwrite_timing:
+                row["key"] = record.key
         if record.bpm is not None:
             row["rekordbox_bpm"] = _format_float(record.bpm)
             if overwrite_timing:
@@ -311,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--overwrite-timing",
         action="store_true",
-        help="Also replace bpm and onset-time with Rekordbox beatgrid values.",
+        help="Also replace key, bpm, and onset-time with Rekordbox values.",
     )
     args = parser.parse_args(argv)
 

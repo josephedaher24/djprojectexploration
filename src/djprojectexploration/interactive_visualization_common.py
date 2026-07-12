@@ -70,47 +70,87 @@ def _row_token(row: dict[str, str]) -> str | None:
 
 
 GENRE_SIMPLIFICATION_MAP = {
+    # Alternative, indie, and less club-specific electronic tags.
     "alternative": "Alternative / Indie",
     "electronica": "Alternative / Indie",
     "experimental electronic": "Alternative / Indie",
+    "indie": "Alternative / Indie",
+
+    # Pop-facing and vocal dance records.
     "french pop": "Pop / Dance Pop",
     "pop": "Pop / Dance Pop",
     "dance pop": "Pop / Dance Pop",
+    "synthpop": "Pop / Dance Pop",
+
+    # Hip-hop and adjacent vocal/R&B records.
     "r&b": "Hip-Hop / R&B",
     "rap": "Hip-Hop / R&B",
     "hip hop": "Hip-Hop / R&B",
+
+    # Dancehall, reggaeton, and related global club styles.
     "dancehall": "Global / Dancehall",
     "reggaeton": "Global / Dancehall",
+
+    # House-family records, including disco-derived and progressive variants.
     "house": "House",
     "deep house": "House",
     "disco": "House",
+    "french house": "House",
+    "minimal house": "House",
     "nu disco": "House",
     "progressive house": "House",
     "tech house": "House",
+
+    # Bass music, breaks, garage, trap, and DnB grouped for coarse navigation.
     "bass house": "Bass / Dubstep",
     "bass house]": "Bass / Dubstep",
     "dubstep": "Bass / Dubstep",
-    "drum & bass": "Bass / Dubstep",
     "future bass": "Bass / Dubstep",
+    "melodic dubstep": "Bass / Dubstep",
+    "midtempo": "Bass / Dubstep",
     "trap": "Bass / Dubstep",
     "uk garage": "Bass / Dubstep",
+
+    # Drum & Bass
+    "drum & bass": "Bass / Dubstep",
+
+    # Breaks
+    "breaks / breakbeat / uk bass": "Breaks / Garage / UK Bass",
+    "future garage": "Breaks / Garage / UK Bass",
+    "garage": "Breaks / Garage / UK Bass",
+
+    # Festival/electro house variants that are distinct from core house.
     "big room": "Electro / Big Room",
+    "big room house": "Electro / Big Room",
     "electro house": "Electro / Big Room",
     "future house": "Electro / Big Room",
     "future rave": "Electro / Big Room",
+
+    # Techno-family records, including harder and melodic variants.
+    "hard techno": "Techno",
+    "industrial techno": "Techno",
     "melodic techno": "Techno",
     "techno": "Techno",
-    "synthwave": "Techno",
+
+    # Trance-family records.
     "progressive trance": "Trance",
     "psytrance": "Trance",
     "tech trance": "Trance",
     "trance": "Trance",
     "uplifting trance": "Trance",
+
+    # Hard dance.
     "hardstyle": "Hard Dance",
-    "ambient": "Electronic / Other",
-    "chillout": "Electronic / Other",
+
+    # Ambient, downtempo
+    "ambient": "Ambient / Downtempo",
+    "chillout": "Ambient / Downtempo",
+
+    # Generic electronic, and fallback tags.
     "electronic": "Electronic / Other",
+    "synthwave": "Electronic / Other",
     "other": "Electronic / Other",
+    "trip hop": "Electronic / Other",
 }
 
 

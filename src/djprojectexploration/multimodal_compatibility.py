@@ -67,7 +67,7 @@ _FIFTH_KERNEL_DEFAULT = build_fifth_kernel()
 def _build_harmonic_kernel(
     *,
     exact_weight: float = 1.0,
-    first_fifth_weight: float = 0.4,
+    first_fifth_weight: float = 0.2,
     second_fifth_weight: float = 0.15,
     other_weight: float = 0.0,
 ) -> np.ndarray:
@@ -554,7 +554,7 @@ def compatible_song_distribution(
     maest_weight: float = 0.5,
     chroma_weight: float = 0.3,
     harmonic_exact_weight: float = 1.0,
-    harmonic_first_fifth_weight: float = 0.4,
+    harmonic_first_fifth_weight: float = 0.2,
     harmonic_second_fifth_weight: float = 0.15,
     harmonic_other_weight: float = 0.0,
     harmonic_self_normalize: bool = False,
@@ -675,7 +675,7 @@ def combined_similarity_matrix(
     maest_weight: float = 0.5,
     chroma_weight: float = 0.3,
     harmonic_exact_weight: float = 1.0,
-    harmonic_first_fifth_weight: float = 0.4,
+    harmonic_first_fifth_weight: float = 0.2,
     harmonic_second_fifth_weight: float = 0.15,
     harmonic_other_weight: float = 0.0,
     harmonic_self_normalize: bool = False,

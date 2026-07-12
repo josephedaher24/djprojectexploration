@@ -36,7 +36,7 @@ def fifth_distance(i: int, j: int) -> int:
 
 def build_fifth_kernel(
     exact_weight: float = 1.0,
-    first_fifth_weight: float = 0.4,
+    first_fifth_weight: float = 0.2,
     second_fifth_weight: float = 0.15,
     other_weight: float = 0.0,
 ) -> np.ndarray:

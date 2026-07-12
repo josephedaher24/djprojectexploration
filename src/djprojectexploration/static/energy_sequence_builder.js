@@ -8,9 +8,10 @@
   const appSettings = config.app_settings || {};
   appSettings.defaults = Object.assign({
     latent_links_per_track: 3,
-    recommended_links_highlight: 12,
+    recommended_links_highlight: 25,
     point_color: 'genre',
     map_fx: true,
+    show_score_values: true,
   }, appSettings.defaults || {});
   appSettings.current = Object.assign({}, appSettings.defaults, appSettings.current || {});
   appSettings.behavior = Object.assign({
@@ -20,17 +21,26 @@
   config.app_settings = appSettings;
 
   const byIdx = new Map(records.map(r => [Number(r.idx), r]));
+  const initialRecommendationOrder = records.map(r => Number(r.idx)).filter(Number.isFinite);
+  for (let i = initialRecommendationOrder.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = initialRecommendationOrder[i];
+    initialRecommendationOrder[i] = initialRecommendationOrder[j];
+    initialRecommendationOrder[j] = tmp;
+  }
   let selectedIdx = null;
   let hoveredIdx = null;
   let selectedSlot = null;
   let sequenceLength = Number(config.default_length || 10);
   let sequence = Array.from({ length: sequenceLength }, () => null);
   let targetValues = Array.from({ length: sequenceLength }, () => null);
+  let sequenceDragSlot = null;
   let draggingEnergySlot = null;
   let currentPoints = [];
   let activePane = 'explore';
   let transitionFromIdx = null;
   let transitionToIdx = null;
+  const pinnedRecommendationIdxs = new Set();
   let lastClickedIdx = null;
   let lastClickMs = 0;
   let lastPlotPointClickMs = 0;
@@ -56,13 +66,14 @@
   let previewAudioUrl = '';
   let previewAudioStart = 0;
   let masterVolume = 0.85;
+  let lastNonzeroVolume = 0.85;
   let rowScrubPositions = new Map();
   let transitionScrubFrame = null;
   let transitionEditorFrame = null;
   let transitionScrubDragging = false;
   let transitionSnapToBeat = true;
   let transitionEditorDrag = null;
-  let recFilters = { sameKey: false, bpmRange: '', energyRange: '', excludeUsed: true, genreMode: 'any' };
+  let recFilters = { query: '', sameKey: false, bpmRange: '', energyRange: '', excludeUsed: true, genreMode: 'any' };
   let waveformState = { idx: null, url: '', payload: null, loading: false, error: '' };
   const waveformCache = new Map();
   let waveformPointerActive = false;
@@ -91,6 +102,7 @@
     energySource: document.getElementById('energy-source'),
     colorMode: document.getElementById('color-mode'),
     mapEffectsEnabled: document.getElementById('map-effects-enabled'),
+    showScoreValues: document.getElementById('show-score-values'),
     latentLinksPerTrack: document.getElementById('latent-links-per-track'),
     latentLinksPerTrackVal: document.getElementById('latent-links-per-track-val'),
     recommendedLinksHighlight: document.getElementById('recommended-links-highlight'),
@@ -109,6 +121,10 @@
     weightGrooveVal: document.getElementById('weight-groove-val'),
     simplex: document.getElementById('simplex-control'),
     simplexHandle: document.getElementById('simplex-handle'),
+    helpToggle: document.getElementById('help-toggle'),
+    helpClose: document.getElementById('help-close'),
+    helpPopover: document.getElementById('help-popover'),
+    helpContent: document.getElementById('help-content'),
     settingsToggle: document.getElementById('settings-toggle'),
     settingsClose: document.getElementById('settings-close'),
     settingsPopover: document.getElementById('settings-popover'),
@@ -142,6 +158,8 @@
     transitionDiagnostics: document.getElementById('transition-diagnostics'),
     currentTransitionScore: document.getElementById('current-transition-score'),
     mapEffects: document.getElementById('map-effects-canvas'),
+    mapMiniMap: document.getElementById('map-mini-map'),
+    mapZoomControls: document.getElementById('map-zoom-controls'),
     mapColorLegend: document.getElementById('map-color-legend'),
     songHoverCard: document.getElementById('song-hover-card'),
     librarySearch: document.getElementById('library-search'),
@@ -153,6 +171,7 @@
     globalToggle: document.getElementById('global-toggle'),
     globalScrub: document.getElementById('global-scrub'),
     globalVolume: document.getElementById('global-volume'),
+    globalVolumeButton: document.getElementById('global-volume-button'),
     globalTime: document.getElementById('global-time'),
     globalTrack1: document.getElementById('global-track1'),
     globalTrack2: document.getElementById('global-track2'),
@@ -160,6 +179,7 @@
 
   const baseTraceIndices = [];
   const originalBaseMarkers = new Map();
+  const baseTraceGenreColors = new Map();
   if (plot && Array.isArray(plot.data)) {
     for (let i = 0; i < plot.data.length; i += 1) {
       const trace = plot.data[i] || {};
@@ -168,6 +188,9 @@
       if (isBaseTrackTrace) {
         baseTraceIndices.push(i);
         originalBaseMarkers.set(i, JSON.parse(JSON.stringify(trace.marker || {})));
+        if (trace.name && trace.marker && trace.marker.color) {
+          baseTraceGenreColors.set(String(trace.name), String(trace.marker.color));
+        }
       }
     }
   }
@@ -183,6 +206,7 @@
   }
   function applyMasterVolume() {
     masterVolume = clamp(Number(masterVolume), 0, 1);
+    if (masterVolume > 0.001) lastNonzeroVolume = masterVolume;
     if (els.audio) els.audio.volume = masterVolume;
     const transitionAudio = transitionAudioElement();
     if (transitionAudio) transitionAudio.volume = masterVolume;
@@ -191,6 +215,12 @@
       setRangeProgress(els.globalVolume, masterVolume, 1);
       els.globalVolume.setAttribute('aria-valuetext', Math.round(masterVolume * 100) + '%');
       els.globalVolume.setAttribute('title', 'Volume ' + Math.round(masterVolume * 100) + '%');
+    }
+    if (els.globalVolumeButton) {
+      const muted = masterVolume <= 0.001;
+      els.globalVolumeButton.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+      els.globalVolumeButton.setAttribute('title', muted ? 'Unmute' : 'Mute');
+      els.globalVolumeButton.classList.toggle('is-muted', muted);
     }
   }
   function esc(s) {
@@ -233,7 +263,8 @@
       row('Point color', appSetting('point_color', 'genre')),
       row('Map effects', Boolean(appSetting('map_fx', true))),
       row('Latent links per track', appSetting('latent_links_per_track', 3)),
-      row('Recommended links highlighted', appSetting('recommended_links_highlight', 12)),
+      row('Recommended links highlighted', appSetting('recommended_links_highlight', 25)),
+      row('Show recommendation scores', Boolean(appSetting('show_score_values', true))),
       row('Energy penalty', els.penaltyScale ? Number(els.penaltyScale.value) : null),
       row('Current weights', weights()),
       row('Preview preset', previewFormState.preset),
@@ -278,6 +309,66 @@
       ]),
     ];
     els.settingsContent.innerHTML = sections.join('');
+  }
+  function helpKeyHtml(key, text) {
+    return '<li><span class="help-key">' + esc(key) + '</span><span>' + esc(text) + '</span></li>';
+  }
+  function helpCardHtml(title, rows) {
+    return '<section class="help-card"><h3>' + esc(title) + '</h3><ul class="help-list">' + rows.join('') + '</ul></section>';
+  }
+  function renderHelpPanel() {
+    if (!els.helpContent) return;
+    els.helpContent.innerHTML = '<div class="help-grid">' +
+      helpCardHtml('Map navigation', [
+        helpKeyHtml('wheel', 'Zoom the Plotly map under the pointer.'),
+        helpKeyHtml('drag', 'Pan the map.'),
+        helpKeyHtml('+ / i', 'Zoom in.'),
+        helpKeyHtml('-', 'Zoom out.'),
+        helpKeyHtml('arrows', 'Pan the map.'),
+        helpKeyHtml('R', 'Reset map view to fit the current layout.'),
+        helpKeyHtml('mini map', 'Click the mini map to recenter the main map.'),
+      ]) +
+      helpCardHtml('Track selection', [
+        helpKeyHtml('click', 'Select a candidate track and show its detail panel.'),
+        helpKeyHtml('double click', 'Set or clear Track 1 as the recommendation source.'),
+        helpKeyHtml('1', 'Set the current candidate as Track 1.'),
+        helpKeyHtml('2', 'Set the current candidate as Track 2.'),
+        helpKeyHtml('hover', 'Show preview without changing selection.'),
+        helpKeyHtml('Esc', 'Close open panels.'),
+      ]) +
+      helpCardHtml('Sequence workflow', [
+        helpKeyHtml('+ button', 'Append or replace with the current candidate.'),
+        helpKeyHtml('Track 1', 'Locked source for recommendations and transition scoring.'),
+        helpKeyHtml('Track 2', 'Candidate target for detail and transition preview.'),
+        helpKeyHtml('Add', 'Promotes the added candidate to Track 1.'),
+      ]) +
+      helpCardHtml('Display modes', [
+        helpKeyHtml('Genre', 'Rolled-up genre categories.'),
+        helpKeyHtml('Energy', 'Tagged or auto energy, depending on Energy source.'),
+        helpKeyHtml('Target', 'Selected energy minus the target energy for the active slot.'),
+        helpKeyHtml('Key wheel', 'Camelot key color; gray means missing or unavailable.'),
+        helpKeyHtml('Tempo', 'Estimated BPM.'),
+      ]) +
+      helpCardHtml('Audio', [
+        helpKeyHtml('play', 'Preview the selected or row track.'),
+        helpKeyHtml('volume icon', 'Mute or unmute.'),
+        helpKeyHtml('volume bar', 'Adjust playback volume.'),
+        helpKeyHtml('waveform', 'Click or drag to seek.'),
+      ]) +
+      '</div>';
+  }
+  function setHelpPanelOpen(open) {
+    if (!els.helpPopover) return;
+    if (open) {
+      renderHelpPanel();
+      els.helpPopover.classList.remove('hidden');
+    } else {
+      els.helpPopover.classList.add('hidden');
+    }
+    if (els.helpToggle) els.helpToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  function toggleHelpPanel() {
+    setHelpPanelOpen(!els.helpPopover || els.helpPopover.classList.contains('hidden'));
   }
   function setSettingsPanelOpen(open) {
     if (!els.settingsPopover || !els.settingsToggle) return;
@@ -330,6 +421,98 @@
   }
   function keyHtml(key) {
     return '<span class="camelot-key" style="color:' + esc(camelotKeyColor(key)) + '">' + esc(key || '') + '</span>';
+  }
+  function genreMarkerColor(value) {
+    const mapped = baseTraceGenreColors.get(String(value || ''));
+    if (mapped) return mapped;
+    const palette = [
+      '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b',
+      '#e377c2', '#7f7f7f', '#bcbd22', '#17becf', '#393b79', '#637939',
+    ];
+    const s = String(value || '');
+    let hash = 0;
+    for (let i = 0; i < s.length; i += 1) hash = ((hash * 31) + s.charCodeAt(i)) >>> 0;
+    return palette[hash % palette.length];
+  }
+  function camelotKeyMarkerColor(value) {
+    return camelotNumber(value) === null ? '#64748b' : camelotKeyColor(value);
+  }
+  function hexToRgb(hex) {
+    const clean = String(hex || '').replace('#', '');
+    if (clean.length !== 6) return [148, 163, 184];
+    return [
+      parseInt(clean.slice(0, 2), 16),
+      parseInt(clean.slice(2, 4), 16),
+      parseInt(clean.slice(4, 6), 16),
+    ];
+  }
+  function rgbToHex(rgb) {
+    return '#' + rgb.map(v => clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0')).join('');
+  }
+  function lerpColor(a, b, t) {
+    const ar = hexToRgb(a);
+    const br = hexToRgb(b);
+    const x = clamp(Number(t), 0, 1);
+    return rgbToHex(ar.map((v, i) => v + (br[i] - v) * x));
+  }
+  function energyResidual(record) {
+    const predicted = Number(record && record.glm_energy);
+    const tagged = Number(record && record.human_energy);
+    return Number.isFinite(predicted) && Number.isFinite(tagged) ? predicted - tagged : NaN;
+  }
+  function targetEnergyResidual(record) {
+    const target = targetCurve()[Math.max(0, targetSlot())] ?? 5;
+    const value = energyOf(record);
+    return Number.isFinite(value) && Number.isFinite(target) ? value - target : NaN;
+  }
+  function targetEnergyResidualExtent() {
+    const vals = records.map(targetEnergyResidual).filter(Number.isFinite).map(Math.abs);
+    const maxAbs = vals.length ? Math.max(0.5, Math.min(4, Math.max(...vals))) : 1;
+    return { min: -maxAbs, max: maxAbs, title: 'Energy - target' };
+  }
+  function twoSidedResidualColor(value, maxAbs) {
+    const v = Number(value);
+    if (!Number.isFinite(v)) return '#64748b';
+    const m = Math.max(0.25, Number(maxAbs) || 1);
+    if (Math.abs(v) <= 0.08) return '#f8fafc';
+    if (v < 0) return lerpColor('#f8fafc', '#2563eb', Math.min(1, Math.abs(v) / m));
+    return lerpColor('#f8fafc', '#ef4444', Math.min(1, v / m));
+  }
+  function segmentedColor(stops, t) {
+    const x = clamp(Number(t), 0, 1);
+    for (let i = 0; i < stops.length - 1; i += 1) {
+      const a = stops[i];
+      const b = stops[i + 1];
+      if (x <= b[0]) {
+        const local = (x - a[0]) / Math.max(1e-9, b[0] - a[0]);
+        return lerpColor(a[1], b[1], local);
+      }
+    }
+    return stops[stops.length - 1][1];
+  }
+  function energyColor(value) {
+    const t = (Number(value) - 1) / 8;
+    if (!Number.isFinite(t)) return '#64748b';
+    return segmentedColor([
+      [0, '#440154'],
+      [0.38, '#31688e'],
+      [0.72, '#35b779'],
+      [1, '#fde725'],
+    ], t);
+  }
+  function tempoColor(value, extent) {
+    const min = Number(extent && extent.min);
+    const max = Number(extent && extent.max);
+    const t = (Number(value) - min) / Math.max(1e-9, max - min);
+    if (!Number.isFinite(t)) return '#64748b';
+    return segmentedColor([
+      [0, '#30123b'],
+      [0.2, '#4663d8'],
+      [0.42, '#1bcfd4'],
+      [0.62, '#a4fc3c'],
+      [0.82, '#f89540'],
+      [1, '#7a0403'],
+    ], t);
   }
   function canonicalRecord(record) {
     if (!record) return null;
@@ -400,6 +583,18 @@
   function optionHtml(value, label, selectedValue) {
     const selected = String(value) === String(selectedValue) ? ' selected' : '';
     return '<option value="' + esc(value) + '"' + selected + '>' + esc(label) + '</option>';
+  }
+  function actionSymbolButton(attrs, symbol, label, extraClass='') {
+    const cls = 'action-symbol-button' + (extraClass ? ' ' + extraClass : '');
+    return '<button class="' + esc(cls) + '" ' + attrs + ' aria-label="' + esc(label) + '" title="' + esc(label) + '"><span aria-hidden="true">' + esc(symbol) + '</span></button>';
+  }
+  function setActionButton(el, symbol, label, extraClass='') {
+    if (!el) return;
+    el.classList.add('action-symbol-button');
+    if (extraClass) extraClass.split(/\s+/).filter(Boolean).forEach(cls => el.classList.add(cls));
+    el.innerHTML = '<span aria-hidden="true">' + esc(symbol) + '</span>';
+    el.setAttribute('aria-label', label);
+    el.setAttribute('title', label);
   }
   function numericInput(id, label, value, min, max, step) {
     return '<label>' + esc(label) + '<input id="' + id + '" data-preview-field="' + id + '" type="number" min="' + min + '" max="' + max + '" step="' + step + '" value="' + esc(value) + '"></label>';
@@ -916,6 +1111,21 @@
     lastClickMs = 0;
     hideSongPopover({ stopAudio: false });
     renderSelectionOnly();
+  }
+  function setCandidateTrack(idx, { autoplay=true, showPopover=true, render=true } = {}) {
+    idx = Number(idx);
+    if (!byIdx.has(idx)) return;
+    if (transitionFromIdx === null && selectedIdx !== idx) pinnedRecommendationIdxs.clear();
+    selectedIdx = idx;
+    if (transitionFromIdx !== null && Number(transitionFromIdx) !== idx) {
+      transitionToIdx = idx;
+      resetTransitionRenderState();
+      previewFormState.to_cue = '';
+    }
+    const record = byIdx.get(idx);
+    if (showPopover) showSongPopover(record, { autoplay });
+    else hideSongPopover({ stopAudio: false });
+    if (render) renderSelectionOnly();
   }
   function showSongPopover(record, { autoplay=true } = {}) {
     if (!els.songPopover || !record) return;
@@ -1449,8 +1659,14 @@
     if (idx < 0) return;
     Plotly.restyle(plot, update, [idx]);
   }
+  function normalizePointColorMode(mode) {
+    return mode === 'energy_residual' ? 'target' : String(mode || 'genre');
+  }
   function colorScaleExtent(mode) {
+    mode = normalizePointColorMode(mode);
     if (mode === 'energy') return { min: 1, max: 9, title: els.energySource.value === 'glm' ? 'Auto energy' : 'Tagged energy' };
+    if (mode === 'target') return targetEnergyResidualExtent();
+    if (mode === 'key') return { min: 1, max: 12, title: 'Camelot key wheel' };
     const vals = records.map(r => Number(r.est_bpm)).filter(Number.isFinite);
     if (!vals.length) return { min: 0, max: 1, title: 'Tempo BPM' };
     let min = Math.min(...vals);
@@ -1459,19 +1675,41 @@
     return { min, max, title: 'Estimated BPM' };
   }
   function pointColorValue(idx, mode) {
+    mode = normalizePointColorMode(mode);
     const record = byIdx.get(Number(idx));
     if (!record) return NaN;
     if (mode === 'energy') return energyOf(record);
+    if (mode === 'target') return targetEnergyResidual(record);
+    if (mode === 'key') return camelotNumber(record.key);
     if (mode === 'tempo') return Number(record.est_bpm);
     return NaN;
   }
+  function pointMarkerColor(idx, mode, extent=null) {
+    mode = normalizePointColorMode(mode);
+    const record = byIdx.get(Number(idx));
+    if (!record) return '#64748b';
+    if (mode === 'key') return camelotKeyMarkerColor(record.key);
+    if (mode === 'target') {
+      const maxAbs = Math.max(Math.abs(Number(extent && extent.min) || 0), Math.abs(Number(extent && extent.max) || 0), 1);
+      return twoSidedResidualColor(targetEnergyResidual(record), maxAbs);
+    }
+    return pointColorValue(idx, mode);
+  }
   function colorLegendGradient(mode) {
+    mode = normalizePointColorMode(mode);
     if (mode === 'energy') {
       return 'linear-gradient(90deg, #440154 0%, #31688e 38%, #35b779 72%, #fde725 100%)';
+    }
+    if (mode === 'target') {
+      return 'linear-gradient(90deg, #2563eb 0%, #f8fafc 50%, #ef4444 100%)';
+    }
+    if (mode === 'key') {
+      return 'linear-gradient(90deg, #ef4444 0%, #f97316 8.3%, #f59e0b 16.6%, #eab308 25%, #84cc16 33.3%, #22c55e 41.6%, #14b8a6 50%, #06b6d4 58.3%, #3b82f6 66.6%, #6366f1 75%, #a855f7 83.3%, #ec4899 91.6%, #64748b 100%)';
     }
     return 'linear-gradient(90deg, #30123b 0%, #4663d8 20%, #1bcfd4 42%, #a4fc3c 62%, #f89540 82%, #7a0403 100%)';
   }
   function renderMapColorLegend(mode, extent) {
+    mode = normalizePointColorMode(mode);
     if (!els.mapColorLegend) return;
     if (mode === 'genre') {
       els.mapColorLegend.classList.add('hidden');
@@ -1481,13 +1719,17 @@
     const min = Number(extent && extent.min);
     const max = Number(extent && extent.max);
     const mid = (min + max) / 2;
-    const places = mode === 'energy' ? 1 : 0;
+    const places = mode === 'energy' || mode === 'target' ? 1 : 0;
     const label = value => Number.isFinite(value) ? fmt(value, places) : '';
+    let rangeHtml = '<span class="map-color-range"><span>' + label(min) + '</span><span>' + label(mid) + '</span><span>' + label(max) + '</span></span>';
+    if (mode === 'key') {
+      rangeHtml = '<span class="map-color-range"><span>1</span><span>6/7</span><span>12</span><span>gray n/a</span></span>';
+    }
     els.mapColorLegend.classList.remove('hidden');
     els.mapColorLegend.innerHTML =
       '<span class="map-color-legend-title">' + esc(extent.title) + '</span>' +
       '<span class="map-color-ramp" style="background:' + colorLegendGradient(mode) + '"></span>' +
-      '<span class="map-color-range"><span>' + label(min) + '</span><span>' + label(mid) + '</span><span>' + label(max) + '</span></span>';
+      rangeHtml;
   }
   const simplexVertices = {
     tempo: { x: 180, y: 34 },
@@ -1542,7 +1784,11 @@
   }
   function applyPointColorMode() {
     if (!window.Plotly || !plot || !baseTraceIndices.length) return;
-    const mode = appSetting('point_color', els.colorMode ? els.colorMode.value : 'genre');
+    const mode = normalizePointColorMode(appSetting('point_color', els.colorMode ? els.colorMode.value : 'genre'));
+    if (els.colorMode && els.colorMode.value !== mode && Array.from(els.colorMode.options).some(opt => opt.value === mode)) {
+      els.colorMode.value = mode;
+      setAppSetting('point_color', mode);
+    }
 
     if (mode === 'genre') {
       renderMapColorLegend(mode, null);
@@ -1551,6 +1797,7 @@
         Plotly.restyle(plot, { marker: [marker], showlegend: [true] }, [traceIdx]);
       }
       Plotly.relayout(plot, { 'legend.title.text': 'Genre' });
+      safeUi('mini map draw', drawMiniMap);
       return;
     }
 
@@ -1559,19 +1806,27 @@
     baseTraceIndices.forEach(traceIdx => {
       const trace = plot.data[traceIdx] || {};
       const custom = Array.isArray(trace.customdata) ? trace.customdata : [];
-      const values = custom.map(row => pointColorValue(Array.isArray(row) ? row[0] : NaN, mode));
-      const marker = {
-        size: 9,
-        color: values,
-        colorscale: mode === 'energy' ? 'Viridis' : 'Turbo',
-        cmin: extent.min,
-        cmax: extent.max,
-        showscale: false,
-        line: { color: 'black', width: 0.5 },
-      };
+      const values = custom.map(row => pointMarkerColor(Array.isArray(row) ? row[0] : NaN, mode, extent));
+      const marker = mode === 'energy' || mode === 'tempo'
+        ? {
+            size: 9,
+            color: values,
+            colorscale: mode === 'energy' ? 'Viridis' : 'Turbo',
+            cmin: extent.min,
+            cmax: extent.max,
+            showscale: false,
+            line: { color: 'black', width: 0.5 },
+          }
+        : {
+            size: 9,
+            color: values,
+            showscale: false,
+            line: { color: 'black', width: 0.5 },
+          };
       Plotly.restyle(plot, { marker: [marker], showlegend: [false] }, [traceIdx]);
     });
-    Plotly.relayout(plot, { 'legend.title.text': mode === 'energy' ? 'Energy' : 'Tempo' });
+    Plotly.relayout(plot, { 'legend.title.text': extent.title });
+    safeUi('mini map draw', drawMiniMap);
   }
   function weights() {
     if (config.control_mode === 'genre-mixability') {
@@ -1591,15 +1846,22 @@
     return clamp(Math.round(Number(appSetting('latent_links_per_track', els.latentLinksPerTrack ? els.latentLinksPerTrack.value : 3))), 0, 8);
   }
   function recommendedLinksHighlight() {
-    return clamp(Math.round(Number(appSetting('recommended_links_highlight', els.recommendedLinksHighlight ? els.recommendedLinksHighlight.value : 12))), 1, 15);
+    return clamp(Math.round(Number(appSetting('recommended_links_highlight', els.recommendedLinksHighlight ? els.recommendedLinksHighlight.value : 25))), 1, 25);
+  }
+  function mapFxEnabled() {
+    return !(els.mapEffectsEnabled && !els.mapEffectsEnabled.checked);
+  }
+  function showScoreValues() {
+    return Boolean(appSetting('show_score_values', els.showScoreValues ? els.showScoreValues.checked : true));
   }
   function updateMapLinkSettingLabels() {
     if (els.latentLinksPerTrackVal) els.latentLinksPerTrackVal.textContent = String(latentLinksPerTrack());
     if (els.recommendedLinksHighlightVal) els.recommendedLinksHighlightVal.textContent = String(recommendedLinksHighlight());
   }
   function applyAppSettingsToControls() {
-    if (els.colorMode) els.colorMode.value = String(appSetting('point_color', 'genre'));
+    if (els.colorMode) els.colorMode.value = normalizePointColorMode(appSetting('point_color', 'genre'));
     if (els.mapEffectsEnabled) els.mapEffectsEnabled.checked = Boolean(appSetting('map_fx', true));
+    if (els.showScoreValues) els.showScoreValues.checked = showScoreValues();
     if (els.latentLinksPerTrack) els.latentLinksPerTrack.value = String(latentLinksPerTrack());
     if (els.recommendedLinksHighlight) els.recommendedLinksHighlight.value = String(recommendedLinksHighlight());
     updateMapLinkSettingLabels();
@@ -1643,7 +1905,7 @@
     return currentPoints[Number(idx)] || idxToPoint[String(idx)] || null;
   }
   function recordMapTrails(previousPoints, nextPoints) {
-    if (els.mapEffectsEnabled && !els.mapEffectsEnabled.checked) return;
+    if (!mapFxEnabled()) return;
     if (!Array.isArray(previousPoints) || !Array.isArray(nextPoints) || previousPoints.length !== nextPoints.length) return;
     const now = performance.now();
     const fresh = [];
@@ -1690,6 +1952,174 @@
       if ((dx * dx + dy * dy) <= r2) return true;
     }
     return false;
+  }
+  function mapDataBounds() {
+    const pts = records.map(r => currentPoint(r.idx)).filter(Boolean);
+    if (!pts.length) return null;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    pts.forEach(pt => {
+      const x = Number(pt[0]);
+      const y = Number(pt[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    });
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minY) || !Number.isFinite(maxY)) return null;
+    const padX = Math.max(0.5, (maxX - minX) * 0.08);
+    const padY = Math.max(0.5, (maxY - minY) * 0.08);
+    return { minX: minX - padX, maxX: maxX + padX, minY: minY - padY, maxY: maxY + padY };
+  }
+  function mapViewRanges() {
+    if (!plot || !plot._fullLayout || !plot._fullLayout.xaxis || !plot._fullLayout.yaxis) return null;
+    const xr = plot._fullLayout.xaxis.range;
+    const yr = plot._fullLayout.yaxis.range;
+    if (!Array.isArray(xr) || !Array.isArray(yr)) return null;
+    const x0 = Number(xr[0]), x1 = Number(xr[1]), y0 = Number(yr[0]), y1 = Number(yr[1]);
+    if (![x0, x1, y0, y1].every(Number.isFinite)) return null;
+    return { x0, x1, y0, y1 };
+  }
+  function relayoutMapRanges(x0, x1, y0, y1) {
+    if (!window.Plotly || !plot) return;
+    Plotly.relayout(plot, {
+      'xaxis.range': [x0, x1],
+      'yaxis.range': [y0, y1],
+    }).then(() => {
+      safeUi('map overlays after map control', updatePacmapOverlays);
+      safeUi('map effects after map control', ensureMapEffectsLoop);
+      safeUi('mini map after map control', drawMiniMap);
+    });
+  }
+  function zoomMap(factor) {
+    const view = mapViewRanges();
+    if (!view) return;
+    const cx = (view.x0 + view.x1) / 2;
+    const cy = (view.y0 + view.y1) / 2;
+    const halfW = Math.abs(view.x1 - view.x0) * Number(factor) / 2;
+    const halfH = Math.abs(view.y1 - view.y0) * Number(factor) / 2;
+    relayoutMapRanges(cx - halfW, cx + halfW, cy - halfH, cy + halfH);
+  }
+  function panMap(dxFrac, dyFrac) {
+    const view = mapViewRanges();
+    if (!view) return;
+    const w = view.x1 - view.x0;
+    const h = view.y1 - view.y0;
+    const dx = w * Number(dxFrac || 0);
+    const dy = h * Number(dyFrac || 0);
+    relayoutMapRanges(view.x0 + dx, view.x1 + dx, view.y0 + dy, view.y1 + dy);
+  }
+  function resetMapView() {
+    if (!window.Plotly || !plot) return;
+    Plotly.relayout(plot, { 'xaxis.autorange': true, 'yaxis.autorange': true }).then(() => {
+      safeUi('map overlays after reset', updatePacmapOverlays);
+      safeUi('map effects after reset', ensureMapEffectsLoop);
+      safeUi('mini map after reset', drawMiniMap);
+    });
+  }
+  function handleMapAction(action) {
+    if (action === 'zoom-in') zoomMap(0.78);
+    else if (action === 'zoom-out') zoomMap(1.28);
+    else if (action === 'pan-left') panMap(-0.18, 0);
+    else if (action === 'pan-right') panMap(0.18, 0);
+    else if (action === 'pan-up') panMap(0, 0.18);
+    else if (action === 'pan-down') panMap(0, -0.18);
+    else if (action === 'reset') resetMapView();
+  }
+  function miniMapPoint(pt, bounds, w, h) {
+    const x = (Number(pt[0]) - bounds.minX) / Math.max(1e-9, bounds.maxX - bounds.minX);
+    const y = (Number(pt[1]) - bounds.minY) / Math.max(1e-9, bounds.maxY - bounds.minY);
+    return { x: clamp(x, 0, 1) * w, y: (1 - clamp(y, 0, 1)) * h };
+  }
+  function miniMapMarkerColor(record, mode, extent=null) {
+    mode = normalizePointColorMode(mode);
+    if (!record) return '#64748b';
+    if (mode === 'genre') return genreMarkerColor(record.genre || record.raw_genre);
+    if (mode === 'energy') return energyColor(energyOf(record));
+    if (mode === 'tempo') return tempoColor(record.est_bpm, extent);
+    if (mode === 'key') return camelotKeyMarkerColor(record.key);
+    if (mode === 'target') {
+      const maxAbs = Math.max(Math.abs(Number(extent && extent.min) || 0), Math.abs(Number(extent && extent.max) || 0), 1);
+      return twoSidedResidualColor(targetEnergyResidual(record), maxAbs);
+    }
+    return '#64748b';
+  }
+  function drawMiniMap() {
+    const canvas = els.mapMiniMap;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const widthCss = Math.max(1, rect.width || 180);
+    const heightCss = Math.max(1, rect.height || 120);
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.floor(widthCss * dpr);
+    const height = Math.floor(heightCss * dpr);
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, widthCss, heightCss);
+    ctx.fillStyle = 'rgba(15, 23, 42, .92)';
+    ctx.fillRect(0, 0, widthCss, heightCss);
+    const bounds = mapDataBounds();
+    if (!bounds) return;
+    const mode = normalizePointColorMode(appSetting('point_color', els.colorMode ? els.colorMode.value : 'genre'));
+    const extent = mode === 'genre' ? null : colorScaleExtent(mode);
+    records.forEach(record => {
+      const pt = currentPoint(record.idx);
+      if (!pt) return;
+      const p = miniMapPoint(pt, bounds, widthCss, heightCss);
+      ctx.fillStyle = miniMapMarkerColor(record, mode, extent);
+      ctx.globalAlpha = 0.82;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.1, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+    const drawRing = (idx, color, radius) => {
+      if (idx === null || idx === undefined) return;
+      const pt = currentPoint(idx);
+      if (!pt) return;
+      const p = miniMapPoint(pt, bounds, widthCss, heightCss);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    };
+    drawRing(selectedIdx, '#f8fafc', 4.5);
+    drawRing(transitionFromIdx, '#34d399', 5.5);
+    drawRing(transitionToIdx, '#fbbf24', 5.5);
+    const view = mapViewRanges();
+    if (view) {
+      const a = miniMapPoint([Math.min(view.x0, view.x1), Math.min(view.y0, view.y1)], bounds, widthCss, heightCss);
+      const b = miniMapPoint([Math.max(view.x0, view.x1), Math.max(view.y0, view.y1)], bounds, widthCss, heightCss);
+      const x = Math.min(a.x, b.x);
+      const y = Math.min(a.y, b.y);
+      const w = Math.max(4, Math.abs(b.x - a.x));
+      const h = Math.max(4, Math.abs(b.y - a.y));
+      ctx.strokeStyle = 'rgba(248, 250, 252, .88)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(x, y, w, h);
+      ctx.setLineDash([]);
+    }
+  }
+  function recenterMapFromMiniMap(ev) {
+    const canvas = els.mapMiniMap;
+    const bounds = mapDataBounds();
+    const view = mapViewRanges();
+    if (!canvas || !bounds || !view) return;
+    const rect = canvas.getBoundingClientRect();
+    const nx = clamp((ev.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+    const ny = clamp((ev.clientY - rect.top) / Math.max(1, rect.height), 0, 1);
+    const cx = bounds.minX + nx * (bounds.maxX - bounds.minX);
+    const cy = bounds.maxY - ny * (bounds.maxY - bounds.minY);
+    const halfW = Math.abs(view.x1 - view.x0) / 2;
+    const halfH = Math.abs(view.y1 - view.y0) / 2;
+    relayoutMapRanges(cx - halfW, cx + halfW, cy - halfH, cy + halfH);
   }
   function drawGlow(ctx, p, radius, color, alpha) {
     if (!p) return;
@@ -1840,15 +2270,29 @@
       drawFlowLine(ctx, pts[i], pts[i + 1], 'rgba(45, 212, 191, __A__)', 0.34, (time / 2100 + i * 0.19) % 1, 1);
     }
   }
+  function drawSequencePathStatic(ctx) {
+    const pts = sequence
+      .map(idx => idx === null ? null : plotPointPx(currentPoint(idx)))
+      .filter(Boolean);
+    if (pts.length < 2) return;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(45, 212, 191, 0.34)';
+    ctx.lineWidth = 1.8;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.shadowColor = 'rgba(45, 212, 191, 0.22)';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i += 1) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
+    ctx.restore();
+  }
   function drawMapEffectsFrame(time) {
     mapEffectsFrame = null;
     const canvas = els.mapEffects;
     if (!canvas || !plot) return;
-    if (els.mapEffectsEnabled && !els.mapEffectsEnabled.checked) {
-      const ctxOff = canvas.getContext('2d');
-      if (ctxOff) ctxOff.clearRect(0, 0, canvas.width, canvas.height);
-      return;
-    }
+    const animated = mapFxEnabled();
     const rect = canvas.getBoundingClientRect();
     if (rect.width < 20 || rect.height < 20) {
       return;
@@ -1863,31 +2307,37 @@
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
-    drawBackgroundField(ctx, rect.width, rect.height, time);
+    if (animated) drawBackgroundField(ctx, rect.width, rect.height, time);
     drawStrongestConnections(ctx);
-    drawSequenceTransitionEffects(ctx, time);
+    if (animated) drawSequenceTransitionEffects(ctx, time);
+    else drawSequencePathStatic(ctx);
 
-    mapTrailSegments = mapTrailSegments.filter(seg => (time - seg.t0) < seg.life);
-    for (const seg of mapTrailSegments) {
-      const a = plotPointPx(seg.from);
-      const b = plotPointPx(seg.to);
-      if (!a || !b) continue;
-      const age = clamp((time - seg.t0) / seg.life, 0, 1);
-      const alpha = (1 - age) * 0.22;
-      ctx.save();
-      ctx.strokeStyle = 'rgba(125, 211, 252, ' + alpha.toFixed(3) + ')';
-      ctx.lineWidth = 1.1;
-      ctx.shadowColor = 'rgba(45, 212, 191, ' + (alpha * 1.4).toFixed(3) + ')';
-      ctx.shadowBlur = 12;
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-      ctx.restore();
+    if (animated) {
+      mapTrailSegments = mapTrailSegments.filter(seg => (time - seg.t0) < seg.life);
+      for (const seg of mapTrailSegments) {
+        const a = plotPointPx(seg.from);
+        const b = plotPointPx(seg.to);
+        if (!a || !b) continue;
+        const age = clamp((time - seg.t0) / seg.life, 0, 1);
+        const alpha = (1 - age) * 0.22;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(125, 211, 252, ' + alpha.toFixed(3) + ')';
+        ctx.lineWidth = 1.1;
+        ctx.shadowColor = 'rgba(45, 212, 191, ' + (alpha * 1.4).toFixed(3) + ')';
+        ctx.shadowBlur = 12;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+    } else {
+      mapTrailSegments = [];
     }
 
-    const rows = rankedRecommendations().slice(0, recommendedLinksHighlight());
-    const src = selectedIdx === null ? null : plotPointPx(currentPoint(selectedIdx));
+    const recContext = recommendationContext();
+    const rows = preparedRecommendationRows(recommendedLinksHighlight()).rows;
+    const src = recContext.sourceIdx === null ? null : plotPointPx(currentPoint(recContext.sourceIdx));
     if (src && rows.length) {
       const finals = rows.map(r => Number(r.finalScore)).filter(Number.isFinite);
       const minScore = finals.length ? Math.min(...finals) : 0;
@@ -1901,24 +2351,25 @@
           : 1 - (i / Math.max(1, rows.length));
         const rankStrength = 1 - (i / Math.max(1, rows.length));
         const strength = clamp(0.35 * scoreStrength + 0.65 * rankStrength, 0, 1);
-        drawFlowLine(ctx, src, dst, 'rgba(251, 191, 36, __A__)', strength * 0.72, (time / 1750 + i * 0.071) % 1, i < 4 ? 2 : 1);
-        drawGlow(ctx, dst, 14 + strength * 16, 'rgba(251, 191, 36, __A__)', 0.06 + strength * 0.13);
+        drawFlowLine(ctx, src, dst, 'rgba(251, 191, 36, __A__)', strength * 0.72, animated ? (time / 1750 + i * 0.071) % 1 : 0, animated ? (i < 4 ? 2 : 1) : 0);
+        if (animated) drawGlow(ctx, dst, 14 + strength * 16, 'rgba(251, 191, 36, __A__)', 0.06 + strength * 0.13);
       });
     }
 
     const fromP = transitionFromIdx === null ? null : plotPointPx(currentPoint(transitionFromIdx));
     const toP = transitionToIdx === null ? null : plotPointPx(currentPoint(transitionToIdx));
-    if (fromP && toP) drawFlowLine(ctx, fromP, toP, 'rgba(45, 212, 191, __A__)', 1, (time / 1300) % 1, 3);
-    drawPulseRing(ctx, selectedIdx === null ? null : plotPointPx(currentPoint(selectedIdx)), 13, '#f8fafc', time / 520, '');
-    drawPulseRing(ctx, fromP, 16, '#34d399', time / 470, '');
-    drawPulseRing(ctx, toP, 16, '#fbbf24', time / 520 + 1.2, '');
+    if (fromP && toP) drawFlowLine(ctx, fromP, toP, 'rgba(45, 212, 191, __A__)', 1, animated ? (time / 1300) % 1 : 0, animated ? 3 : 0);
+    if (animated) {
+      drawPulseRing(ctx, selectedIdx === null ? null : plotPointPx(currentPoint(selectedIdx)), 13, '#f8fafc', time / 520, '');
+      drawPulseRing(ctx, fromP, 16, '#34d399', time / 470, '');
+      drawPulseRing(ctx, toP, 16, '#fbbf24', time / 520 + 1.2, '');
+    }
 
-    if (activePane === 'explore') {
+    if (animated && activePane === 'explore') {
       ensureMapEffectsLoop();
     }
   }
   function ensureMapEffectsLoop() {
-    if (els.mapEffectsEnabled && !els.mapEffectsEnabled.checked) return;
     if (mapEffectsFrame !== null || !window.requestAnimationFrame) return;
     mapEffectsFrame = window.requestAnimationFrame(drawMapEffectsFrame);
   }
@@ -1968,6 +2419,7 @@
   }
   function recommendationFilterHtml() {
     return '<div class="recommendation-filterbar">' +
+      '<label class="recommendation-search">Search<input data-rec-filter="query" type="search" placeholder="title, artist, genre, key, bpm, energy" value="' + esc(recFilters.query) + '"></label>' +
       '<label><span><input data-rec-filter="sameKey" type="checkbox"' + (recFilters.sameKey ? ' checked' : '') + '> Key family</span></label>' +
       '<label>BPM +/-<input data-rec-filter="bpmRange" type="number" min="0" max="60" step="1" placeholder="Any" value="' + esc(recFilters.bpmRange) + '"></label>' +
       '<label>Energy +/-<input data-rec-filter="energyRange" type="number" min="0" max="8" step="0.25" placeholder="Any" value="' + esc(recFilters.energyRange) + '"></label>' +
@@ -1986,6 +2438,46 @@
     else if (key === 'genreMode') recFilters.genreMode = el.value || 'any';
     else recFilters[key] = el.value || '';
     return true;
+  }
+  function recommendationSearchText(row) {
+    const record = byIdx.get(Number(row && row.idx)) || row || {};
+    return [
+      record.title,
+      record.artists,
+      record.genre,
+      record.raw_genre,
+      record.key,
+      roundedBpm(record),
+      energyOf(record),
+      record.mix_slug,
+      record.filename,
+    ].map(v => String(v == null ? '' : v).toLowerCase()).join(' ');
+  }
+  function recommendationMatchesQuery(row, query) {
+    const tokens = String(query || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!tokens.length) return true;
+    const haystack = recommendationSearchText(row);
+    return tokens.every(token => haystack.includes(token));
+  }
+  function preparedRecommendationRows(limit=25) {
+    const allRows = rankedRecommendations().map((row, idx) => ({ ...row, globalRank: idx + 1 }));
+    const query = recFilters.query || '';
+    let rows = allRows.filter(row => recommendationMatchesQuery(row, query));
+    if (pinnedRecommendationIdxs.size) {
+      const pinnedRows = [];
+      const otherRows = [];
+      rows.forEach(row => {
+        if (pinnedRecommendationIdxs.has(Number(row.idx))) pinnedRows.push({ ...row, pinned: true });
+        else otherRows.push(row);
+      });
+      rows = pinnedRows.concat(otherRows);
+    }
+    return {
+      allRows,
+      rows: rows.slice(0, limit),
+      matchedCount: rows.length,
+      query: String(query || '').trim(),
+    };
   }
   function selectedIndices() {
     return new Set(sequence.filter(v => v !== null).map(Number));
@@ -2007,6 +2499,48 @@
     if (selectedSlot !== null && selectedSlot >= 0 && selectedSlot < sequence.length) return selectedSlot;
     return nextEmptySlot();
   }
+  function previousFilledSlot(slot) {
+    slot = Math.round(Number(slot));
+    if (!Number.isFinite(slot) || slot <= 0) return -1;
+    const start = Math.min(sequence.length - 1, slot - 1);
+    for (let i = start; i >= 0; i -= 1) {
+      if (sequence[i] !== null && byIdx.has(Number(sequence[i]))) return i;
+    }
+    return -1;
+  }
+  function recommendationContext(slot=targetSlot()) {
+    if (!Number.isFinite(Number(slot)) || Number(slot) < 0) {
+      return { mode: 'full', slot: -1, sourceIdx: null, sourceSlot: null };
+    }
+    slot = Math.round(Number(slot));
+    if (transitionFromIdx !== null && byIdx.has(Number(transitionFromIdx))) {
+      return { mode: 'track1', slot, sourceIdx: Number(transitionFromIdx), sourceSlot: null };
+    }
+    if (selectedIdx !== null && byIdx.has(Number(selectedIdx))) {
+      return { mode: 'selected', slot, sourceIdx: Number(selectedIdx), sourceSlot: null };
+    }
+    const sourceSlot = previousFilledSlot(slot);
+    if (sourceSlot >= 0) {
+      return { mode: 'sequence', slot, sourceIdx: Number(sequence[sourceSlot]), sourceSlot };
+    }
+    return { mode: 'initial', slot, sourceIdx: null, sourceSlot: null };
+  }
+  function recommendationContextLabel(ctx) {
+    if (!ctx || ctx.mode === 'full') return 'Sequence is full';
+    if (ctx.mode === 'track1') {
+      const record = byIdx.get(Number(ctx.sourceIdx));
+      return 'Scoring next-track candidates from Track 1' + (record ? ' "' + record.title + '"' : '');
+    }
+    if (ctx.mode === 'selected') {
+      const record = byIdx.get(Number(ctx.sourceIdx));
+      return 'Scoring next-track candidates from selected track' + (record ? ' "' + record.title + '"' : '');
+    }
+    if (ctx.mode === 'sequence') {
+      const record = byIdx.get(Number(ctx.sourceIdx));
+      return 'No track selected; scoring candidates after slot ' + (Number(ctx.sourceSlot) + 1) + (record ? ' "' + record.title + '"' : '');
+    }
+    return 'Initial suggestions use the target energy curve';
+  }
   function canPlaceTrack(idx, slot) {
     idx = Number(idx);
     if (!Number.isFinite(idx) || !byIdx.has(idx) || slot < 0) return false;
@@ -2019,7 +2553,9 @@
     previewFormState.from_cue = '';
     previewFormState.to_cue = '';
     if (kind === 'out') {
-      transitionFromIdx = toggle && transitionFromIdx === idx ? null : idx;
+      const nextFrom = toggle && transitionFromIdx === idx ? null : idx;
+      if (transitionFromIdx !== nextFrom) pinnedRecommendationIdxs.clear();
+      transitionFromIdx = nextFrom;
       if (transitionToIdx === idx) transitionToIdx = null;
     } else {
       transitionToIdx = toggle && transitionToIdx === idx ? null : idx;
@@ -2034,8 +2570,7 @@
     if (lastPointDoubleClickIdx === idx && (now - lastPointDoubleClickMs) < 900) return;
     lastPointDoubleClickIdx = idx;
     lastPointDoubleClickMs = now;
-    if (transitionFromIdx === null) setTransitionEndpoint('out', idx, { toggle: false });
-    else setTransitionEndpoint('in', idx, { toggle: false });
+    setTransitionEndpoint('out', idx, { toggle: true });
   }
   function handlePlotDoubleClick(fromPoint=false) {
     const now = Date.now();
@@ -2059,6 +2594,7 @@
   function clearTransitionPair() {
     transitionFromIdx = null;
     transitionToIdx = null;
+    pinnedRecommendationIdxs.clear();
     lastClickedIdx = null;
     lastClickMs = 0;
     lastPointDoubleClickMs = 0;
@@ -2080,7 +2616,7 @@
   }
   function setTargetSlotValue(slot, value, shouldRender=true) {
     slot = Math.round(Number(slot));
-    value = clamp(Number(value), 1, 9);
+    value = Math.round(clamp(Number(value), 1, 9) * 10) / 10;
     if (!Number.isFinite(slot) || !Number.isFinite(value)) return;
     targetValues[slot] = value;
     selectedSlot = slot;
@@ -2098,9 +2634,7 @@
     const anchors = targetAnchors();
     const out = [];
     if (!anchors.length) {
-      for (let i = 0; i < sequenceLength; i += 1) {
-        out.push(sequenceLength === 1 ? 5 : 3 + (4 * i / (sequenceLength - 1)));
-      }
+      for (let i = 0; i < sequenceLength; i += 1) out.push(5);
       return out;
     }
     if (anchors.length === 1) return Array.from({ length: sequenceLength }, () => anchors[0].value);
@@ -2132,6 +2666,41 @@
     const penalty = Number(els.penaltyScale.value || 0) * normSq;
     const energyScore = 1 - normSq;
     return { baseline, styleScore, tempoScore, grooveScore, keyScore, energy: e, target, rawError, normSq, penalty, energyScore, finalScore: baseline - penalty };
+  }
+  function scoreInitialCandidate(idx, slot) {
+    const record = byIdx.get(Number(idx));
+    const e = energyOf(record);
+    const target = targetCurve()[slot] ?? 5;
+    const rawError = Number.isFinite(e) ? e - target : 0;
+    const normSq = Math.pow(rawError / 8, 2);
+    const penalty = Number(els.penaltyScale.value || 0) * normSq;
+    const energyScore = 1 - normSq;
+    return {
+      ...(record || {}),
+      idx: Number(idx),
+      maest_similarity: NaN,
+      chroma_similarity: NaN,
+      tempo_similarity: NaN,
+      groove_similarity: NaN,
+      maest_score_norm: NaN,
+      chroma_score_norm: NaN,
+      tempo_score_norm: NaN,
+      groove_score_norm: NaN,
+      baseline: 0,
+      styleScore: NaN,
+      tempoScore: NaN,
+      grooveScore: NaN,
+      keyScore: NaN,
+      energy: e,
+      target,
+      rawError,
+      normSq,
+      penalty,
+      energyScore,
+      finalScore: -penalty,
+      initialRecommendation: true,
+      slot,
+    };
   }
   function scoreTransition(sourceIdx, destIdx, slot) {
     const entry = simMap[String(sourceIdx)] || {};
@@ -2172,11 +2741,30 @@
     };
   }
   function rankedRecommendations() {
-    if (selectedIdx === null) return [];
     const slot = targetSlot();
     if (slot < 0) return [];
     const used = selectedIndicesExcept(slot);
-    const srcRecord = byIdx.get(selectedIdx);
+    const ctx = recommendationContext(slot);
+    if (ctx.sourceIdx === null) {
+      const penaltyScale = Number(els.penaltyScale.value || 0);
+      const rows = [];
+      for (const idx of initialRecommendationOrder) {
+        if (recFilters.excludeUsed && used.has(idx)) continue;
+        const record = byIdx.get(idx);
+        if (!record) continue;
+        const targetEnergy = targetCurve()[slot] ?? 5;
+        const energyRange = Number(recFilters.energyRange);
+        const hasEnergyRange = String(recFilters.energyRange || '').trim() !== '' && Number.isFinite(energyRange) && energyRange >= 0;
+        if (hasEnergyRange && Math.abs(energyOf(record) - targetEnergy) > energyRange) continue;
+        rows.push({ ...scoreInitialCandidate(idx, slot), recommendationSourceMode: ctx.mode });
+      }
+      if (penaltyScale > 0) {
+        rows.sort((a, b) => b.finalScore - a.finalScore);
+      }
+      return rows;
+    }
+    const sourceIdx = Number(ctx.sourceIdx);
+    const srcRecord = byIdx.get(sourceIdx);
     const srcKeyFamily = camelotNumber(srcRecord && srcRecord.key);
     const bpmRange = Number(recFilters.bpmRange);
     const hasBpmRange = String(recFilters.bpmRange || '').trim() !== '' && Number.isFinite(bpmRange) && bpmRange >= 0;
@@ -2185,12 +2773,12 @@
     const targetEnergy = targetCurve()[slot] ?? 5;
     const genreMode = recFilters.genreMode || 'any';
     const srcGenre = String((srcRecord && (srcRecord.raw_genre || srcRecord.genre)) || '').toLowerCase();
-    const entry = simMap[String(selectedIdx)] || {};
+    const entry = simMap[String(sourceIdx)] || {};
     const candidates = Array.isArray(entry.candidates) ? entry.candidates : [];
     const rows = [];
     for (const c of candidates) {
       const idx = Number(c.idx);
-      if (!Number.isFinite(idx) || idx === selectedIdx) continue;
+      if (!Number.isFinite(idx) || idx === sourceIdx) continue;
       if (recFilters.excludeUsed && used.has(idx)) continue;
       const record = byIdx.get(idx);
       if (!record) continue;
@@ -2207,7 +2795,7 @@
         if (genreMode === 'different' && candGenre === srcGenre) continue;
       }
       const s = scoreCandidate(c, slot);
-      rows.push({ ...c, ...s, slot });
+      rows.push({ ...c, ...s, slot, recommendationSourceIdx: sourceIdx, recommendationSourceSlot: ctx.sourceSlot, recommendationSourceMode: ctx.mode });
     }
     rows.sort((a,b) => b.finalScore - a.finalScore);
     return rows;
@@ -2266,14 +2854,15 @@
       customdata: [pathCustom],
     });
 
-    const rows = rankedRecommendations().slice(0, Math.min(recommendedLinksHighlight(), Number(config.top_k_rows || 25)));
+    const rows = preparedRecommendationRows(recommendedLinksHighlight()).rows;
     const linkX = [];
     const linkY = [];
     const recX = [];
     const recY = [];
     const recText = [];
     const recCustom = [];
-    const src = selectedIdx === null ? null : currentPoint(selectedIdx);
+    const recContext = recommendationContext();
+    const src = recContext.sourceIdx === null ? null : currentPoint(recContext.sourceIdx);
     if (src) {
       rows.forEach((row, i) => {
         const dst = currentPoint(row.idx);
@@ -2296,16 +2885,12 @@
     });
   }
   function selectTrack(idx) {
-    idx = Number(idx);
-    if (!byIdx.has(idx)) return;
-    selectedIdx = idx;
-    const r = byIdx.get(idx);
-    showSongPopover(r);
-    renderSelectionOnly();
+    setCandidateTrack(idx, { autoplay: true, showPopover: true, render: true });
   }
   function setCurrentTrack(idx) {
     idx = Number(idx);
     if (!byIdx.has(idx)) return;
+    if (transitionFromIdx === null && selectedIdx !== idx) pinnedRecommendationIdxs.clear();
     selectedIdx = idx;
     hideSongPopover({ stopAudio: false });
     renderSelectionOnly();
@@ -2317,11 +2902,40 @@
     if (!canPlaceTrack(idx, slot)) return;
     sequence[slot] = idx;
     selectedSlot = null;
-    selectTrack(idx);
+    pinnedRecommendationIdxs.clear();
+    transitionFromIdx = idx;
+    transitionToIdx = null;
+    resetTransitionRenderState();
+    previewFormState.from_cue = '';
+    previewFormState.to_cue = '';
+    setCandidateTrack(idx, { autoplay: true, showPopover: true, render: false });
+    renderAll();
   }
   function removeSlot(slot) {
     slot = Number(slot);
     if (slot >= 0 && slot < sequence.length) sequence[slot] = null;
+    renderAll();
+  }
+  function moveSequenceSlot(fromSlot, toSlot) {
+    fromSlot = Math.round(Number(fromSlot));
+    toSlot = Math.round(Number(toSlot));
+    if (!Number.isFinite(fromSlot) || !Number.isFinite(toSlot)) return;
+    if (fromSlot < 0 || fromSlot >= sequence.length || toSlot < 0 || toSlot >= sequence.length) return;
+    if (fromSlot === toSlot) {
+      sequenceDragSlot = null;
+      safeUi('sequence render', renderSequence);
+      return;
+    }
+    const movedTrack = sequence.splice(fromSlot, 1)[0];
+    const movedTarget = targetValues.splice(fromSlot, 1)[0];
+    sequence.splice(toSlot, 0, movedTrack);
+    targetValues.splice(toSlot, 0, movedTarget);
+    if (selectedSlot === fromSlot) selectedSlot = toSlot;
+    else if (selectedSlot !== null) {
+      if (fromSlot < selectedSlot && selectedSlot <= toSlot) selectedSlot -= 1;
+      else if (toSlot <= selectedSlot && selectedSlot < fromSlot) selectedSlot += 1;
+    }
+    sequenceDragSlot = null;
     renderAll();
   }
   function compareLibraryRecords(a, b) {
@@ -2395,61 +3009,151 @@
   }
   function renderSequence() {
     const targets = targetCurve();
-    let html = '<table><thead><tr><th class="num">Slot</th><th>Track</th><th class="num">Target</th><th class="num">Actual</th><th></th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th class="num slot-col">Slot</th><th>Track</th><th class="target-col">Target</th><th class="num actual-col">Actual</th><th class="actions-col"></th></tr></thead><tbody>';
     for (let i = 0; i < sequence.length; i += 1) {
       const idx = sequence[i];
       const r = idx === null ? null : byIdx.get(idx);
-      const cls = selectedSlot === i ? ' class="selected-slot"' : '';
-      html += '<tr' + cls + '><td class="num">' + (i + 1) + '</td><td>';
+      const classes = [];
+      if (selectedSlot === i) classes.push('selected-slot');
+      if (sequenceDragSlot === i) classes.push('drag-source');
+      const cls = classes.length ? ' class="' + classes.join(' ') + '"' : '';
+      html += '<tr' + cls + ' data-sequence-drop-slot="' + i + '"><td class="num"><span class="sequence-drag-handle" draggable="true" data-sequence-drag-slot="' + i + '" title="Drag to reorder">↕</span> ' + (i + 1) + '</td><td>';
       if (r) html += trackSummaryHtml(r, { size: 'compact', showArt: true });
       else html += '<span class="muted">empty</span>';
       const targetValue = Number(targetValues[i]);
       const targetInput = '<input class="target-edit" data-target-slot="' + i + '" type="number" min="1" max="9" step="0.1" placeholder="' + fmt(targets[i], 2) + '" value="' + (Number.isFinite(targetValue) ? fmt(targetValue, 2) : '') + '">';
-      html += '</td><td class="num">' + targetInput + '</td><td class="num">' + (r ? fmt(energyOf(r), 2) : '') + '</td><td>';
+      html += '</td><td class="target-col">' + targetInput + '</td><td class="num actual-col">' + (r ? fmt(energyOf(r), 2) : '') + '</td><td class="actions-col"><div class="table-actions">';
       if (r) html += '<button class="play-button" data-play-idx="' + r.idx + '" aria-label="Play">▶</button> ';
-      html += '<button data-seq-slot="' + i + '">' + (selectedSlot === i ? 'Selected' : 'Select slot') + '</button> ';
+      html += actionSymbolButton('data-seq-slot="' + i + '"', selectedSlot === i ? '●' : '○', selectedSlot === i ? 'Selected slot' : 'Select slot', selectedSlot === i ? 'is-active' : '') + ' ';
       if (selectedIdx !== null && canPlaceTrack(selectedIdx, i)) {
-        html += '<button class="primary" data-place-slot="' + i + '">' + (r ? 'Replace' : 'Place') + '</button> ';
+        html += actionSymbolButton('data-place-slot="' + i + '"', r ? '⇄' : '+', r ? 'Replace with selected track' : 'Place selected track', 'primary') + ' ';
       }
-      if (r) html += '<button data-remove-slot="' + i + '">Remove</button>';
-      html += '</td></tr>';
+      if (r) html += actionSymbolButton('data-remove-slot="' + i + '"', '−', 'Remove track from slot', 'danger');
+      html += '</div></td></tr>';
     }
     html += '</tbody></table>';
     els.sequenceList.innerHTML = html;
   }
-  function renderCurrentTransitionScore() {
-    if (!els.currentTransitionScore) return;
-    const from = transitionFromIdx === null ? null : byIdx.get(transitionFromIdx);
-    const to = transitionToIdx === null ? null : byIdx.get(transitionToIdx);
-    if (!from || !to) {
-      els.currentTransitionScore.innerHTML = '<div class="muted">Assign outgoing and incoming tracks to inspect the selected transition score.</div>';
-      return;
-    }
-    const slot = Math.max(0, targetSlot());
-    const score = scoreTransition(transitionFromIdx, transitionToIdx, slot);
-    els.currentTransitionScore.innerHTML =
-      '<div><b>' + esc(from.title) + '</b> -> <b>' + esc(to.title) + '</b> <span class="muted">slot ' + (slot + 1) + '</span></div>' +
-      '<table><thead><tr><th class="num">Final</th><th class="num">Transition</th><th class="num">Style</th><th class="num">Tempo</th><th class="num">Groove</th><th class="num">Key</th><th class="num">Energy penalty</th></tr></thead><tbody><tr>' +
-      '<td class="num">' + fmt(score.finalScore, 4) + '</td>' +
-      '<td class="num">' + fmt(score.baseline, 4) + '</td>' +
-      '<td class="num">' + fmt(score.styleScore, 4) + '</td>' +
-      '<td class="num">' + fmt(score.tempoScore, 4) + '</td>' +
-      '<td class="num">' + fmt(score.grooveScore, 4) + '</td>' +
-      '<td class="num">' + fmt(score.keyScore, 4) + '</td>' +
-      '<td class="num">' + fmt(score.penalty, 4) + '</td>' +
-      '</tr></tbody></table>';
+  function metricValue(v, d=3) {
+    const text = fmt(v, d);
+    return text || '<span class="muted">n/a</span>';
   }
-  function renderTransitionDiagnostics() {
+  function scoreFeatureRows(score) {
+    return [
+      { key: 'style', label: 'Style / MAEST', value: Number(score && score.styleScore), weight: weights().maest },
+      { key: 'tempo', label: 'Tempo', value: Number(score && score.tempoScore), weight: weights().tempo },
+      { key: 'groove', label: 'Groove', value: Number(score && score.grooveScore), weight: weights().groove },
+      { key: 'harmonic', label: 'Harmonic / chroma', value: Number(score && score.keyScore), weight: weights().chroma },
+      { key: 'energy', label: 'Energy fit', value: Number(score && score.energyScore), weight: Number(els.penaltyScale ? els.penaltyScale.value : 0) },
+    ];
+  }
+  function featureBarsHtml(score, keys=null) {
+    const rows = scoreFeatureRows(score).filter(row => !keys || keys.includes(row.key));
+    return '<div class="diagnostic-feature-bars">' + rows.map(row => {
+      const finite = Number.isFinite(row.value);
+      const pct = finite ? clamp(row.value, 0, 1) * 100 : 0;
+      return '<div class="diagnostic-feature-bar ' + esc(row.key) + '">' +
+        '<span>' + esc(row.label) + '</span>' +
+        '<div class="diagnostic-bar-track"><i style="width:' + pct.toFixed(1) + '%"></i></div>' +
+        '<b>' + (finite ? fmt(row.value, 3) : 'n/a') + '</b>' +
+        '<em>w ' + metricValue(row.weight, 2) + '</em>' +
+        '</div>';
+    }).join('') + '</div>';
+  }
+  function scoreMetricsHtml(score) {
+    const rows = [
+      ['Final', score && score.finalScore, 4],
+      ['Transition mix', score && score.baseline, 4],
+      ['Target energy', score && score.target, 2],
+      ['Actual energy', score && score.energy, 2],
+      ['Energy error', score && score.rawError, 2],
+      ['Penalty', score && score.penalty, 4],
+    ];
+    return '<div class="diagnostic-metrics">' + rows.map(row =>
+      '<div><span>' + esc(row[0]) + '</span><b>' + metricValue(row[1], row[2]) + '</b></div>'
+    ).join('') + '</div>';
+  }
+  function transitionFocusHtml(from, to, score, slot) {
+    return '<div class="diagnostic-transition-pair">' +
+      '<div>' + trackSummaryHtml(from, { size: 'large', showArt: true }) + '</div>' +
+      '<div class="diagnostic-arrow">-&gt;</div>' +
+      '<div>' + trackSummaryHtml(to, { size: 'large', showArt: true }) + '</div>' +
+      '</div>' +
+      '<div class="diagnostic-subhead">Slot ' + (slot + 1) + (score && score.missing ? ' <span class="warn">missing direct similarity row</span>' : '') + '</div>' +
+      scoreMetricsHtml(score) +
+      featureBarsHtml(score);
+  }
+  function candidateFeatureScore(c, feature) {
+    const fields = {
+      style: ['styleScore', 'maest_score_norm', 'maest_similarity'],
+      tempo: ['tempoScore', 'tempo_score_norm', 'tempo_similarity'],
+      groove: ['grooveScore', 'groove_score_norm', 'groove_similarity'],
+      harmonic: ['keyScore', 'chroma_score_norm', 'chroma_similarity'],
+    }[feature] || [];
+    for (const field of fields) {
+      const value = Number(c && c[field]);
+      if (Number.isFinite(value)) return value;
+    }
+    return NaN;
+  }
+  function featureNeighborListHtml(sourceIdx, feature, label) {
+    const entry = simMap[String(sourceIdx)] || {};
+    const candidates = Array.isArray(entry.candidates) ? entry.candidates : [];
+    const rows = candidates.map(c => ({
+      c,
+      record: byIdx.get(Number(c.idx)),
+      score: candidateFeatureScore(c, feature),
+    })).filter(row => row.record && Number.isFinite(row.score))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 6);
+    if (!rows.length) {
+      return '<div class="diagnostic-neighbor-card"><h4>' + esc(label) + '</h4><div class="muted">No neighbor scores available.</div></div>';
+    }
+    return '<div class="diagnostic-neighbor-card"><h4>' + esc(label) + '</h4><ol class="diagnostic-neighbor-list">' +
+      rows.map(row => '<li>' +
+        '<span class="diagnostic-neighbor-rank">' + metricValue(row.score, 3) + '</span>' +
+        '<div><b>' + esc(row.record.title) + '</b><span>' + esc(rawGenre(row.record)) + ' / ' + esc(row.record.key || 'key n/a') + ' / ' + esc(roundedBpm(row.record) || 'bpm n/a') + '</span></div>' +
+        '</li>').join('') +
+      '</ol></div>';
+  }
+  function diagnosticsSourceContext() {
+    if (transitionFromIdx !== null && byIdx.has(Number(transitionFromIdx))) {
+      return { idx: Number(transitionFromIdx), label: 'Track 1 source' };
+    }
+    if (selectedIdx !== null && byIdx.has(Number(selectedIdx))) {
+      return { idx: Number(selectedIdx), label: 'Selected track' };
+    }
+    const ctx = recommendationContext();
+    if (ctx.sourceIdx !== null && byIdx.has(Number(ctx.sourceIdx))) {
+      return { idx: Number(ctx.sourceIdx), label: ctx.mode === 'sequence' ? 'Current sequence recommendation source' : 'Recommendation source' };
+    }
+    const filled = sequence.find(idx => idx !== null && byIdx.has(Number(idx)));
+    if (filled !== undefined) return { idx: Number(filled), label: 'First sequence track' };
+    return null;
+  }
+  function nearestFeatureNeighborsHtml(source) {
+    if (!source || !byIdx.has(Number(source.idx))) return '';
+    const record = byIdx.get(Number(source.idx));
+    return '<section class="diagnostic-card wide">' +
+      '<h3>Nearest latent neighbors by feature group</h3>' +
+      '<div class="diagnostic-subhead">' + esc(source.label) + ': <b>' + esc(record.title) + '</b></div>' +
+      '<div class="diagnostic-neighbor-grid">' +
+      featureNeighborListHtml(source.idx, 'style', 'Style / MAEST') +
+      featureNeighborListHtml(source.idx, 'tempo', 'Tempo') +
+      featureNeighborListHtml(source.idx, 'groove', 'Groove') +
+      featureNeighborListHtml(source.idx, 'harmonic', 'Harmonic / chroma') +
+      '</div></section>';
+  }
+  function sequenceTransitionTableHtml() {
     const filled = [];
     for (let i = 0; i < sequence.length; i += 1) {
       if (sequence[i] !== null) filled.push({ slot: i, idx: Number(sequence[i]) });
     }
     if (filled.length < 2) {
-      els.transitionDiagnostics.innerHTML = '<div class="muted" style="padding:10px;">Add at least two tracks to inspect transition scores.</div>';
-      return;
+      return '<section class="diagnostic-card wide"><h3>Sequence transition scores</h3><div class="muted">Add at least two tracks to inspect sequence transition scores.</div></section>';
     }
 
-    let html = '<table><thead><tr>' +
+    let html = '<section class="diagnostic-card wide"><h3>Sequence transition scores</h3><div class="diagnostic-table-wrap"><table><thead><tr>' +
       '<th class="num">From</th><th class="num">To</th><th>Transition</th>' +
       '<th class="num">Final</th><th class="num">Transition</th><th class="num">Target</th><th class="num">Energy</th>' +
       '<th class="num">Err</th><th class="num">Penalty</th><th class="num">Style</th><th class="num">Tempo</th><th class="num">Groove</th><th class="num">Key</th>' +
@@ -2479,43 +3183,133 @@
         '<td class="num">' + fmt(score.keyScore, 4) + '</td>' +
         '</tr>';
     }
-    html += '</tbody></table>';
-    els.transitionDiagnostics.innerHTML = html;
+    html += '</tbody></table></div></section>';
+    return html;
   }
-  function renderRecommendations() {
-    const filterbar = recommendationFilterHtml();
-    if (selectedIdx === null) {
-      els.recommendationPanel.innerHTML = filterbar + '<div class="muted" style="padding:10px;">Select a current track to score candidates.</div>';
+  function renderCurrentTransitionScore() {
+    if (!els.currentTransitionScore) return;
+    const from = transitionFromIdx === null ? null : byIdx.get(transitionFromIdx);
+    const to = transitionToIdx === null ? null : byIdx.get(transitionToIdx);
+    if (!from || !to) {
+      const ctx = recommendationContext();
+      const source = ctx.sourceIdx === null ? null : byIdx.get(Number(ctx.sourceIdx));
+      els.currentTransitionScore.innerHTML = source
+        ? '<div class="diagnostic-subhead">No explicit transition selected. Current recommendation source:</div>' + trackSummaryHtml(source, { size: 'large', showArt: true })
+        : '<div class="muted">Assign Track 1 and Track 2 to inspect a selected transition. With no track selected, recommendations fall back to the previous filled sequence slot.</div>';
       return;
     }
+    const slot = Math.max(0, targetSlot());
+    const score = scoreTransition(transitionFromIdx, transitionToIdx, slot);
+    els.currentTransitionScore.innerHTML = transitionFocusHtml(from, to, score, slot);
+  }
+  function renderTransitionDiagnostics() {
+    if (!els.transitionDiagnostics) return;
+    const from = transitionFromIdx === null ? null : byIdx.get(transitionFromIdx);
+    const to = transitionToIdx === null ? null : byIdx.get(transitionToIdx);
+    const slot = Math.max(0, targetSlot());
+    let html = '<div class="diagnostics-grid">';
+    if (from && to) {
+      const score = scoreTransition(transitionFromIdx, transitionToIdx, slot);
+      html += '<section class="diagnostic-card"><h3>Groove and harmonic comparison</h3>' +
+        '<div class="diagnostic-subhead">' + esc(from.title) + ' -&gt; ' + esc(to.title) + '</div>' +
+        featureBarsHtml(score, ['groove', 'harmonic']) +
+        '</section>';
+      html += '<section class="diagnostic-card"><h3>Raw transition metrics</h3>' + scoreMetricsHtml(score) + '</section>';
+    } else {
+      html += '<section class="diagnostic-card"><h3>Focused transition</h3><div class="muted">Set Track 1 and Track 2 to inspect a specific transition. The neighbor panels below use the current recommendation source when no transition is selected.</div></section>';
+    }
+    html += nearestFeatureNeighborsHtml(diagnosticsSourceContext());
+    html += sequenceTransitionTableHtml();
+    html += '</div>';
+    els.transitionDiagnostics.innerHTML = html;
+    updatePlayButtons();
+  }
+  function valueRange(rows, getter) {
+    const vals = rows.map(getter).map(Number).filter(Number.isFinite);
+    if (!vals.length) return { min: NaN, max: NaN };
+    return { min: Math.min(...vals), max: Math.max(...vals) };
+  }
+  function relativeStrength(value, range, fallback=null) {
+    value = Number(value);
+    if (!Number.isFinite(value)) return NaN;
+    if (range && Number.isFinite(range.min) && Number.isFinite(range.max) && Math.abs(range.max - range.min) > 1e-9) {
+      return clamp((value - range.min) / (range.max - range.min), 0, 1);
+    }
+    if (fallback !== null) return clamp(Number(fallback), 0, 1);
+    return clamp(value, 0, 1);
+  }
+  function recommendationMetricCell(value, cls, strength, digits=2, label='') {
+    const numeric = Number(value);
+    const finite = Number.isFinite(numeric);
+    const s = Number(strength);
+    const pct = finite && Number.isFinite(s) ? clamp(s, 0, 1) * 100 : 0;
+    const title = label ? label + ': ' + (finite ? fmt(numeric, digits) : 'n/a') : '';
+    return '<td class="num recommendation-score-cell' + (showScoreValues() ? '' : ' bars-only') + '">' +
+      '<div class="score-meter ' + esc(cls) + (finite ? '' : ' empty') + (showScoreValues() ? '' : ' bars-only') + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' +
+      '<span class="score-meter-value">' + (finite ? fmt(numeric, digits) : 'n/a') + '</span>' +
+      '<span class="score-meter-track"><i style="width:' + pct.toFixed(1) + '%"></i></span>' +
+      '</div></td>';
+  }
+  function renderRecommendations() {
+    const restoreQueryFocus = document.activeElement
+      && document.activeElement.getAttribute
+      && document.activeElement.getAttribute('data-rec-filter') === 'query';
+    const filterbar = recommendationFilterHtml();
     const slot = targetSlot();
     if (slot < 0) {
       els.recommendationPanel.innerHTML = filterbar + '<div class="muted" style="padding:10px;">Sequence is full. Select a slot to replace a track.</div>';
       return;
     }
-    const rows = rankedRecommendations().slice(0, Math.min(15, Number(config.top_k_rows || 25)));
+    const ctx = recommendationContext(slot);
+    const prepared = preparedRecommendationRows(25);
+    const rows = prepared.rows;
+    const finalRange = valueRange(rows, r => r.finalScore);
+    const penaltyRange = valueRange(rows, r => r.penalty);
     const actionLabel = sequence[slot] === null ? 'Append' : 'Replace';
+    const actionSymbol = sequence[slot] === null ? '+' : '⇄';
     let html = filterbar +
-      '<div class="muted" style="padding:8px 8px 0;">Scoring candidates for slot <b>' + (slot + 1) + '</b> (' + actionLabel.toLowerCase() + ').</div>' +
+      '<div class="muted" style="padding:8px 8px 0;">' +
+      esc(recommendationContextLabel(ctx)) +
+      ' for slot <b>' + (slot + 1) + '</b> (' + actionLabel.toLowerCase() + '). ' +
+      (prepared.query
+        ? 'Showing <b>' + prepared.matchedCount + '</b> matches from <b>' + prepared.allRows.length + '</b> scored candidates.'
+        : 'Showing top <b>' + Math.min(25, prepared.matchedCount) + '</b> of <b>' + prepared.allRows.length + '</b> scored candidates.') +
+      '</div>' +
       '<table><thead><tr><th class="num">#</th><th>Actions</th><th>Track</th><th class="num">Final</th><th class="num">Mix</th><th class="num">Energy</th><th class="num">Penalty</th><th class="num">Style</th><th class="num">Tempo</th><th class="num">Groove</th><th class="num">Key</th></tr></thead><tbody>';
     rows.forEach((r, i) => {
-      html += '<tr><td class="num">' + (i + 1) + '</td>' +
-        '<td><div class="library-actions">' +
+      const isPinned = pinnedRecommendationIdxs.has(Number(r.idx));
+      html += '<tr' + (isPinned ? ' class="pinned-row"' : '') + '><td class="num">' + (isPinned ? '★ ' : '') + (r.globalRank || (i + 1)) + '</td>' +
+        '<td><div class="table-actions">' +
+        actionSymbolButton('data-pin-rec-idx="' + r.idx + '"', isPinned ? '★' : '☆', isPinned ? 'Unpin candidate' : 'Pin candidate', isPinned ? 'is-active' : '') +
         '<button class="play-button" data-play-idx="' + r.idx + '" aria-label="Play">▶</button>' +
-        '<button class="primary" data-append-idx="' + r.idx + '">' + actionLabel + '</button>' +
-        '<button data-library-outgoing="' + r.idx + '">T1</button>' +
-        '<button data-library-incoming="' + r.idx + '">T2</button>' +
+        actionSymbolButton('data-append-idx="' + r.idx + '"', actionSymbol, actionLabel + ' to sequence', 'primary') +
+        actionSymbolButton('data-library-outgoing="' + r.idx + '"', '1', 'Set as Track 1') +
+        actionSymbolButton('data-library-incoming="' + r.idx + '"', '2', 'Set as Track 2') +
         '</div></td>' +
         '<td>' + trackSummaryHtml(r, { size: 'compact', showArt: true }) + '</td>' +
-        '<td class="num">' + fmt(r.finalScore, 2) + '</td><td class="num">' + fmt(r.baseline, 2) + '</td>' +
-        '<td class="num">' + fmt(r.energy, 2) + '</td><td class="num">' + fmt(r.penalty, 2) + '</td>' +
-        '<td class="num">' + fmt(r.styleScore, 2) + '</td><td class="num">' + fmt(r.tempoScore, 2) + '</td><td class="num">' + fmt(r.grooveScore, 2) + '</td><td class="num">' + fmt(r.keyScore, 2) + '</td></tr>';
+        recommendationMetricCell(r.finalScore, 'final', relativeStrength(r.finalScore, finalRange, r.finalScore), 2, 'Final score') +
+        recommendationMetricCell(r.baseline, 'mix', r.baseline, 2, 'Weighted mix score') +
+        recommendationMetricCell(r.energy, 'energy', (Number(r.energy) - 1) / 8, 2, 'Actual energy') +
+        recommendationMetricCell(r.penalty, 'penalty', relativeStrength(r.penalty, penaltyRange, 0), 2, 'Energy penalty') +
+        recommendationMetricCell(r.styleScore, 'style', r.styleScore, 2, 'Style score') +
+        recommendationMetricCell(r.tempoScore, 'tempo', r.tempoScore, 2, 'Tempo score') +
+        recommendationMetricCell(r.grooveScore, 'groove', r.grooveScore, 2, 'Groove score') +
+        recommendationMetricCell(r.keyScore, 'harmonic', r.keyScore, 2, 'Harmonic score') +
+        '</tr>';
     });
     if (!rows.length) {
       html += '<tr><td colspan="11" class="muted" style="padding:10px;">No recommendations match the current filters.</td></tr>';
     }
     html += '</tbody></table>';
     els.recommendationPanel.innerHTML = html;
+    if (restoreQueryFocus) {
+      const queryInput = els.recommendationPanel.querySelector('[data-rec-filter="query"]');
+      if (queryInput) {
+        queryInput.focus();
+        const n = String(queryInput.value || '').length;
+        try { queryInput.setSelectionRange(n, n); } catch (err) {}
+      }
+    }
   }
   function renderEnergyCurve() {
     const targets = targetCurve();
@@ -2534,10 +3328,11 @@
       paper_bgcolor: '#111827',
       plot_bgcolor: '#111827',
       font: { color: '#e5e7eb' },
-      xaxis: { title: 'Sequence slot', dtick: 1, range: [0.5, sequence.length + 0.5], gridcolor: '#263244', zerolinecolor: '#263244' },
-      yaxis: { title: 'Energy', range: [0.5, 9.5], gridcolor: '#263244', zerolinecolor: '#263244' },
+      dragmode: false,
+      xaxis: { title: 'Sequence slot', dtick: 1, range: [0.5, sequence.length + 0.5], fixedrange: true, gridcolor: '#263244', zerolinecolor: '#263244' },
+      yaxis: { title: 'Energy', range: [0.5, 9.5], fixedrange: true, gridcolor: '#263244', zerolinecolor: '#263244' },
       legend: { orientation: 'h', x: 0, y: -0.24, xanchor: 'left', yanchor: 'top' }
-    }, { displayModeBar: false, responsive: true });
+    }, { displayModeBar: false, scrollZoom: false, doubleClick: false, responsive: true });
   }
   function renderTransitionBadges() {
     if (!els.transitionBadges) return;
@@ -3445,7 +4240,7 @@
     const xValue = gd._fullLayout.xaxis.p2d(xPixel);
     const yValue = gd._fullLayout.yaxis.p2d(yPixel);
     const slot = clamp(Math.round(Number(xValue)) - 1, 0, sequence.length - 1);
-    const value = clamp(Number(yValue), 1, 9);
+    const value = Math.round(clamp(Number(yValue), 1, 9) * 10) / 10;
     if (!Number.isFinite(slot) || !Number.isFinite(value)) return null;
     return { slot, value };
   }
@@ -3468,18 +4263,23 @@
   }
   function updateAppendControls() {
     const slot = targetSlot();
-    const actionLabel = slot >= 0 && sequence[slot] !== null ? 'Replace' : 'Append';
-    els.appendSelected.textContent = actionLabel;
+    const replacing = slot >= 0 && sequence[slot] !== null;
+    setActionButton(els.appendSelected, replacing ? '⇄' : '+', replacing ? 'Replace selected slot' : 'Append selected track', 'primary');
     els.appendSelected.disabled = selectedIdx === null || !canPlaceTrack(selectedIdx, slot);
   }
   function renderSelectionOnly() {
     safeUi('map overlays', updatePacmapOverlays);
+    safeUi('map static overlays', ensureMapEffectsLoop);
     safeUi('append controls', updateAppendControls);
     if (activePane === 'explore') {
       safeUi('sequence render', renderSequence);
       safeUi('recommendations render', renderRecommendations);
     }
     if (activePane === 'library') safeUi('library render', renderLibrary);
+    if (activePane === 'diagnostics') {
+      safeUi('transition score render', renderCurrentTransitionScore);
+      safeUi('transition diagnostics render', renderTransitionDiagnostics);
+    }
     safeUi('transition badges render', renderTransitionBadges);
     safeUi('audio ui sync', syncAudioUi);
     if (els.settingsPopover && !els.settingsPopover.classList.contains('hidden')) {
@@ -3496,6 +4296,7 @@
       applyPointColorMode();
       updatePacmapOverlays();
       ensureMapEffectsLoop();
+      drawMiniMap();
     });
     safeUi('append controls', updateAppendControls);
     if (activePane === 'explore') {
@@ -3550,10 +4351,30 @@
     if (els.weightChroma) els.weightChroma.value = String((config.weights && config.weights.chroma) || 0.25);
     if (els.weightTempo) els.weightTempo.value = String((config.weights && config.weights.tempo) || 0.15);
   }
+  setActionButton(els.setOutgoing, '1', 'Set selected track as Track 1');
+  setActionButton(els.setIncoming, '2', 'Set selected track as Track 2');
+  setActionButton(els.clearTransition, '×', 'Clear transition pair', 'danger');
+  setActionButton(els.clearLast, '−', 'Clear last sequence track', 'danger');
+  setActionButton(els.resetSequence, '⌧', 'Reset sequence', 'danger');
+  setActionButton(els.downloadSequence, '↓', 'Download sequence CSV');
   if (els.settingsToggle) {
     els.settingsToggle.addEventListener('click', ev => {
       ev.stopPropagation();
+      setHelpPanelOpen(false);
       toggleSettingsPanel();
+    });
+  }
+  if (els.helpToggle) {
+    els.helpToggle.addEventListener('click', ev => {
+      ev.stopPropagation();
+      setSettingsPanelOpen(false);
+      toggleHelpPanel();
+    });
+  }
+  if (els.helpClose) {
+    els.helpClose.addEventListener('click', ev => {
+      ev.stopPropagation();
+      setHelpPanelOpen(false);
     });
   }
   if (els.settingsClose) {
@@ -3563,12 +4384,56 @@
     });
   }
   document.addEventListener('click', ev => {
-    if (!els.settingsPopover || els.settingsPopover.classList.contains('hidden')) return;
-    if (els.settingsPopover.contains(ev.target) || (els.settingsToggle && els.settingsToggle.contains(ev.target))) return;
-    setSettingsPanelOpen(false);
+    if (els.settingsPopover && !els.settingsPopover.classList.contains('hidden')) {
+      if (els.settingsPopover.contains(ev.target) || (els.settingsToggle && els.settingsToggle.contains(ev.target))) return;
+      setSettingsPanelOpen(false);
+    }
+    if (els.helpPopover && !els.helpPopover.classList.contains('hidden')) {
+      if (els.helpPopover.contains(ev.target) || (els.helpToggle && els.helpToggle.contains(ev.target))) return;
+      setHelpPanelOpen(false);
+    }
   });
   document.addEventListener('keydown', ev => {
-    if (ev.key === 'Escape') setSettingsPanelOpen(false);
+    if (ev.key === 'Escape') {
+      setSettingsPanelOpen(false);
+      setHelpPanelOpen(false);
+    }
+    const tag = ev.target && ev.target.tagName ? String(ev.target.tagName).toLowerCase() : '';
+    const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || (ev.target && ev.target.isContentEditable);
+    if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    const key = String(ev.key || '').toLowerCase();
+    if (key === '+' || key === '=' || key === 'i') {
+      handleMapAction('zoom-in');
+      ev.preventDefault();
+    } else if (key === '?') {
+      setSettingsPanelOpen(false);
+      toggleHelpPanel();
+      ev.preventDefault();
+    } else if (key === '1') {
+      if (selectedIdx !== null) setTransitionEndpoint('out', selectedIdx, { toggle: false });
+      ev.preventDefault();
+    } else if (key === '2') {
+      if (selectedIdx !== null) setCandidateTrack(selectedIdx, { autoplay: false, showPopover: true });
+      ev.preventDefault();
+    } else if (key === '-' || key === '_') {
+      handleMapAction('zoom-out');
+      ev.preventDefault();
+    } else if (key === 'arrowleft') {
+      handleMapAction('pan-left');
+      ev.preventDefault();
+    } else if (key === 'arrowright') {
+      handleMapAction('pan-right');
+      ev.preventDefault();
+    } else if (key === 'arrowup') {
+      handleMapAction('pan-up');
+      ev.preventDefault();
+    } else if (key === 'arrowdown') {
+      handleMapAction('pan-down');
+      ev.preventDefault();
+    } else if (key === 'r') {
+      handleMapAction('reset');
+      ev.preventDefault();
+    }
   });
   els.tabButtons.forEach(btn => btn.addEventListener('click', () => setActivePane(btn.getAttribute('data-pane-tab') || 'explore')));
   els.sequenceLength.addEventListener('change', () => setSequenceLength(els.sequenceLength.value));
@@ -3579,12 +4444,15 @@
   });
   if (els.mapEffectsEnabled) els.mapEffectsEnabled.addEventListener('change', () => {
     setAppSetting('map_fx', Boolean(els.mapEffectsEnabled.checked));
-    if (!els.mapEffectsEnabled.checked && els.mapEffects) {
-      const ctx = els.mapEffects.getContext('2d');
-      if (ctx) ctx.clearRect(0, 0, els.mapEffects.width, els.mapEffects.height);
-      mapTrailSegments = [];
-    }
+    if (!els.mapEffectsEnabled.checked) mapTrailSegments = [];
     renderAll();
+  });
+  if (els.showScoreValues) els.showScoreValues.addEventListener('change', () => {
+    setAppSetting('show_score_values', Boolean(els.showScoreValues.checked));
+    safeUi('recommendations render', renderRecommendations);
+    if (els.settingsPopover && !els.settingsPopover.classList.contains('hidden')) {
+      safeUi('settings render', renderSettingsPanel);
+    }
   });
   if (els.latentLinksPerTrack) els.latentLinksPerTrack.addEventListener('input', () => {
     setAppSetting('latent_links_per_track', clamp(Math.round(Number(els.latentLinksPerTrack.value)), 0, 8));
@@ -3592,7 +4460,7 @@
     renderAll();
   });
   if (els.recommendedLinksHighlight) els.recommendedLinksHighlight.addEventListener('input', () => {
-    setAppSetting('recommended_links_highlight', clamp(Math.round(Number(els.recommendedLinksHighlight.value)), 1, 15));
+    setAppSetting('recommended_links_highlight', clamp(Math.round(Number(els.recommendedLinksHighlight.value)), 1, 25));
     updateMapLinkSettingLabels();
     renderAll();
   });
@@ -3614,7 +4482,7 @@
     els.simplex.addEventListener('pointercancel', () => { draggingSimplex = false; });
   }
   if (els.setOutgoing) els.setOutgoing.addEventListener('click', () => { if (selectedIdx !== null) setTransitionEndpoint('out', selectedIdx); });
-  if (els.setIncoming) els.setIncoming.addEventListener('click', () => { if (selectedIdx !== null) setTransitionEndpoint('in', selectedIdx); });
+  if (els.setIncoming) els.setIncoming.addEventListener('click', () => { if (selectedIdx !== null) setCandidateTrack(selectedIdx, { autoplay: false, showPopover: true }); });
   els.appendSelected.addEventListener('click', () => { if (selectedIdx !== null) appendTrack(selectedIdx); });
   if (els.clearTransition) els.clearTransition.addEventListener('click', clearTransitionPair);
   els.clearLast.addEventListener('click', () => {
@@ -3720,13 +4588,21 @@
       applyMasterVolume();
     });
   }
+  if (els.globalVolumeButton) {
+    els.globalVolumeButton.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      masterVolume = masterVolume <= 0.001 ? Math.max(0.1, lastNonzeroVolume || 0.85) : 0;
+      applyMasterVolume();
+    });
+  }
   if (els.globalTrack1) els.globalTrack1.addEventListener('click', () => {
     const record = currentAudioRecord();
     if (record) setTransitionEndpoint('out', Number(record.idx), { toggle: false });
   });
   if (els.globalTrack2) els.globalTrack2.addEventListener('click', () => {
     const record = currentAudioRecord();
-    if (record) setTransitionEndpoint('in', Number(record.idx), { toggle: false });
+    if (record) setCandidateTrack(Number(record.idx), { autoplay: false, showPopover: true });
   });
   document.body.addEventListener('pointerdown', ev => {
     const wave = closestEl(ev.target, '[data-library-waveform-idx]');
@@ -3751,10 +4627,40 @@
   document.body.addEventListener('pointercancel', () => {
     rowWaveformPointerIdx = null;
   });
-  window.addEventListener('resize', () => setTimeout(() => safeUi('transition editor draw', drawTransitionEditor), 30));
+  document.body.addEventListener('dragstart', ev => {
+    const slotValue = closestAttr(ev.target, 'data-sequence-drag-slot');
+    if (slotValue === null) return;
+    const slot = Number(slotValue);
+    if (!Number.isFinite(slot) || slot < 0 || slot >= sequence.length) return;
+    sequenceDragSlot = slot;
+    if (ev.dataTransfer) {
+      ev.dataTransfer.effectAllowed = 'move';
+      ev.dataTransfer.setData('text/plain', String(slot));
+    }
+    const row = closestEl(ev.target, '[data-sequence-drop-slot]');
+    if (row) row.classList.add('drag-source');
+  });
+  document.body.addEventListener('dragover', ev => {
+    const dropValue = closestAttr(ev.target, 'data-sequence-drop-slot');
+    if (dropValue === null || sequenceDragSlot === null) return;
+    ev.preventDefault();
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+  });
+  document.body.addEventListener('drop', ev => {
+    const dropValue = closestAttr(ev.target, 'data-sequence-drop-slot');
+    if (dropValue === null || sequenceDragSlot === null) return;
+    ev.preventDefault();
+    moveSequenceSlot(sequenceDragSlot, Number(dropValue));
+  });
+  document.body.addEventListener('dragend', () => {
+    if (sequenceDragSlot === null) return;
+    sequenceDragSlot = null;
+    document.querySelectorAll('.sequence-list .drag-source').forEach(row => row.classList.remove('drag-source'));
+  });
   window.addEventListener('resize', () => setTimeout(() => safeUi('main waveform draw', drawMainWaveform), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('library waveform draw', drawLibraryWaveforms), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('transition editor draw', drawTransitionEditor), 30));
+  window.addEventListener('resize', () => setTimeout(() => safeUi('mini map draw', drawMiniMap), 30));
 
   document.body.addEventListener('click', ev => {
     const appendIdx = closestAttr(ev.target, 'data-append-idx');
@@ -3771,6 +4677,23 @@
     const librarySortKey = closestAttr(ev.target, 'data-library-sort');
     const previewAction = closestAttr(ev.target, 'data-preview-action');
     const transitionTrackPlay = closestAttr(ev.target, 'data-transition-track-play');
+    const mapAction = closestAttr(ev.target, 'data-map-action');
+    const pinRecIdx = closestAttr(ev.target, 'data-pin-rec-idx');
+    if (mapAction !== null) {
+      handleMapAction(mapAction);
+      ev.preventDefault();
+      return;
+    }
+    if (pinRecIdx !== null) {
+      const idx = Number(pinRecIdx);
+      if (pinnedRecommendationIdxs.has(idx)) pinnedRecommendationIdxs.delete(idx);
+      else pinnedRecommendationIdxs.add(idx);
+      safeUi('recommendations render', renderRecommendations);
+      safeUi('map overlays', updatePacmapOverlays);
+      safeUi('map effects', ensureMapEffectsLoop);
+      ev.preventDefault();
+      return;
+    }
     if (librarySortKey !== null) {
       if (librarySort !== librarySortKey) {
         librarySort = librarySortKey;
@@ -3790,7 +4713,7 @@
     if (playIdx !== null) toggleTrackPreview(Number(playIdx), { mode: playMode });
     if (libraryCurrent !== null) setCurrentTrack(Number(libraryCurrent));
     if (libraryOutgoing !== null) setTransitionEndpoint('out', Number(libraryOutgoing), { toggle: false });
-    if (libraryIncoming !== null) setTransitionEndpoint('in', Number(libraryIncoming), { toggle: false });
+    if (libraryIncoming !== null) setCandidateTrack(Number(libraryIncoming), { autoplay: false, showPopover: true });
     if (libraryPlace !== null) appendTrack(Number(libraryPlace));
     if (previewAction === 'swap') swapTransitionPair();
     if (previewAction === 'clear') clearTransitionPair();
@@ -3813,7 +4736,7 @@
     if (slotValue === null) return;
     const slot = Number(slotValue);
     const val = Number(ev.target.value);
-    if (Number.isFinite(val)) targetValues[slot] = clamp(val, 1, 9);
+    if (Number.isFinite(val)) targetValues[slot] = Math.round(clamp(val, 1, 9) * 10) / 10;
     else targetValues[slot] = null;
     selectedSlot = Number.isFinite(slot) ? slot : selectedSlot;
     renderAll();
@@ -3847,6 +4770,13 @@
     document.addEventListener('mousemove', updateEnergyDrag);
     document.addEventListener('mouseup', endEnergyDrag);
   }
+  if (els.mapMiniMap) {
+    els.mapMiniMap.addEventListener('pointerdown', ev => {
+      recenterMapFromMiniMap(ev);
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
+  }
 
   if (plot && plot.on) {
     plot.on('plotly_click', ev => {
@@ -3871,6 +4801,11 @@
       if (Number.isFinite(idx) && byIdx.has(idx)) showSongHover(byIdx.get(idx), ev.event);
     });
     plot.on('plotly_unhover', hideSongHover);
+    plot.on('plotly_relayout', () => {
+      safeUi('map overlays after zoom', updatePacmapOverlays);
+      safeUi('map effects after zoom', ensureMapEffectsLoop);
+      safeUi('mini map after zoom', drawMiniMap);
+    });
     plot.on('plotly_doubleclick', () => {
       if ((Date.now() - lastPointDoubleClickMs) < 900) return false;
       if (lastClickedIdx !== null && (Date.now() - lastClickMs) < 720) {
