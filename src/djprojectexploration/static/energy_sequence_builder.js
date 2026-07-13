@@ -10,6 +10,7 @@
     latent_links_per_track: 3,
     recommended_links_highlight: 25,
     point_color: 'genre',
+    map_renderer: 'plotly',
     map_fx: true,
     show_score_values: true,
   }, appSettings.defaults || {});
@@ -40,6 +41,7 @@
   let activePane = 'explore';
   let transitionFromIdx = null;
   let transitionToIdx = null;
+  let webglMap = null;
   const pinnedRecommendationIdxs = new Set();
   let lastClickedIdx = null;
   let lastClickMs = 0;
@@ -78,6 +80,7 @@
   const waveformCache = new Map();
   let waveformPointerActive = false;
   let rowWaveformPointerIdx = null;
+  let diagnosticWaveformPointerIdx = null;
   let audioProgressFrame = null;
   let lastPointDoubleClickMs = 0;
   let lastPointDoubleClickIdx = null;
@@ -101,6 +104,7 @@
     sequenceLength: document.getElementById('sequence-length'),
     energySource: document.getElementById('energy-source'),
     colorMode: document.getElementById('color-mode'),
+    mapRenderer: document.getElementById('map-renderer'),
     mapEffectsEnabled: document.getElementById('map-effects-enabled'),
     showScoreValues: document.getElementById('show-score-values'),
     latentLinksPerTrack: document.getElementById('latent-links-per-track'),
@@ -158,6 +162,7 @@
     transitionDiagnostics: document.getElementById('transition-diagnostics'),
     currentTransitionScore: document.getElementById('current-transition-score'),
     mapEffects: document.getElementById('map-effects-canvas'),
+    webglMap: document.getElementById('webgl-map-canvas'),
     mapMiniMap: document.getElementById('map-mini-map'),
     mapZoomControls: document.getElementById('map-zoom-controls'),
     mapColorLegend: document.getElementById('map-color-legend'),
@@ -261,6 +266,7 @@
       row('Sequence length', sequenceLength),
       row('Energy source', els.energySource ? els.energySource.value : ''),
       row('Point color', appSetting('point_color', 'genre')),
+      row('Map renderer', selectedMapRenderer()),
       row('Map effects', Boolean(appSetting('map_fx', true))),
       row('Latent links per track', appSetting('latent_links_per_track', 3)),
       row('Recommended links highlighted', appSetting('recommended_links_highlight', 25)),
@@ -320,7 +326,7 @@
     if (!els.helpContent) return;
     els.helpContent.innerHTML = '<div class="help-grid">' +
       helpCardHtml('Map navigation', [
-        helpKeyHtml('wheel', 'Zoom the Plotly map under the pointer.'),
+        helpKeyHtml('wheel', 'Zoom the map under the pointer.'),
         helpKeyHtml('drag', 'Pan the map.'),
         helpKeyHtml('+ / i', 'Zoom in.'),
         helpKeyHtml('-', 'Zoom out.'),
@@ -396,6 +402,400 @@
       reportUiError(scope, err);
       return fallback;
     }
+  }
+  function selectedMapRenderer() {
+    const raw = String(appSetting('map_renderer', els.mapRenderer ? els.mapRenderer.value : 'plotly')).toLowerCase();
+    return raw === 'webgl' ? 'webgl' : 'plotly';
+  }
+  function wantsWebglMap() {
+    return selectedMapRenderer() === 'webgl';
+  }
+  function usingWebglMap() {
+    return wantsWebglMap() && webglMap && webglMap.available();
+  }
+  function fallbackToPlotlyMap(reason) {
+    if (reason) reportUiError('webgl map fallback', reason);
+    setAppSetting('map_renderer', 'plotly');
+    if (els.mapRenderer) els.mapRenderer.value = 'plotly';
+    const pane = plotPaneEl();
+    if (pane) pane.classList.remove('map-renderer-webgl');
+    webglMap = null;
+    if (window.Plotly && plot) {
+      setTimeout(() => Plotly.Plots.resize(plot), 20);
+    }
+  }
+  function plotPaneEl() {
+    return els.webglMap ? els.webglMap.closest('.plot-pane') : document.querySelector('.plot-pane');
+  }
+  function cssColorToRgba(value, alpha=1) {
+    const fallback = [0.58, 0.64, 0.72, alpha];
+    const s = String(value || '').trim();
+    if (!s) return fallback;
+    const hex = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+      let h = hex[1];
+      if (h.length === 3) h = h.split('').map(ch => ch + ch).join('');
+      return [
+        parseInt(h.slice(0, 2), 16) / 255,
+        parseInt(h.slice(2, 4), 16) / 255,
+        parseInt(h.slice(4, 6), 16) / 255,
+        alpha,
+      ];
+    }
+    const rgb = s.match(/^rgba?\(([^)]+)\)$/i);
+    if (rgb) {
+      const parts = rgb[1].split(',').map(part => Number(part.trim()));
+      if (parts.length >= 3 && parts.slice(0, 3).every(Number.isFinite)) {
+        return [
+          clamp(parts[0] / 255, 0, 1),
+          clamp(parts[1] / 255, 0, 1),
+          clamp(parts[2] / 255, 0, 1),
+          Number.isFinite(parts[3]) ? clamp(parts[3], 0, 1) : alpha,
+        ];
+      }
+    }
+    return fallback;
+  }
+  function createWebglMapRenderer(canvas) {
+    if (!canvas) return null;
+    const gl = canvas.getContext('webgl', { alpha: true, antialias: true }) || canvas.getContext('experimental-webgl');
+    if (!gl) return null;
+    const vertexSource = [
+      'attribute vec2 a_position;',
+      'attribute vec4 a_color;',
+      'uniform vec4 u_view;',
+      'uniform float u_point_size;',
+      'varying vec4 v_color;',
+      'void main() {',
+      '  float x = ((a_position.x - u_view.x) / max(0.000001, u_view.y - u_view.x)) * 2.0 - 1.0;',
+      '  float y = ((a_position.y - u_view.z) / max(0.000001, u_view.w - u_view.z)) * 2.0 - 1.0;',
+      '  gl_Position = vec4(x, y, 0.0, 1.0);',
+      '  gl_PointSize = u_point_size;',
+      '  v_color = a_color;',
+      '}',
+    ].join('\n');
+    const fragmentSource = [
+      'precision mediump float;',
+      'varying vec4 v_color;',
+      'void main() {',
+      '  vec2 p = gl_PointCoord * 2.0 - 1.0;',
+      '  float d = dot(p, p);',
+      '  if (d > 1.0) discard;',
+      '  float edge = 1.0 - smoothstep(0.72, 1.0, d);',
+      '  gl_FragColor = vec4(v_color.rgb, v_color.a * edge);',
+      '}',
+    ].join('\n');
+    const lineFragmentSource = [
+      'precision mediump float;',
+      'varying vec4 v_color;',
+      'void main() {',
+      '  gl_FragColor = v_color;',
+      '}',
+    ].join('\n');
+    const compileShader = (type, source) => {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const message = gl.getShaderInfoLog(shader) || 'Unknown shader compile error';
+        gl.deleteShader(shader);
+        throw new Error(message);
+      }
+      return shader;
+    };
+    const vertexShader = compileShader(gl.VERTEX_SHADER, vertexSource);
+    const fragmentShader = compileShader(gl.FRAGMENT_SHADER, fragmentSource);
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(program) || 'WebGL program link failed');
+    }
+    const lineFragmentShader = compileShader(gl.FRAGMENT_SHADER, lineFragmentSource);
+    const lineProgram = gl.createProgram();
+    gl.attachShader(lineProgram, vertexShader);
+    gl.attachShader(lineProgram, lineFragmentShader);
+    gl.linkProgram(lineProgram);
+    if (!gl.getProgramParameter(lineProgram, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(lineProgram) || 'WebGL line program link failed');
+    }
+    const positionLoc = gl.getAttribLocation(program, 'a_position');
+    const colorLoc = gl.getAttribLocation(program, 'a_color');
+    const viewLoc = gl.getUniformLocation(program, 'u_view');
+    const pointSizeLoc = gl.getUniformLocation(program, 'u_point_size');
+    const linePositionLoc = gl.getAttribLocation(lineProgram, 'a_position');
+    const lineColorLoc = gl.getAttribLocation(lineProgram, 'a_color');
+    const lineViewLoc = gl.getUniformLocation(lineProgram, 'u_view');
+    const linePointSizeLoc = gl.getUniformLocation(lineProgram, 'u_point_size');
+    const positionBuffer = gl.createBuffer();
+    const colorBuffer = gl.createBuffer();
+    const linePositionBuffer = gl.createBuffer();
+    const lineColorBuffer = gl.createBuffer();
+    let view = null;
+    let drag = null;
+    let movedDuringDrag = false;
+    function normalizedView(next) {
+      let x0 = Number(next && (next.x0 ?? next.minX));
+      let x1 = Number(next && (next.x1 ?? next.maxX));
+      let y0 = Number(next && (next.y0 ?? next.minY));
+      let y1 = Number(next && (next.y1 ?? next.maxY));
+      if (![x0, x1, y0, y1].every(Number.isFinite)) return null;
+      if (Math.abs(x1 - x0) < 1e-9) x1 = x0 + 1;
+      if (Math.abs(y1 - y0) < 1e-9) y1 = y0 + 1;
+      return { x0, x1, y0, y1 };
+    }
+    function fitBounds() {
+      view = normalizedView(mapDataBounds());
+      render();
+    }
+    function resize() {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const width = Math.max(1, Math.floor(Math.max(1, rect.width) * dpr));
+      const height = Math.max(1, Math.floor(Math.max(1, rect.height) * dpr));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      return { width: Math.max(1, rect.width), height: Math.max(1, rect.height), dpr };
+    }
+    function dataToCanvasPoint(pt) {
+      if (!view || !pt) return null;
+      const rect = canvas.getBoundingClientRect();
+      const x = Number(pt[0]);
+      const y = Number(pt[1]);
+      if (![x, y].every(Number.isFinite)) return null;
+      return {
+        x: ((x - view.x0) / Math.max(1e-9, view.x1 - view.x0)) * rect.width,
+        y: (1 - ((y - view.y0) / Math.max(1e-9, view.y1 - view.y0))) * rect.height,
+      };
+    }
+    function screenToData(clientX, clientY) {
+      if (!view) return null;
+      const rect = canvas.getBoundingClientRect();
+      const nx = clamp((Number(clientX) - rect.left) / Math.max(1, rect.width), 0, 1);
+      const ny = clamp((Number(clientY) - rect.top) / Math.max(1, rect.height), 0, 1);
+      return {
+        x: view.x0 + nx * (view.x1 - view.x0),
+        y: view.y1 - ny * (view.y1 - view.y0),
+        nx,
+        ny,
+      };
+    }
+    function hitTest(ev, radius=14) {
+      if (!view || !ev) return null;
+      const rect = canvas.getBoundingClientRect();
+      const x = Number(ev.clientX) - rect.left;
+      const y = Number(ev.clientY) - rect.top;
+      if (![x, y].every(Number.isFinite)) return null;
+      const r2 = radius * radius;
+      let bestIdx = null;
+      let bestD2 = r2;
+      for (const record of records) {
+        const p = dataToCanvasPoint(currentPoint(record.idx));
+        if (!p) continue;
+        const dx = p.x - x;
+        const dy = p.y - y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 <= bestD2) {
+          bestD2 = d2;
+          bestIdx = Number(record.idx);
+        }
+      }
+      return bestIdx;
+    }
+    function setViewRanges(x0, x1, y0, y1) {
+      const next = normalizedView({ x0, x1, y0, y1 });
+      if (!next) return;
+      view = next;
+      render();
+      safeUi('map effects after webgl view change', ensureMapEffectsLoop);
+      safeUi('mini map after webgl view change', drawMiniMap);
+    }
+    function render() {
+      resize();
+      if (!view) view = normalizedView(mapDataBounds());
+      if (!view) return;
+      const mode = normalizePointColorMode(appSetting('point_color', els.colorMode ? els.colorMode.value : 'genre'));
+      const extent = mode === 'genre' ? null : colorScaleExtent(mode);
+      const positions = new Float32Array(records.length * 2);
+      const colors = new Float32Array(records.length * 4);
+      records.forEach((record, i) => {
+        const pt = currentPoint(record.idx);
+        positions[i * 2] = pt ? Number(pt[0]) : 0;
+        positions[i * 2 + 1] = pt ? Number(pt[1]) : 0;
+        const rgba = cssColorToRgba(miniMapMarkerColor(record, mode, extent), pt ? 0.92 : 0);
+        colors.set(rgba, i * 4);
+      });
+      const pairs = strongestConnectionPairs();
+      const linePositions = new Float32Array(pairs.length * 4);
+      const lineColors = new Float32Array(pairs.length * 8);
+      let lineCount = 0;
+      pairs.forEach((pair, i) => {
+        const a = currentPoint(pair.src);
+        const b = currentPoint(pair.dst);
+        if (!a || !b) return;
+        const alpha = 0.05 + (1 - i / Math.max(1, pairs.length)) * 0.085;
+        const offset = lineCount * 4;
+        linePositions[offset] = Number(a[0]);
+        linePositions[offset + 1] = Number(a[1]);
+        linePositions[offset + 2] = Number(b[0]);
+        linePositions[offset + 3] = Number(b[1]);
+        const colorOffset = lineCount * 8;
+        const rgba = [0.9725, 0.9804, 0.9882, alpha];
+        lineColors.set(rgba, colorOffset);
+        lineColors.set(rgba, colorOffset + 4);
+        lineCount += 1;
+      });
+      gl.useProgram(program);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.clearColor(0.066, 0.094, 0.145, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      if (lineCount > 0) {
+        gl.useProgram(lineProgram);
+        gl.bindBuffer(gl.ARRAY_BUFFER, linePositionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, linePositions.subarray(0, lineCount * 4), gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(linePositionLoc);
+        gl.vertexAttribPointer(linePositionLoc, 2, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, lineColorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, lineColors.subarray(0, lineCount * 8), gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(lineColorLoc);
+        gl.vertexAttribPointer(lineColorLoc, 4, gl.FLOAT, false, 0, 0);
+        gl.uniform4f(lineViewLoc, view.x0, view.x1, view.y0, view.y1);
+        gl.uniform1f(linePointSizeLoc, 1);
+        gl.lineWidth(1);
+        gl.drawArrays(gl.LINES, 0, lineCount * 2);
+      }
+      gl.useProgram(program);
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(positionLoc);
+      gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, colors, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(colorLoc);
+      gl.vertexAttribPointer(colorLoc, 4, gl.FLOAT, false, 0, 0);
+      gl.uniform4f(viewLoc, view.x0, view.x1, view.y0, view.y1);
+      gl.uniform1f(pointSizeLoc, 10.5 * (window.devicePixelRatio || 1));
+      gl.drawArrays(gl.POINTS, 0, records.length);
+    }
+    canvas.addEventListener('wheel', ev => {
+      if (!usingWebglMap() || !view) return;
+      const at = screenToData(ev.clientX, ev.clientY);
+      if (!at) return;
+      const factor = ev.deltaY < 0 ? 0.91 : 1.10;
+      const width = Math.abs(view.x1 - view.x0) * factor;
+      const height = Math.abs(view.y1 - view.y0) * factor;
+      const x0 = at.x - at.nx * width;
+      const x1 = x0 + width;
+      const y1 = at.y + at.ny * height;
+      const y0 = y1 - height;
+      setViewRanges(x0, x1, y0, y1);
+      ev.preventDefault();
+    }, { passive: false });
+    canvas.addEventListener('pointerdown', ev => {
+      if (!usingWebglMap() || !view) return;
+      drag = {
+        x: ev.clientX,
+        y: ev.clientY,
+        view: { ...view },
+      };
+      movedDuringDrag = false;
+      try { canvas.setPointerCapture(ev.pointerId); } catch (err) {}
+    });
+    canvas.addEventListener('pointermove', ev => {
+      if (!usingWebglMap()) return;
+      if (drag && (ev.buttons & 1)) {
+        const rect = canvas.getBoundingClientRect();
+        const dx = Number(ev.clientX) - drag.x;
+        const dy = Number(ev.clientY) - drag.y;
+        if (Math.abs(dx) + Math.abs(dy) > 3) movedDuringDrag = true;
+        const width = drag.view.x1 - drag.view.x0;
+        const height = drag.view.y1 - drag.view.y0;
+        setViewRanges(
+          drag.view.x0 - dx / Math.max(1, rect.width) * width,
+          drag.view.x1 - dx / Math.max(1, rect.width) * width,
+          drag.view.y0 + dy / Math.max(1, rect.height) * height,
+          drag.view.y1 + dy / Math.max(1, rect.height) * height,
+        );
+        ev.preventDefault();
+        return;
+      }
+      const idx = hitTest(ev);
+      if (idx !== null && byIdx.has(idx)) showSongHover(byIdx.get(idx), ev);
+      else hideSongHover();
+    });
+    canvas.addEventListener('pointerup', ev => {
+      if (drag) {
+        try { canvas.releasePointerCapture(ev.pointerId); } catch (err) {}
+      }
+      drag = null;
+    });
+    canvas.addEventListener('pointerleave', () => {
+      drag = null;
+      if (usingWebglMap()) hideSongHover();
+    });
+    canvas.addEventListener('click', ev => {
+      if (!usingWebglMap()) return;
+      if (movedDuringDrag || Number(ev.detail || 0) > 1) {
+        movedDuringDrag = false;
+        return;
+      }
+      const idx = hitTest(ev);
+      if (idx !== null) handleMapTrackClick(idx, ev);
+      else handleMapBlankClick(ev);
+    });
+    canvas.addEventListener('dblclick', ev => {
+      if (!usingWebglMap()) return;
+      const idx = hitTest(ev);
+      if (idx !== null) assignTransitionFromDoubleClick(idx);
+      else handlePlotDoubleClick(false);
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
+    return {
+      available: () => true,
+      render,
+      resize: () => { resize(); render(); },
+      fitBounds: () => { fitBounds(); safeUi('mini map after webgl fit', drawMiniMap); },
+      viewRanges: () => view ? { ...view } : null,
+      setViewRanges,
+      dataToCanvasPoint,
+      hitTest,
+    };
+  }
+  function syncMapRenderer({ render=true } = {}) {
+    const mode = selectedMapRenderer();
+    if (els.mapRenderer && els.mapRenderer.value !== mode) els.mapRenderer.value = mode;
+    const pane = plotPaneEl();
+    if (mode === 'webgl') {
+      if (!webglMap) {
+        try {
+          webglMap = createWebglMapRenderer(els.webglMap);
+        } catch (err) {
+          reportUiError('webgl map init', err);
+          webglMap = null;
+        }
+      }
+      if (webglMap && webglMap.available()) {
+        if (pane) pane.classList.add('map-renderer-webgl');
+        try {
+          if (!webglMap.viewRanges()) webglMap.fitBounds();
+          if (render) webglMap.render();
+          return 'webgl';
+        } catch (err) {
+          fallbackToPlotlyMap(err);
+          return 'plotly';
+        }
+      }
+      fallbackToPlotlyMap('WebGL is unavailable in this browser.');
+      return 'plotly';
+    }
+    if (pane) pane.classList.remove('map-renderer-webgl');
+    return 'plotly';
   }
   function durationText(record) {
     if (!record) return '';
@@ -861,7 +1261,10 @@
     Object.keys(els.panes).forEach(key => {
       if (els.panes[key]) els.panes[key].classList.toggle('active', key === activePane);
     });
-    if (activePane === 'explore' && window.Plotly && plot) {
+    if (activePane === 'explore') {
+      setTimeout(() => safeUi('map renderer sync', () => syncMapRenderer()), 20);
+    }
+    if (activePane === 'explore' && selectedMapRenderer() === 'plotly' && window.Plotly && plot) {
       setTimeout(() => Plotly.Plots.resize(plot), 30);
       setTimeout(ensureMapEffectsLoop, 40);
     }
@@ -1018,6 +1421,7 @@
   }
   function updateRowScrubbers() {
     drawLibraryWaveforms();
+    drawDiagnosticWaveforms();
     updatePlayerTimeLabels();
     updateLibraryPlaybackState();
   }
@@ -1402,7 +1806,7 @@
     drawWaveformEnvelope(ctx, mid, width, height, 'rgba(94,234,212,.32)', 0.74, 0.9);
     ctx.restore();
   }
-  async function ensureDetailedWaveform(record, { redrawMain=false, redrawTransition=false } = {}) {
+  async function ensureDetailedWaveform(record, { redrawMain=false, redrawTransition=false, redrawDiagnostics=false } = {}) {
     record = canonicalRecord(record);
     if (!record || !window.fetch) return null;
     const payload = waveformPayload(record);
@@ -1430,6 +1834,7 @@
           if (redrawMain) drawMainWaveform();
         }
         if (redrawTransition) drawTransitionEditor();
+        if (redrawDiagnostics) drawDiagnosticWaveforms();
       });
     return payload.promise;
   }
@@ -1579,6 +1984,94 @@
       if (record) drawRowWaveform(canvas, record);
     });
   }
+  function drawDiagnosticWaveform(canvas, record) {
+    record = canonicalRecord(record);
+    if (!canvas || !record) return;
+    const payload = waveformPayload(record);
+    const url = waveformDetailUri(record);
+    if (url && !payload.loaded && !payload.loading) {
+      ensureDetailedWaveform(record, { redrawDiagnostics: true });
+    }
+    const rect = canvas.getBoundingClientRect();
+    const widthCss = Math.max(1, rect.width || canvas.clientWidth || 480);
+    const heightCss = Math.max(1, rect.height || 86);
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.floor(widthCss * dpr);
+    const height = Math.floor(heightCss * dpr);
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, widthCss, heightCss);
+    ctx.fillStyle = '#0b1020';
+    ctx.fillRect(0, 0, widthCss, heightCss);
+    const duration = audioDuration(record);
+    const current = previewAudioIdx === Number(record.idx) && els.audio
+      ? Number(els.audio.currentTime || 0)
+      : rowScrubValue(record);
+    const progress = Number.isFinite(duration) && duration > 0 ? clamp(current / duration, 0, 1) : 0;
+    drawDetailedWaveform(ctx, payload, widthCss, heightCss, progress * widthCss);
+    const markerTime = previewStart(record);
+    if (Number.isFinite(duration) && duration > 0 && markerTime > 0) {
+      const x = clamp(markerTime / duration, 0, 1) * widthCss;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(251, 191, 36, .82)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x, 5);
+      ctx.lineTo(x, heightCss - 5);
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.strokeStyle = previewAudioIdx === Number(record.idx) && previewAudioPlaying
+      ? 'rgba(248,250,252,.96)'
+      : 'rgba(203,213,225,.72)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(progress * widthCss, 4);
+    ctx.lineTo(progress * widthCss, heightCss - 4);
+    ctx.stroke();
+    if (payload.loading || payload.error) {
+      ctx.fillStyle = 'rgba(15, 23, 42, .76)';
+      ctx.fillRect(0, 0, widthCss, heightCss);
+      ctx.fillStyle = payload.error ? '#fbbf24' : '#cbd5e1';
+      ctx.font = '12px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      ctx.fillText(payload.error || 'Loading waveform...', 12, Math.round(heightCss / 2) + 4);
+    }
+  }
+  function drawDiagnosticWaveforms() {
+    document.querySelectorAll('[data-diagnostic-waveform-idx]').forEach(canvas => {
+      const idx = Number(canvas.getAttribute('data-diagnostic-waveform-idx'));
+      const record = byIdx.get(idx);
+      if (record) drawDiagnosticWaveform(canvas, record);
+    });
+  }
+  function seekDiagnosticWaveformFromEvent(ev, idx, { play=false } = {}) {
+    idx = Number(idx);
+    const record = byIdx.get(idx);
+    if (!record) return;
+    const duration = audioDuration(record);
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    const canvas = ev.currentTarget && ev.currentTarget.getAttribute && ev.currentTarget.getAttribute('data-diagnostic-waveform-idx')
+      ? ev.currentTarget
+      : document.querySelector('[data-diagnostic-waveform-idx="' + idx + '"]');
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = clamp((ev.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+    const target = x * duration;
+    rowScrubPositions.set(idx, target);
+    if (play) {
+      playRecordAt(record, target, 'diagnostics');
+    } else {
+      if (previewAudioIdx === idx && els.audio) seekSharedAudio(target);
+      syncAudioUi();
+    }
+    drawDiagnosticWaveforms();
+  }
   function seekLibraryWaveformFromEvent(ev, idx, { play=false } = {}) {
     idx = Number(idx);
     const record = byIdx.get(idx);
@@ -1712,10 +2205,27 @@
     mode = normalizePointColorMode(mode);
     if (!els.mapColorLegend) return;
     if (mode === 'genre') {
+      if (usingWebglMap()) {
+        const genres = Array.from(new Set(records.map(record => String(record.genre || record.raw_genre || 'Unknown'))))
+          .sort((a, b) => a.localeCompare(b));
+        els.mapColorLegend.classList.add('genre-legend');
+        els.mapColorLegend.classList.remove('hidden');
+        els.mapColorLegend.innerHTML =
+          '<span class="map-color-legend-title">Genre</span>' +
+          '<span class="map-genre-legend">' +
+          genres.map(genre =>
+            '<span class="map-genre-chip"><i style="background:' + esc(genreMarkerColor(genre)) + '"></i>' +
+            esc(titleCaseGenre(genre)) + '</span>'
+          ).join('') +
+          '</span>';
+        return;
+      }
+      els.mapColorLegend.classList.remove('genre-legend');
       els.mapColorLegend.classList.add('hidden');
       els.mapColorLegend.innerHTML = '';
       return;
     }
+    els.mapColorLegend.classList.remove('genre-legend');
     const min = Number(extent && extent.min);
     const max = Number(extent && extent.max);
     const mid = (min + max) / 2;
@@ -1783,12 +2293,19 @@
     renderAll();
   }
   function applyPointColorMode() {
-    if (!window.Plotly || !plot || !baseTraceIndices.length) return;
     const mode = normalizePointColorMode(appSetting('point_color', els.colorMode ? els.colorMode.value : 'genre'));
     if (els.colorMode && els.colorMode.value !== mode && Array.from(els.colorMode.options).some(opt => opt.value === mode)) {
       els.colorMode.value = mode;
       setAppSetting('point_color', mode);
     }
+    if (usingWebglMap()) {
+      const extent = mode === 'genre' ? null : colorScaleExtent(mode);
+      renderMapColorLegend(mode, extent);
+      if (webglMap) webglMap.render();
+      safeUi('mini map draw', drawMiniMap);
+      return;
+    }
+    if (!window.Plotly || !plot || !baseTraceIndices.length) return;
 
     if (mode === 'genre') {
       renderMapColorLegend(mode, null);
@@ -1860,6 +2377,7 @@
   }
   function applyAppSettingsToControls() {
     if (els.colorMode) els.colorMode.value = normalizePointColorMode(appSetting('point_color', 'genre'));
+    if (els.mapRenderer) els.mapRenderer.value = selectedMapRenderer();
     if (els.mapEffectsEnabled) els.mapEffectsEnabled.checked = Boolean(appSetting('map_fx', true));
     if (els.showScoreValues) els.showScoreValues.checked = showScoreValues();
     if (els.latentLinksPerTrack) els.latentLinksPerTrack.value = String(latentLinksPerTrack());
@@ -1925,6 +2443,7 @@
     ensureMapEffectsLoop();
   }
   function plotPointPx(pt) {
+    if (usingWebglMap() && webglMap) return webglMap.dataToCanvasPoint(pt);
     if (!plot || !els.mapEffects || !plot._fullLayout || !pt) return null;
     const xa = plot._fullLayout.xaxis;
     const ya = plot._fullLayout.yaxis;
@@ -1972,6 +2491,7 @@
     return { minX: minX - padX, maxX: maxX + padX, minY: minY - padY, maxY: maxY + padY };
   }
   function mapViewRanges() {
+    if (usingWebglMap() && webglMap) return webglMap.viewRanges();
     if (!plot || !plot._fullLayout || !plot._fullLayout.xaxis || !plot._fullLayout.yaxis) return null;
     const xr = plot._fullLayout.xaxis.range;
     const yr = plot._fullLayout.yaxis.range;
@@ -1981,6 +2501,11 @@
     return { x0, x1, y0, y1 };
   }
   function relayoutMapRanges(x0, x1, y0, y1) {
+    if (usingWebglMap() && webglMap) {
+      webglMap.setViewRanges(x0, x1, y0, y1);
+      safeUi('map overlays after webgl map control', updatePacmapOverlays);
+      return;
+    }
     if (!window.Plotly || !plot) return;
     Plotly.relayout(plot, {
       'xaxis.range': [x0, x1],
@@ -2010,6 +2535,13 @@
     relayoutMapRanges(view.x0 + dx, view.x1 + dx, view.y0 + dy, view.y1 + dy);
   }
   function resetMapView() {
+    if (usingWebglMap() && webglMap) {
+      webglMap.fitBounds();
+      safeUi('map overlays after webgl reset', updatePacmapOverlays);
+      safeUi('map effects after webgl reset', ensureMapEffectsLoop);
+      safeUi('mini map after webgl reset', drawMiniMap);
+      return;
+    }
     if (!window.Plotly || !plot) return;
     Plotly.relayout(plot, { 'xaxis.autorange': true, 'yaxis.autorange': true }).then(() => {
       safeUi('map overlays after reset', updatePacmapOverlays);
@@ -2018,8 +2550,8 @@
     });
   }
   function handleMapAction(action) {
-    if (action === 'zoom-in') zoomMap(0.78);
-    else if (action === 'zoom-out') zoomMap(1.28);
+    if (action === 'zoom-in') zoomMap(0.88);
+    else if (action === 'zoom-out') zoomMap(1.14);
     else if (action === 'pan-left') panMap(-0.18, 0);
     else if (action === 'pan-right') panMap(0.18, 0);
     else if (action === 'pan-up') panMap(0, 0.18);
@@ -2250,10 +2782,12 @@
       const a = plotPointPx(currentPoint(pair.src));
       const b = plotPointPx(currentPoint(pair.dst));
       if (!a || !b) return;
-      const alpha = 0.035 + (1 - i / Math.max(1, pairs.length)) * 0.055;
+      const alpha = usingWebglMap()
+        ? 0.07 + (1 - i / Math.max(1, pairs.length)) * 0.105
+        : 0.035 + (1 - i / Math.max(1, pairs.length)) * 0.055;
       ctx.save();
       ctx.strokeStyle = 'rgba(248, 250, 252, ' + alpha.toFixed(3) + ')';
-      ctx.lineWidth = 0.65;
+      ctx.lineWidth = usingWebglMap() ? 0.9 : 0.65;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
@@ -2288,10 +2822,59 @@
     ctx.stroke();
     ctx.restore();
   }
+  function drawStaticMapBadge(ctx, p, label, color, radius=12) {
+    if (!p) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(15, 23, 42, .82)';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.8;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    if (label) {
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = '800 10px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(label), p.x, p.y + 0.4);
+    }
+    ctx.restore();
+  }
+  function drawWebglStaticOverlays(ctx) {
+    if (!usingWebglMap()) return;
+    const hoverMatchesSelection = hoveredIdx !== null && (
+      hoveredIdx === selectedIdx ||
+      hoveredIdx === transitionFromIdx ||
+      hoveredIdx === transitionToIdx
+    );
+    if (hoveredIdx !== null && !hoverMatchesSelection) {
+      drawStaticMapBadge(ctx, plotPointPx(currentPoint(hoveredIdx)), '', '#f8fafc', 13);
+    }
+    if (selectedIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(selectedIdx)), '', '#f8fafc', 13);
+    if (transitionFromIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(transitionFromIdx)), '1', '#34d399', 15);
+    if (transitionToIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(transitionToIdx)), '2', '#fbbf24', 15);
+
+    sequence.forEach((idx, slot) => {
+      if (idx === null) return;
+      drawStaticMapBadge(ctx, plotPointPx(currentPoint(idx)), String(slot + 1), '#2dd4bf', 10);
+    });
+
+    const recContext = recommendationContext();
+    const rows = preparedRecommendationRows(recommendedLinksHighlight()).rows;
+    if (recContext.sourceIdx !== null) {
+      rows.forEach((row, i) => {
+        drawStaticMapBadge(ctx, plotPointPx(currentPoint(row.idx)), String(i + 1), '#fbbf24', 9);
+      });
+    }
+  }
   function drawMapEffectsFrame(time) {
     mapEffectsFrame = null;
     const canvas = els.mapEffects;
-    if (!canvas || !plot) return;
+    if (!canvas || (!usingWebglMap() && !plot)) return;
     const animated = mapFxEnabled();
     const rect = canvas.getBoundingClientRect();
     if (rect.width < 20 || rect.height < 20) {
@@ -2308,7 +2891,7 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
     if (animated) drawBackgroundField(ctx, rect.width, rect.height, time);
-    drawStrongestConnections(ctx);
+    if (!usingWebglMap()) drawStrongestConnections(ctx);
     if (animated) drawSequenceTransitionEffects(ctx, time);
     else drawSequencePathStatic(ctx);
 
@@ -2364,6 +2947,7 @@
       drawPulseRing(ctx, fromP, 16, '#34d399', time / 470, '');
       drawPulseRing(ctx, toP, 16, '#fbbf24', time / 520 + 1.2, '');
     }
+    drawWebglStaticOverlays(ctx);
 
     if (animated && activePane === 'explore') {
       ensureMapEffectsLoop();
@@ -2374,6 +2958,10 @@
     mapEffectsFrame = window.requestAnimationFrame(drawMapEffectsFrame);
   }
   function updatePointCoordinates() {
+    if (usingWebglMap() && webglMap) {
+      webglMap.render();
+      return;
+    }
     if (!window.Plotly || !plot || !baseTraceIndices.length) return;
     const byGenre = new Map();
     for (const r of records) {
@@ -2462,20 +3050,23 @@
   function preparedRecommendationRows(limit=25) {
     const allRows = rankedRecommendations().map((row, idx) => ({ ...row, globalRank: idx + 1 }));
     const query = recFilters.query || '';
-    let rows = allRows.filter(row => recommendationMatchesQuery(row, query));
+    const matchingRows = allRows.filter(row => recommendationMatchesQuery(row, query));
+    let rows = matchingRows;
+    let pinnedOutsideQueryCount = 0;
     if (pinnedRecommendationIdxs.size) {
-      const pinnedRows = [];
-      const otherRows = [];
-      rows.forEach(row => {
-        if (pinnedRecommendationIdxs.has(Number(row.idx))) pinnedRows.push({ ...row, pinned: true });
-        else otherRows.push(row);
-      });
+      const pinnedRows = allRows
+        .filter(row => pinnedRecommendationIdxs.has(Number(row.idx)))
+        .map(row => ({ ...row, pinned: true, pinnedOutsideQuery: !recommendationMatchesQuery(row, query) }));
+      pinnedOutsideQueryCount = pinnedRows.filter(row => row.pinnedOutsideQuery).length;
+      const pinnedSet = new Set(pinnedRows.map(row => Number(row.idx)));
+      const otherRows = matchingRows.filter(row => !pinnedSet.has(Number(row.idx)));
       rows = pinnedRows.concat(otherRows);
     }
     return {
       allRows,
       rows: rows.slice(0, limit),
-      matchedCount: rows.length,
+      matchedCount: matchingRows.length,
+      pinnedOutsideQueryCount,
       query: String(query || '').trim(),
     };
   }
@@ -2581,6 +3172,28 @@
     }
     if (transitionFromIdx !== null || transitionToIdx !== null) clearTransitionPair();
     return false;
+  }
+  function handleMapTrackClick(idx, nativeEvent=null) {
+    idx = Number(idx);
+    if (!Number.isFinite(idx) || !byIdx.has(idx)) return;
+    const now = Date.now();
+    lastPlotPointClickMs = now;
+    const nativeDetail = Number(nativeEvent && nativeEvent.detail) || 0;
+    const isDouble = nativeDetail >= 2 || (lastClickedIdx === idx && (now - lastClickMs) < 520);
+    lastClickedIdx = idx;
+    lastClickMs = now;
+    selectTrack(idx);
+    if (isDouble) assignTransitionFromDoubleClick(idx);
+  }
+  function handleMapBlankClick() {
+    const clearRequestTime = Date.now();
+    const selectedAtClick = selectedIdx;
+    window.setTimeout(() => {
+      if (lastPlotPointClickMs >= clearRequestTime - 40) return;
+      if (selectedIdx !== selectedAtClick) return;
+      if (selectedIdx === null) return;
+      clearCurrentTrackSelection();
+    }, 650);
   }
   function swapTransitionPair() {
     const oldFrom = transitionFromIdx;
@@ -2801,6 +3414,11 @@
     return rows;
   }
   function updatePacmapOverlays() {
+    if (usingWebglMap()) {
+      if (webglMap) webglMap.render();
+      safeUi('webgl static overlays', ensureMapEffectsLoop);
+      return;
+    }
     const hoverMatchesSelection = hoveredIdx !== null && (
       hoveredIdx === selectedIdx ||
       hoveredIdx === transitionFromIdx ||
@@ -3060,6 +3678,116 @@
         '</div>';
     }).join('') + '</div>';
   }
+  function flattenNumericValues(value, out=[]) {
+    if (Array.isArray(value)) {
+      value.forEach(item => flattenNumericValues(item, out));
+      return out;
+    }
+    const n = Number(value);
+    if (Number.isFinite(n)) out.push(n);
+    return out;
+  }
+  function heatmapExtent(...values) {
+    const nums = [];
+    values.forEach(value => flattenNumericValues(value, nums));
+    if (!nums.length) return { min: 0, max: 1 };
+    let min = Math.min(...nums);
+    let max = Math.max(...nums);
+    if (Math.abs(max - min) < 1e-9) {
+      min -= 0.5;
+      max += 0.5;
+    }
+    return { min, max };
+  }
+  function heatmapColor(value, extent) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '#1f2937';
+    const t = (n - Number(extent.min)) / Math.max(1e-9, Number(extent.max) - Number(extent.min));
+    return segmentedColor([
+      [0, '#000004'],
+      [0.18, '#3b0f70'],
+      [0.42, '#8c2981'],
+      [0.66, '#de4968'],
+      [0.84, '#fe9f6d'],
+      [1, '#fcfdbf'],
+    ], t);
+  }
+  const PITCH_CLASS_LABELS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const GROOVE_BAND_LABELS = ['Low', 'Mid', 'High'];
+  function taggedKeyText(record) {
+    const key = String((record && record.key) || '').trim();
+    return key && key.toLowerCase() !== 'nan' ? key : 'n/a';
+  }
+  function diagnosticTrackHeaderHtml(record, role) {
+    return '<div class="diagnostic-embedding-track">' +
+      '<div class="diagnostic-embedding-title"><b>' + esc(role) + ': ' + esc(record.title || 'Untitled') + '</b>' +
+      '<span>' + esc(record.artists || record.raw_genre || '') + ' / Key ' + esc(taggedKeyText(record)) + '</span></div>' +
+      '</div>';
+  }
+  function diagnosticChromaHtml(record, extent) {
+    const values = Array.isArray(record && record.diagnostic_chroma) ? record.diagnostic_chroma : [];
+    if (!values.length) return '<div class="muted">No chroma embedding available.</div>';
+    const cells = Array.from({ length: 12 }, (_, i) => {
+      const value = Number(values[i]);
+      const label = Number.isFinite(value) ? fmt(value, 3) : 'n/a';
+      return '<span class="diagnostic-cell" title="' + esc(PITCH_CLASS_LABELS[i]) + ': ' + esc(label) + '" style="background:' + heatmapColor(value, extent) + '"></span>';
+    }).join('');
+    const pitchLabels = PITCH_CLASS_LABELS.map(label => '<span>' + esc(label) + '</span>').join('');
+    return '<div class="diagnostic-embedding-block">' +
+      '<div class="diagnostic-embedding-label"><span>Chroma</span><span>Tagged key: ' + esc(taggedKeyText(record)) + '</span></div>' +
+      '<div class="diagnostic-cell-row">' + cells + '</div>' +
+      '<div class="diagnostic-pitch-labels">' + pitchLabels + '</div>' +
+      '</div>';
+  }
+  function diagnosticGrooveHtml(record, extent) {
+    const rows = Array.isArray(record && record.diagnostic_groove) ? record.diagnostic_groove : [];
+    if (!rows.length) return '<div class="muted">No groove embedding available.</div>';
+    const beatCount = Math.max(1, rows.length || 16);
+    const cells = ['<span class="diagnostic-groove-corner"></span>'];
+    for (let beat = 0; beat < beatCount; beat += 1) {
+      cells.push('<span class="diagnostic-groove-beat">' + (beat + 1) + '</span>');
+    }
+    for (let band = 0; band < 3; band += 1) {
+      cells.push('<span class="diagnostic-groove-band">' + esc(GROOVE_BAND_LABELS[band] || ('B' + (band + 1))) + '</span>');
+      for (let beat = 0; beat < beatCount; beat += 1) {
+        const row = Array.isArray(rows[beat]) ? rows[beat] : [];
+        const value = Number(row[band]);
+        const label = Number.isFinite(value) ? fmt(value, 3) : 'n/a';
+        cells.push('<span class="diagnostic-cell" title="Beat ' + (beat + 1) + ', ' + esc(GROOVE_BAND_LABELS[band]) + ': ' + esc(label) + '" style="background:' + heatmapColor(value, extent) + '"></span>');
+      }
+    }
+    return '<div class="diagnostic-embedding-block">' +
+      '<div class="diagnostic-embedding-label"><span>Groove</span><span>' + beatCount + ' beats x 3 bands</span></div>' +
+      '<div class="diagnostic-groove-grid" style="grid-template-columns:32px repeat(' + beatCount + ', minmax(0, 1fr))">' + cells.join('') + '</div>' +
+      '</div>';
+  }
+  function diagnosticEmbeddingComparisonHtml(from, to) {
+    const extents = {
+      chroma: heatmapExtent(from && from.diagnostic_chroma, to && to.diagnostic_chroma),
+      groove: heatmapExtent(from && from.diagnostic_groove, to && to.diagnostic_groove),
+    };
+    return '<div class="diagnostic-embedding-compare">' +
+      diagnosticTrackHeaderHtml(from, 'Track 1') +
+      diagnosticTrackHeaderHtml(to, 'Track 2') +
+      '<div class="diagnostic-embedding-panel">' + diagnosticChromaHtml(from, extents.chroma) + '</div>' +
+      '<div class="diagnostic-embedding-panel">' + diagnosticChromaHtml(to, extents.chroma) + '</div>' +
+      '<div class="diagnostic-embedding-panel">' + diagnosticGrooveHtml(from, extents.groove) + '</div>' +
+      '<div class="diagnostic-embedding-panel">' + diagnosticGrooveHtml(to, extents.groove) + '</div>' +
+      '</div>';
+  }
+  function diagnosticWaveformCardHtml(record, role) {
+    const idx = Number(record && record.idx);
+    return '<div class="diagnostic-waveform-card">' +
+      '<div class="diagnostic-waveform-head"><b>' + esc(role) + ': ' + esc(record.title || 'Untitled') + '</b><span>' + esc(durationText(record)) + '</span></div>' +
+      '<canvas class="diagnostic-waveform-canvas" data-diagnostic-waveform-idx="' + idx + '" height="96" aria-label="' + esc(role) + ' full waveform"></canvas>' +
+      '</div>';
+  }
+  function diagnosticWaveformComparisonHtml(from, to) {
+    return '<div class="diagnostic-waveform-grid">' +
+      diagnosticWaveformCardHtml(from, 'Track 1') +
+      diagnosticWaveformCardHtml(to, 'Track 2') +
+      '</div>';
+  }
   function scoreMetricsHtml(score) {
     const rows = [
       ['Final', score && score.finalScore, 4],
@@ -3212,9 +3940,13 @@
       const score = scoreTransition(transitionFromIdx, transitionToIdx, slot);
       html += '<section class="diagnostic-card"><h3>Groove and harmonic comparison</h3>' +
         '<div class="diagnostic-subhead">' + esc(from.title) + ' -&gt; ' + esc(to.title) + '</div>' +
-        featureBarsHtml(score, ['groove', 'harmonic']) +
+        diagnosticEmbeddingComparisonHtml(from, to) +
         '</section>';
       html += '<section class="diagnostic-card"><h3>Raw transition metrics</h3>' + scoreMetricsHtml(score) + '</section>';
+      html += '<section class="diagnostic-card wide"><h3>Full track waveforms</h3>' +
+        '<div class="diagnostic-subhead">Click or drag either waveform to play and scrub the full track.</div>' +
+        diagnosticWaveformComparisonHtml(from, to) +
+        '</section>';
     } else {
       html += '<section class="diagnostic-card"><h3>Focused transition</h3><div class="muted">Set Track 1 and Track 2 to inspect a specific transition. The neighbor panels below use the current recommendation source when no transition is selected.</div></section>';
     }
@@ -3223,6 +3955,7 @@
     html += '</div>';
     els.transitionDiagnostics.innerHTML = html;
     updatePlayButtons();
+    drawDiagnosticWaveforms();
   }
   function valueRange(rows, getter) {
     const vals = rows.map(getter).map(Number).filter(Number.isFinite);
@@ -3239,16 +3972,20 @@
     return clamp(value, 0, 1);
   }
   function recommendationMetricCell(value, cls, strength, digits=2, label='') {
+    return '<td class="num recommendation-score-cell' + (showScoreValues() ? '' : ' bars-only') + '">' +
+      scoreMeterHtml(value, cls, strength, digits, label) +
+      '</td>';
+  }
+  function scoreMeterHtml(value, cls, strength, digits=2, label='') {
     const numeric = Number(value);
     const finite = Number.isFinite(numeric);
     const s = Number(strength);
     const pct = finite && Number.isFinite(s) ? clamp(s, 0, 1) * 100 : 0;
     const title = label ? label + ': ' + (finite ? fmt(numeric, digits) : 'n/a') : '';
-    return '<td class="num recommendation-score-cell' + (showScoreValues() ? '' : ' bars-only') + '">' +
-      '<div class="score-meter ' + esc(cls) + (finite ? '' : ' empty') + (showScoreValues() ? '' : ' bars-only') + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' +
+    return '<div class="score-meter ' + esc(cls) + (finite ? '' : ' empty') + (showScoreValues() ? '' : ' bars-only') + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' +
       '<span class="score-meter-value">' + (finite ? fmt(numeric, digits) : 'n/a') + '</span>' +
       '<span class="score-meter-track"><i style="width:' + pct.toFixed(1) + '%"></i></span>' +
-      '</div></td>';
+      '</div>';
   }
   function renderRecommendations() {
     const restoreQueryFocus = document.activeElement
@@ -3272,7 +4009,8 @@
       esc(recommendationContextLabel(ctx)) +
       ' for slot <b>' + (slot + 1) + '</b> (' + actionLabel.toLowerCase() + '). ' +
       (prepared.query
-        ? 'Showing <b>' + prepared.matchedCount + '</b> matches from <b>' + prepared.allRows.length + '</b> scored candidates.'
+        ? 'Showing <b>' + prepared.matchedCount + '</b> matches from <b>' + prepared.allRows.length + '</b> scored candidates' +
+          (prepared.pinnedOutsideQueryCount ? ', plus <b>' + prepared.pinnedOutsideQueryCount + '</b> pinned outside the search.' : '.')
         : 'Showing top <b>' + Math.min(25, prepared.matchedCount) + '</b> of <b>' + prepared.allRows.length + '</b> scored candidates.') +
       '</div>' +
       '<table><thead><tr><th class="num">#</th><th>Actions</th><th>Track</th><th class="num">Final</th><th class="num">Mix</th><th class="num">Energy</th><th class="num">Penalty</th><th class="num">Style</th><th class="num">Tempo</th><th class="num">Groove</th><th class="num">Key</th></tr></thead><tbody>';
@@ -3342,17 +4080,24 @@
     if (from && to) {
       const slot = Math.max(0, targetSlot());
       const score = scoreTransition(transitionFromIdx, transitionToIdx, slot);
+      const meterRows = [
+        ['Final', score.finalScore, 'final', score.finalScore, 'Final score'],
+        ['Mix', score.baseline, 'mix', score.baseline, 'Weighted mix score'],
+        ['Style', score.styleScore, 'style', score.styleScore, 'Style score'],
+        ['Tempo', score.tempoScore, 'tempo', score.tempoScore, 'Tempo score'],
+        ['Groove', score.grooveScore, 'groove', score.grooveScore, 'Groove score'],
+        ['Key', score.keyScore, 'harmonic', score.keyScore, 'Harmonic score'],
+        ['Penalty', score.penalty, 'penalty', score.penalty, 'Energy penalty'],
+      ];
       scoreHtml =
         '<div class="transition-mini-score">' +
-        '<table><thead><tr><th class="num">Final</th><th class="num">Mix</th><th class="num">Style</th><th class="num">Tempo</th><th class="num">Groove</th><th class="num">Key</th><th class="num">Penalty</th></tr></thead><tbody><tr>' +
-        '<td class="num">' + fmt(score.finalScore, 2) + '</td>' +
-        '<td class="num">' + fmt(score.baseline, 2) + '</td>' +
-        '<td class="num">' + fmt(score.styleScore, 2) + '</td>' +
-        '<td class="num">' + fmt(score.tempoScore, 2) + '</td>' +
-        '<td class="num">' + fmt(score.grooveScore, 2) + '</td>' +
-        '<td class="num">' + fmt(score.keyScore, 2) + '</td>' +
-        '<td class="num">' + fmt(score.penalty, 2) + '</td>' +
-        '</tr></tbody></table>' +
+        '<div class="transition-mini-meter-list">' +
+        meterRows.map(row =>
+          '<div class="transition-mini-meter-row"><span>' + esc(row[0]) + '</span>' +
+          scoreMeterHtml(row[1], row[2], row[3], 2, row[4]) +
+          '</div>'
+        ).join('') +
+        '</div>' +
         '</div>';
     }
     els.transitionBadges.innerHTML =
@@ -4289,6 +5034,7 @@
   function renderAll() {
     safeUi('weight labels', updateWeightLabels);
     safeUi('map coordinates', () => {
+      syncMapRenderer({ render: false });
       const previousPoints = currentPoints;
       currentPoints = layoutInterpolatedPoints(weights());
       recordMapTrails(previousPoints, currentPoints);
@@ -4440,6 +5186,11 @@
   els.energySource.addEventListener('change', renderAll);
   els.colorMode.addEventListener('change', () => {
     setAppSetting('point_color', els.colorMode.value);
+    renderAll();
+  });
+  if (els.mapRenderer) els.mapRenderer.addEventListener('change', () => {
+    setAppSetting('map_renderer', els.mapRenderer.value === 'webgl' ? 'webgl' : 'plotly');
+    syncMapRenderer({ render: false });
     renderAll();
   });
   if (els.mapEffectsEnabled) els.mapEffectsEnabled.addEventListener('change', () => {
@@ -4605,6 +5356,29 @@
     if (record) setCandidateTrack(Number(record.idx), { autoplay: false, showPopover: true });
   });
   document.body.addEventListener('pointerdown', ev => {
+    const wave = closestEl(ev.target, '[data-diagnostic-waveform-idx]');
+    if (!wave) return;
+    diagnosticWaveformPointerIdx = Number(wave.getAttribute('data-diagnostic-waveform-idx'));
+    try { wave.setPointerCapture(ev.pointerId); } catch (err) {}
+    seekDiagnosticWaveformFromEvent(ev, diagnosticWaveformPointerIdx, { play: true });
+    ev.preventDefault();
+    ev.stopPropagation();
+  });
+  document.body.addEventListener('pointermove', ev => {
+    if (diagnosticWaveformPointerIdx === null) return;
+    seekDiagnosticWaveformFromEvent(ev, diagnosticWaveformPointerIdx, { play: false });
+    ev.preventDefault();
+  });
+  document.body.addEventListener('pointerup', ev => {
+    if (diagnosticWaveformPointerIdx === null) return;
+    seekDiagnosticWaveformFromEvent(ev, diagnosticWaveformPointerIdx, { play: false });
+    diagnosticWaveformPointerIdx = null;
+    ev.preventDefault();
+  });
+  document.body.addEventListener('pointercancel', () => {
+    diagnosticWaveformPointerIdx = null;
+  });
+  document.body.addEventListener('pointerdown', ev => {
     const wave = closestEl(ev.target, '[data-library-waveform-idx]');
     if (!wave) return;
     rowWaveformPointerIdx = Number(wave.getAttribute('data-library-waveform-idx'));
@@ -4661,6 +5435,7 @@
   window.addEventListener('resize', () => setTimeout(() => safeUi('library waveform draw', drawLibraryWaveforms), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('transition editor draw', drawTransitionEditor), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('mini map draw', drawMiniMap), 30));
+  window.addEventListener('resize', () => setTimeout(() => safeUi('webgl map resize', () => { if (webglMap) webglMap.resize(); }), 30));
 
   document.body.addEventListener('click', ev => {
     const appendIdx = closestAttr(ev.target, 'data-append-idx');
@@ -4780,33 +5555,28 @@
 
   if (plot && plot.on) {
     plot.on('plotly_click', ev => {
+      if (usingWebglMap()) return;
       if (!ev || !ev.points || !ev.points.length) return;
       const c = ev.points[0].customdata || [];
       const idx = Number(c[0]);
-      if (Number.isFinite(idx)) {
-        const now = Date.now();
-        lastPlotPointClickMs = now;
-        const nativeDetail = Number(ev.event && ev.event.detail) || 0;
-        const isDouble = nativeDetail >= 2 || (lastClickedIdx === idx && (now - lastClickMs) < 520);
-        lastClickedIdx = idx;
-        lastClickMs = now;
-        selectTrack(idx);
-        if (isDouble) assignTransitionFromDoubleClick(idx);
-      }
+      if (Number.isFinite(idx)) handleMapTrackClick(idx, ev.event);
     });
     plot.on('plotly_hover', ev => {
+      if (usingWebglMap()) return;
       if (!ev || !ev.points || !ev.points.length) return;
       const c = ev.points[0].customdata || [];
       const idx = Number(c[0]);
       if (Number.isFinite(idx) && byIdx.has(idx)) showSongHover(byIdx.get(idx), ev.event);
     });
-    plot.on('plotly_unhover', hideSongHover);
+    plot.on('plotly_unhover', () => { if (!usingWebglMap()) hideSongHover(); });
     plot.on('plotly_relayout', () => {
+      if (usingWebglMap()) return;
       safeUi('map overlays after zoom', updatePacmapOverlays);
       safeUi('map effects after zoom', ensureMapEffectsLoop);
       safeUi('mini map after zoom', drawMiniMap);
     });
     plot.on('plotly_doubleclick', () => {
+      if (usingWebglMap()) return false;
       if ((Date.now() - lastPointDoubleClickMs) < 900) return false;
       if (lastClickedIdx !== null && (Date.now() - lastClickMs) < 720) {
         assignTransitionFromDoubleClick(lastClickedIdx);
@@ -4816,25 +5586,20 @@
       return false;
     });
     plot.addEventListener('dblclick', ev => {
+      if (usingWebglMap()) return;
       const onPoint = isPlotPointTarget(ev.target);
       handlePlotDoubleClick(onPoint);
       ev.preventDefault();
       ev.stopPropagation();
     });
     plot.addEventListener('click', ev => {
+      if (usingWebglMap()) return;
       if (Number(ev.detail || 0) > 1) return;
       const onPoint = isPlotPointTarget(ev.target);
       if (onPoint) return;
       const nearTrackPoint = plotClickNearTrackPoint(ev);
       if (nearTrackPoint) return;
-      const clearRequestTime = Date.now();
-      const selectedAtClick = selectedIdx;
-      window.setTimeout(() => {
-        if (lastPlotPointClickMs >= clearRequestTime - 40) return;
-        if (selectedIdx !== selectedAtClick) return;
-        if (selectedIdx === null) return;
-        clearCurrentTrackSelection();
-      }, 650);
+      handleMapBlankClick();
     });
   }
   setActivePane('explore', { render: false });

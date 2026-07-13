@@ -88,6 +88,7 @@ class SequenceBuilderUiSettings:
     latent_links_per_track: int = 3
     recommended_links_highlight: int = 25
     point_color: str = "genre"
+    map_renderer: str = "plotly"
     map_fx: bool = True
 
     def validate(self) -> "SequenceBuilderUiSettings":
@@ -99,6 +100,8 @@ class SequenceBuilderUiSettings:
             raise ValueError(
                 "ui.point_color must be one of {'genre', 'energy', 'tempo', 'key', 'target', 'energy_residual'}."
             )
+        if self.map_renderer not in {"plotly", "webgl"}:
+            raise ValueError("ui.map_renderer must be one of {'plotly', 'webgl'}.")
         return self
 
     def to_dict(self) -> dict[str, Any]:
@@ -120,6 +123,7 @@ class SequenceBuilderUiSettings:
             "latentLinksPerTrack": "latent_links_per_track",
             "recommendedLinksHighlight": "recommended_links_highlight",
             "pointColor": "point_color",
+            "mapRenderer": "map_renderer",
             "mapFx": "map_fx",
         }
         allowed = set(cls.__dataclass_fields__)

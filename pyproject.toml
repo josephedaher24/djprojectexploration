@@ -21,6 +21,7 @@ dependencies = [
     "nest-asyncio==1.6.0",
     "numpy>=2.4.3",
     "pacmap",
+    "pandas>=3.0.3",
     "plotly>=6.6.0",
     "psutil==7.2.2",
     "pyloudnorm",

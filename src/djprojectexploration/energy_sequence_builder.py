@@ -481,6 +481,49 @@ def _compute_pacmap_coords(features: SongFeatureSet, *, random_state: int, n_nei
     return np.asarray(reducer.fit_transform(maest), dtype=np.float32)
 
 
+def _resample_rows(matrix: np.ndarray, target_rows: int) -> np.ndarray:
+    values = np.asarray(matrix, dtype=np.float32)
+    if target_rows <= 0:
+        return np.zeros((0, values.shape[1] if values.ndim == 2 else 0), dtype=np.float32)
+    if values.ndim != 2 or values.shape[1] == 0:
+        return np.zeros((target_rows, 0), dtype=np.float32)
+    if values.shape[0] == 0:
+        return np.zeros((target_rows, values.shape[1]), dtype=np.float32)
+    if values.shape[0] == target_rows:
+        return values
+    if values.shape[0] <= 1:
+        return np.repeat(values[:1], target_rows, axis=0)
+    src_x = np.linspace(0.0, 1.0, values.shape[0], dtype=np.float32)
+    dst_x = np.linspace(0.0, 1.0, target_rows, dtype=np.float32)
+    cols = [np.interp(dst_x, src_x, values[:, col]) for col in range(values.shape[1])]
+    return np.stack(cols, axis=1).astype(np.float32)
+
+
+def _rounded_nested_list(values: np.ndarray, *, places: int = 4) -> list[Any]:
+    arr = np.asarray(values, dtype=np.float32)
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.round(arr, places).tolist()
+
+
+def _feature_visual_payload(features: SongFeatureSet, groove_embeddings: np.ndarray) -> dict[int, dict[str, Any]]:
+    chroma = np.asarray(features.chroma_pitch, dtype=np.float32)
+    groove = np.asarray(groove_embeddings, dtype=np.float32)
+    payload: dict[int, dict[str, Any]] = {}
+    n_rows = min(int(chroma.shape[0]), int(groove.shape[0]))
+    for idx in range(n_rows):
+        groove_vector = np.asarray(groove[idx], dtype=np.float32).reshape(-1)
+        if groove_vector.size >= 3:
+            usable = groove_vector[: (groove_vector.size // 3) * 3]
+            groove_grid = usable.reshape(-1, 3)
+        else:
+            groove_grid = np.zeros((1, 3), dtype=np.float32)
+        payload[idx] = {
+            "chroma": _rounded_nested_list(chroma[idx].reshape(-1)[:12]),
+            "groove": _rounded_nested_list(groove_grid),
+        }
+    return payload
+
+
 def _default_genre_mixability_weights(default_weights: dict[str, float]) -> tuple[float, float, float, float]:
     style = float(np.clip(default_weights.get("maest", 0.45), 0.0, 1.0))
     tempo = max(0.0, float(default_weights.get("mix_tempo", 0.34)))
@@ -650,6 +693,7 @@ def _build_html(
     coords: np.ndarray,
     layouts: dict[str, list[list[float]]] | None,
     similarity_payload: dict[str, dict[str, Any]],
+    feature_visuals: dict[int, dict[str, Any]] | None,
     plot_div_id: str,
     title: str,
     default_length: int,
@@ -715,6 +759,8 @@ def _build_html(
             "snippet_rms": float(r["snippet_rms"]),
             "human_energy": float(r["human_energy"]) if np.isfinite(float(r["human_energy"])) else None,
             "glm_energy": float(r["glm_energy"]) if np.isfinite(float(r["glm_energy"])) else None,
+            "diagnostic_chroma": list((feature_visuals or {}).get(int(r["idx"]), {}).get("chroma", [])),
+            "diagnostic_groove": list((feature_visuals or {}).get(int(r["idx"]), {}).get("groove", [])),
         }
         for r in records
     ]
@@ -1009,6 +1055,7 @@ def export_dj_sequence(
         coords=coords,
         layouts=layouts,
         similarity_payload=similarity_payload,
+        feature_visuals=_feature_visual_payload(features, groove_embeddings),
         plot_div_id=plot_div_id,
         title=title,
         default_length=default_length,

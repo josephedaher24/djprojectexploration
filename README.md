@@ -298,6 +298,7 @@ generated app as `app_settings`, shown in the settings popup, and used to initia
     "latent_links_per_track": 3,
     "recommended_links_highlight": 25,
     "point_color": "genre",
+    "map_renderer": "plotly",
     "map_fx": true
   }
 }
@@ -305,7 +306,9 @@ generated app as `app_settings`, shown in the settings popup, and used to initia
 
 In the app, latent links are top-K weighted candidate links per track. Recommended links are the current selected track's
 ranked next-track recommendations highlighted on the map. Point coloring supports `genre`, `energy`, `tempo`, `key`, and
-`target`; `target` colors each track by selected energy minus the active target energy slot.
+`target`; `target` colors each track by selected energy minus the active target energy slot. The map renderer can be
+switched between the original Plotly renderer and an experimental WebGL renderer from the app controls or by setting
+`ui.map_renderer` to `webgl` in a preset.
 
 Recent sequence-builder interaction conventions:
 

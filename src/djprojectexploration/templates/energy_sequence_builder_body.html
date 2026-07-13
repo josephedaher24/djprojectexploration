@@ -31,6 +31,7 @@
       <div class="plot-column">
         <div class="plot-pane">
           {{PLOT_HTML}}
+          <canvas id="webgl-map-canvas" class="webgl-map-canvas" aria-label="WebGL track map"></canvas>
           <canvas id="map-effects-canvas" class="map-effects-canvas" aria-hidden="true"></canvas>
           <div id="map-zoom-controls" class="map-zoom-controls" aria-label="Map zoom and pan controls">
             <button type="button" data-map-action="zoom-in" aria-label="Zoom in" title="Zoom in (+ or i)">+</button>
@@ -39,7 +40,7 @@
             <button type="button" data-map-action="pan-up" aria-label="Pan up" title="Pan up (↑)">↑</button>
             <button type="button" data-map-action="pan-down" aria-label="Pan down" title="Pan down (↓)">↓</button>
             <button type="button" data-map-action="pan-right" aria-label="Pan right" title="Pan right (→)">→</button>
-            <button type="button" data-map-action="reset" aria-label="Reset map view" title="Reset view (R)">R</button>
+            <button type="button" data-map-action="reset" aria-label="Reset map view" title="Home / reset view (R)">H</button>
           </div>
           <canvas id="map-mini-map" class="map-mini-map" width="180" height="120" aria-label="Mini map"></canvas>
           <div id="song-hover-card" class="song-hover-card hidden"></div>
@@ -88,6 +89,12 @@
               <option value="key">Key wheel</option>
               <option value="target">Target</option>
               <option value="tempo">Tempo</option>
+            </select>
+          </label>
+          <label>Map renderer
+            <select id="map-renderer">
+              <option value="plotly">Plotly</option>
+              <option value="webgl">WebGL experimental</option>
             </select>
           </label>
           <label>Map FX <input id="map-effects-enabled" type="checkbox" checked></label>
