@@ -21,6 +21,22 @@
   }, appSettings.behavior || {});
   config.app_settings = appSettings;
 
+  const roleColors = {
+    track1: '#38bdf8',
+    track1Fill: 'rgba(56, 189, 248, .16)',
+    track1Line: 'rgba(56, 189, 248, __A__)',
+    track2: '#c084fc',
+    track2Fill: 'rgba(192, 132, 252, .16)',
+    track2Line: 'rgba(192, 132, 252, __A__)',
+    recommendation: '#34d399',
+    recommendationLine: 'rgba(52, 211, 153, __A__)',
+    pinned: '#fbbf24',
+    selected: '#f8fafc',
+    sequence: '#fb923c',
+    sequenceLine: 'rgba(251, 146, 60, __A__)',
+    selectedSlot: '#94a3b8',
+  };
+
   const byIdx = new Map(records.map(r => [Number(r.idx), r]));
   const initialRecommendationOrder = records.map(r => Number(r.idx)).filter(Number.isFinite);
   for (let i = initialRecommendationOrder.length - 1; i > 0; i -= 1) {
@@ -271,7 +287,7 @@
       row('Latent links per track', appSetting('latent_links_per_track', 3)),
       row('Recommended links highlighted', appSetting('recommended_links_highlight', 25)),
       row('Show recommendation scores', Boolean(appSetting('show_score_values', true))),
-      row('Energy penalty', els.penaltyScale ? Number(els.penaltyScale.value) : null),
+      row('Energy penalty scale', els.penaltyScale ? Number(els.penaltyScale.value) : null),
       row('Current weights', weights()),
       row('Preview preset', previewFormState.preset),
       row('Preview volume mode', previewFormState.volume_mode),
@@ -822,6 +838,21 @@
   function keyHtml(key) {
     return '<span class="camelot-key" style="color:' + esc(camelotKeyColor(key)) + '">' + esc(key || '') + '</span>';
   }
+  function camelotCanonicalName(value) {
+    const m = String(value || '').trim().toUpperCase().match(/^(\d{1,2})([AB])$/);
+    if (!m) return '';
+    const names = {
+      A: { 1:'Abm', 2:'Ebm', 3:'Bbm', 4:'Fm', 5:'Cm', 6:'Gm', 7:'Dm', 8:'Am', 9:'Em', 10:'Bm', 11:'F#m', 12:'C#m' },
+      B: { 1:'B', 2:'F#', 3:'Db', 4:'Ab', 5:'Eb', 6:'Bb', 7:'F', 8:'C', 9:'G', 10:'D', 11:'A', 12:'E' },
+    };
+    return names[m[2]] && names[m[2]][Number(m[1])] ? names[m[2]][Number(m[1])] : '';
+  }
+  function canonicalKeyText(value) {
+    const key = String(value || '').trim();
+    if (!key || key.toLowerCase() === 'nan') return '';
+    const canonical = camelotCanonicalName(key);
+    return canonical ? key.toUpperCase() + ' (' + canonical + ')' : key;
+  }
   function genreMarkerColor(value) {
     const mapped = baseTraceGenreColors.get(String(value || ''));
     if (mapped) return mapped;
@@ -860,10 +891,39 @@
     const tagged = Number(record && record.human_energy);
     return Number.isFinite(predicted) && Number.isFinite(tagged) ? predicted - tagged : NaN;
   }
-  function targetEnergyResidual(record) {
-    const target = targetCurve()[Math.max(0, targetSlot())] ?? 5;
+  function sequenceSlotForRecord(record) {
+    const idx = Number(record && record.idx);
+    if (!Number.isFinite(idx)) return null;
+    const slot = sequence.findIndex(value => Number(value) === idx);
+    return slot >= 0 ? slot : null;
+  }
+  function relevantResidualSlot(record, explicitSlot=null) {
+    const slot = Number(explicitSlot);
+    if (Number.isFinite(slot) && slot >= 0 && slot < sequenceLength) return slot;
+    const sequenceSlot = sequenceSlotForRecord(record);
+    if (sequenceSlot !== null) return sequenceSlot;
+    const activeSlot = targetSlot();
+    return activeSlot >= 0 ? activeSlot : null;
+  }
+  function targetEnergyResidualForSlot(record, slot) {
+    const slotNumber = Number(slot);
+    if (!Number.isFinite(slotNumber) || slotNumber < 0) return NaN;
+    const target = targetCurve()[slotNumber] ?? 5;
     const value = energyOf(record);
     return Number.isFinite(value) && Number.isFinite(target) ? value - target : NaN;
+  }
+  function targetEnergyResidual(record) {
+    return targetEnergyResidualForSlot(record, Math.max(0, targetSlot()));
+  }
+  function targetEnergyResidualExtentForSlot(slot) {
+    const slotNumber = Number(slot);
+    if (!Number.isFinite(slotNumber) || slotNumber < 0) return targetEnergyResidualExtent();
+    const vals = records
+      .map(record => targetEnergyResidualForSlot(record, slotNumber))
+      .filter(Number.isFinite)
+      .map(Math.abs);
+    const maxAbs = vals.length ? Math.max(0.5, Math.min(4, Math.max(...vals))) : 1;
+    return { min: -maxAbs, max: maxAbs, title: 'Energy - target' };
   }
   function targetEnergyResidualExtent() {
     const vals = records.map(targetEnergyResidual).filter(Number.isFinite).map(Math.abs);
@@ -899,6 +959,15 @@
       [0.72, '#35b779'],
       [1, '#fde725'],
     ], t);
+  }
+  function energyTextColor(value) {
+    const base = energyColor(value);
+    return lerpColor(base, '#ffffff', 0.18);
+  }
+  function signedFmt(value, digits=2) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '';
+    return (n > 0 ? '+' : '') + n.toFixed(digits);
   }
   function tempoColor(value, extent) {
     const min = Number(extent && extent.min);
@@ -944,14 +1013,37 @@
       return lower.charAt(0).toUpperCase() + lower.slice(1);
     }).join('');
   }
-  function trackSummaryHtml(record, { size='compact', showArt=true } = {}) {
+  function energyMetaHtml(record, slot=null, showResidual=true) {
+    record = canonicalRecord(record);
+    const value = energyOf(record);
+    if (!Number.isFinite(value)) return '';
+    const resolvedSlot = relevantResidualSlot(record, slot);
+    const residual = showResidual ? targetEnergyResidualForSlot(record, resolvedSlot) : NaN;
+    const energy = '<span class="track-energy" style="color:' + esc(energyTextColor(value)) + '">' + esc(fmt(value, 2)) + '</span>';
+    if (!Number.isFinite(residual)) return energy;
+    const extent = targetEnergyResidualExtentForSlot(resolvedSlot);
+    const maxAbs = Math.max(Math.abs(Number(extent.min) || 0), Math.abs(Number(extent.max) || 0), 1);
+    return energy + ' <span class="track-energy-residual" style="color:' + esc(twoSidedResidualColor(residual, maxAbs)) + '">(' + esc(signedFmt(residual, 2)) + ')</span>';
+  }
+  function trackMetaHtml(record, { slot=null, showEnergy=true, showResidual=true } = {}) {
+    record = canonicalRecord(record);
+    if (!record) return '';
+    const energy = showEnergy ? energyMetaHtml(record, slot, showResidual) : '';
+    return [
+      esc(rawGenre(record)),
+      record.key ? keyHtml(record.key) : '',
+      esc(roundedBpm(record)),
+      energy,
+      esc(durationText(record)),
+    ].filter(Boolean).join(' &sdot; ');
+  }
+  function trackSummaryHtml(record, { size='compact', showArt=true, slot=null, showEnergy=true, showResidual=true } = {}) {
     record = canonicalRecord(record);
     if (!record) return '<span class="muted">None selected</span>';
-    const bits = [rawGenre(record), record.key ? keyHtml(record.key) : '', roundedBpm(record), durationText(record)].filter(Boolean);
     const body =
       '<div class="track-title">' + esc(record.title) + '</div>' +
       '<div class="track-artist muted">' + esc(record.artists) + '</div>' +
-      '<div class="track-meta-line muted">' + bits.join(' &sdot; ') + '</div>';
+      '<div class="track-meta-line muted">' + trackMetaHtml(record, { slot, showEnergy, showResidual }) + '</div>';
     if (!showArt) return body;
     return '<div class="track-summary ' + esc(size) + '">' + artworkHtml(record) + '<div>' + body + '</div></div>';
   }
@@ -1063,7 +1155,7 @@
       cueField: isFrom ? 'from_cue' : 'to_cue',
       nudgeField: isFrom ? 'from_nudge_beats' : 'to_nudge_beats',
       record: isFrom ? (transitionFromIdx === null ? null : byIdx.get(transitionFromIdx)) : (transitionToIdx === null ? null : byIdx.get(transitionToIdx)),
-      color: isFrom ? '#10b981' : '#f59e0b',
+      color: isFrom ? roleColors.track1 : roleColors.track2,
     };
   }
   function transitionWindowInfo(deck) {
@@ -1280,7 +1372,7 @@
   function shortTrack(record) {
     return trackSummaryHtml(record, { size: 'compact', showArt: false });
   }
-  function trackMetaHtml(record) {
+  function trackPreviewMetaHtml(record) {
     if (!record) return '<div class="muted">No track assigned.</div>';
     return trackSummaryHtml(record, { size: 'large', showArt: true });
   }
@@ -1317,16 +1409,23 @@
     if (previewAudioIdx === idx && els.audio && Number.isFinite(Number(els.audio.currentTime))) return Number(els.audio.currentTime);
     return 0;
   }
-  function rowPlayerHtml(record) {
+  function rowWaveformScrubberHtml(record, { showTime=true } = {}) {
     record = canonicalRecord(record);
     if (!record) return '';
     const duration = audioDuration(record);
     const max = Number.isFinite(duration) && duration > 0 ? duration : Math.max(1, Number(record.duration_seconds) || 1);
     const value = clamp(rowScrubValue(record), 0, max);
+    return '<div class="row-waveform-scrubber">' +
+      '<canvas class="row-waveform" data-library-waveform-idx="' + record.idx + '" data-duration="' + esc(max) + '" height="30" aria-label="Playback scrubber"></canvas>' +
+      (showTime ? '<span class="scrub-time" data-library-time-idx="' + record.idx + '">' + esc(timeText(value)) + ' / ' + esc(durationText(record)) + '</span>' : '') +
+      '</div>';
+  }
+  function rowPlayerHtml(record) {
+    record = canonicalRecord(record);
+    if (!record) return '';
     return '<div class="row-player">' +
       '<button class="play-button" data-play-idx="' + record.idx + '" data-play-mode="library" aria-label="Play">▶</button>' +
-      '<canvas class="row-waveform" data-library-waveform-idx="' + record.idx + '" data-duration="' + esc(max) + '" height="30" aria-label="Playback scrubber"></canvas>' +
-      '<span class="scrub-time" data-library-time-idx="' + record.idx + '">' + esc(timeText(value)) + ' / ' + esc(durationText(record)) + '</span>' +
+      rowWaveformScrubberHtml(record) +
       '</div>';
   }
   function currentAudioRecord() {
@@ -1370,7 +1469,11 @@
       }
     }
     if (els.globalTitle) els.globalTitle.textContent = record ? String(record.title || 'Untitled') : 'No track playing';
-    if (els.globalArtist) els.globalArtist.textContent = record ? String(record.artists || '') : 'Select a track to preview';
+    if (els.globalArtist) {
+      els.globalArtist.innerHTML = record
+        ? '<span>' + esc(record.artists || '') + '</span><span class="global-meta-line">' + trackMetaHtml(record, { slot: relevantResidualSlot(record) }) + '</span>'
+        : 'Select a track to preview';
+    }
     if (els.globalToggle) {
       els.globalToggle.disabled = !hasRecord;
       els.globalToggle.textContent = previewAudioPlaying ? '⏸' : '▶';
@@ -1587,12 +1690,12 @@
     idx = Number(idx);
     if (!byIdx.has(idx)) return;
     const record = byIdx.get(idx);
-    const context = mode === 'library' ? 'library' : 'point';
+    const context = mode === 'library' || mode === 'diagnostics' ? mode : 'point';
     if (previewAudioIdx === idx && previewAudioContext === context && els.audio && !els.audio.paused) {
       pauseSharedAudio();
       return;
     }
-    const start = context === 'library' ? rowScrubValue(record) : previewStart(record);
+    const start = context === 'library' || context === 'diagnostics' ? rowScrubValue(record) : previewStart(record);
     playRecordAt(record, start, context);
   }
   function toggleTransitionTrackPreview(deck) {
@@ -2056,9 +2159,10 @@
     if (!record) return;
     const duration = audioDuration(record);
     if (!Number.isFinite(duration) || duration <= 0) return;
-    const canvas = ev.currentTarget && ev.currentTarget.getAttribute && ev.currentTarget.getAttribute('data-diagnostic-waveform-idx')
+    const targetCanvas = closestEl(ev.target, '[data-diagnostic-waveform-idx]');
+    const canvas = targetCanvas || (ev.currentTarget && ev.currentTarget.getAttribute && ev.currentTarget.getAttribute('data-diagnostic-waveform-idx')
       ? ev.currentTarget
-      : document.querySelector('[data-diagnostic-waveform-idx="' + idx + '"]');
+      : document.querySelector('[data-diagnostic-waveform-idx="' + idx + '"]'));
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const x = clamp((ev.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
@@ -2078,9 +2182,10 @@
     if (!record) return;
     const duration = audioDuration(record);
     if (!Number.isFinite(duration) || duration <= 0) return;
-    const canvas = ev.currentTarget && ev.currentTarget.getAttribute && ev.currentTarget.getAttribute('data-library-waveform-idx')
+    const targetCanvas = closestEl(ev.target, '[data-library-waveform-idx]');
+    const canvas = targetCanvas || (ev.currentTarget && ev.currentTarget.getAttribute && ev.currentTarget.getAttribute('data-library-waveform-idx')
       ? ev.currentTarget
-      : document.querySelector('[data-library-waveform-idx="' + idx + '"]');
+      : document.querySelector('[data-library-waveform-idx="' + idx + '"]'));
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const x = clamp((ev.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
@@ -2621,9 +2726,9 @@
       ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
       ctx.stroke();
     };
-    drawRing(selectedIdx, '#f8fafc', 4.5);
-    drawRing(transitionFromIdx, '#34d399', 5.5);
-    drawRing(transitionToIdx, '#fbbf24', 5.5);
+    drawRing(selectedIdx, roleColors.selected, 4.5);
+    drawRing(transitionFromIdx, roleColors.track1, 5.5);
+    drawRing(transitionToIdx, roleColors.track2, 5.5);
     const view = mapViewRanges();
     if (view) {
       const a = miniMapPoint([Math.min(view.x0, view.x1), Math.min(view.y0, view.y1)], bounds, widthCss, heightCss);
@@ -2801,7 +2906,7 @@
       .map(idx => idx === null ? null : plotPointPx(currentPoint(idx)))
       .filter(Boolean);
     for (let i = 0; i < pts.length - 1; i += 1) {
-      drawFlowLine(ctx, pts[i], pts[i + 1], 'rgba(45, 212, 191, __A__)', 0.34, (time / 2100 + i * 0.19) % 1, 1);
+      drawFlowLine(ctx, pts[i], pts[i + 1], roleColors.sequenceLine, 0.34, (time / 2100 + i * 0.19) % 1, 1);
     }
   }
   function drawSequencePathStatic(ctx) {
@@ -2810,11 +2915,11 @@
       .filter(Boolean);
     if (pts.length < 2) return;
     ctx.save();
-    ctx.strokeStyle = 'rgba(45, 212, 191, 0.34)';
+    ctx.strokeStyle = 'rgba(251, 146, 60, 0.42)';
     ctx.lineWidth = 1.8;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.shadowColor = 'rgba(45, 212, 191, 0.22)';
+    ctx.shadowColor = 'rgba(251, 146, 60, 0.24)';
     ctx.shadowBlur = 8;
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
@@ -2822,7 +2927,7 @@
     ctx.stroke();
     ctx.restore();
   }
-  function drawStaticMapBadge(ctx, p, label, color, radius=12) {
+  function drawStaticMapBadge(ctx, p, label, color, radius=12, shape='circle') {
     if (!p) return;
     ctx.save();
     ctx.fillStyle = 'rgba(15, 23, 42, .82)';
@@ -2831,7 +2936,12 @@
     ctx.shadowColor = color;
     ctx.shadowBlur = 8;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    if (shape === 'square') {
+      const half = radius * 0.88;
+      ctx.rect(p.x - half, p.y - half, half * 2, half * 2);
+    } else {
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    }
     ctx.fill();
     ctx.stroke();
     if (label) {
@@ -2854,20 +2964,20 @@
     if (hoveredIdx !== null && !hoverMatchesSelection) {
       drawStaticMapBadge(ctx, plotPointPx(currentPoint(hoveredIdx)), '', '#f8fafc', 13);
     }
-    if (selectedIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(selectedIdx)), '', '#f8fafc', 13);
-    if (transitionFromIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(transitionFromIdx)), '1', '#34d399', 15);
-    if (transitionToIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(transitionToIdx)), '2', '#fbbf24', 15);
+    if (selectedIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(selectedIdx)), '', roleColors.selected, 13);
+    if (transitionFromIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(transitionFromIdx)), '1', roleColors.track1, 15);
+    if (transitionToIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(transitionToIdx)), '2', roleColors.track2, 15);
 
     sequence.forEach((idx, slot) => {
       if (idx === null) return;
-      drawStaticMapBadge(ctx, plotPointPx(currentPoint(idx)), String(slot + 1), '#2dd4bf', 10);
+      drawStaticMapBadge(ctx, plotPointPx(currentPoint(idx)), String(slot + 1), roleColors.sequence, 10, 'square');
     });
 
     const recContext = recommendationContext();
     const rows = preparedRecommendationRows(recommendedLinksHighlight()).rows;
     if (recContext.sourceIdx !== null) {
       rows.forEach((row, i) => {
-        drawStaticMapBadge(ctx, plotPointPx(currentPoint(row.idx)), String(i + 1), '#fbbf24', 9);
+        drawStaticMapBadge(ctx, plotPointPx(currentPoint(row.idx)), String(i + 1), roleColors.recommendation, 9);
       });
     }
   }
@@ -2934,18 +3044,18 @@
           : 1 - (i / Math.max(1, rows.length));
         const rankStrength = 1 - (i / Math.max(1, rows.length));
         const strength = clamp(0.35 * scoreStrength + 0.65 * rankStrength, 0, 1);
-        drawFlowLine(ctx, src, dst, 'rgba(251, 191, 36, __A__)', strength * 0.72, animated ? (time / 1750 + i * 0.071) % 1 : 0, animated ? (i < 4 ? 2 : 1) : 0);
-        if (animated) drawGlow(ctx, dst, 14 + strength * 16, 'rgba(251, 191, 36, __A__)', 0.06 + strength * 0.13);
+        drawFlowLine(ctx, src, dst, roleColors.recommendationLine, strength * 0.72, animated ? (time / 1750 + i * 0.071) % 1 : 0, animated ? (i < 4 ? 2 : 1) : 0);
+        if (animated) drawGlow(ctx, dst, 14 + strength * 16, roleColors.recommendationLine, 0.06 + strength * 0.13);
       });
     }
 
     const fromP = transitionFromIdx === null ? null : plotPointPx(currentPoint(transitionFromIdx));
     const toP = transitionToIdx === null ? null : plotPointPx(currentPoint(transitionToIdx));
-    if (fromP && toP) drawFlowLine(ctx, fromP, toP, 'rgba(45, 212, 191, __A__)', 1, animated ? (time / 1300) % 1 : 0, animated ? 3 : 0);
+    if (fromP && toP) drawFlowLine(ctx, fromP, toP, roleColors.track2Line, 1, animated ? (time / 1300) % 1 : 0, animated ? 3 : 0);
     if (animated) {
-      drawPulseRing(ctx, selectedIdx === null ? null : plotPointPx(currentPoint(selectedIdx)), 13, '#f8fafc', time / 520, '');
-      drawPulseRing(ctx, fromP, 16, '#34d399', time / 470, '');
-      drawPulseRing(ctx, toP, 16, '#fbbf24', time / 520 + 1.2, '');
+      drawPulseRing(ctx, selectedIdx === null ? null : plotPointPx(currentPoint(selectedIdx)), 13, roleColors.selected, time / 520, '');
+      drawPulseRing(ctx, fromP, 16, roleColors.track1, time / 470, '');
+      drawPulseRing(ctx, toP, 16, roleColors.track2, time / 520 + 1.2, '');
     }
     drawWebglStaticOverlays(ctx);
 
@@ -2987,6 +3097,20 @@
     if (els.weightGrooveVal) els.weightGrooveVal.textContent = fmt(w.groove, 2);
     if (w.mix) updateSimplexHandle(w.mix);
     els.penaltyScaleVal.textContent = fmt(Number(els.penaltyScale.value || 0), 2);
+  }
+  function energyPenaltyScale() {
+    return clamp(Number(els.penaltyScale ? els.penaltyScale.value : 0), 0, 1);
+  }
+  function energyAdjustment(rawError, baseline) {
+    const scale = energyPenaltyScale();
+    const errorMagnitude = Math.abs(Number(rawError) || 0);
+    const energyErrorPower = errorMagnitude * errorMagnitude;
+    const energyScore = 1 / (1 + scale * energyErrorPower);
+    const numericBaseline = Number(baseline);
+    const hasBaseline = Number.isFinite(numericBaseline);
+    const finalScore = hasBaseline ? numericBaseline * energyScore : NaN;
+    const penalty = hasBaseline ? numericBaseline - finalScore : NaN;
+    return { energyErrorPower, penaltyScale: scale, energyScore, penalty, finalScore };
   }
   function energyOf(record) {
     if (!record) return NaN;
@@ -3275,19 +3399,15 @@
     const e = energyOf(record);
     const target = targetCurve()[slot] ?? 5;
     const rawError = Number.isFinite(e) ? e - target : 0;
-    const normSq = Math.pow(rawError / 8, 2);
-    const penalty = Number(els.penaltyScale.value || 0) * normSq;
-    const energyScore = 1 - normSq;
-    return { baseline, styleScore, tempoScore, grooveScore, keyScore, energy: e, target, rawError, normSq, penalty, energyScore, finalScore: baseline - penalty };
+    const adjustment = energyAdjustment(rawError, baseline);
+    return { baseline, styleScore, tempoScore, grooveScore, keyScore, energy: e, target, rawError, ...adjustment };
   }
   function scoreInitialCandidate(idx, slot) {
     const record = byIdx.get(Number(idx));
     const e = energyOf(record);
     const target = targetCurve()[slot] ?? 5;
     const rawError = Number.isFinite(e) ? e - target : 0;
-    const normSq = Math.pow(rawError / 8, 2);
-    const penalty = Number(els.penaltyScale.value || 0) * normSq;
-    const energyScore = 1 - normSq;
+    const adjustment = energyAdjustment(rawError, 1);
     return {
       ...(record || {}),
       idx: Number(idx),
@@ -3299,7 +3419,7 @@
       chroma_score_norm: NaN,
       tempo_score_norm: NaN,
       groove_score_norm: NaN,
-      baseline: 0,
+      baseline: NaN,
       styleScore: NaN,
       tempoScore: NaN,
       grooveScore: NaN,
@@ -3307,10 +3427,11 @@
       energy: e,
       target,
       rawError,
-      normSq,
-      penalty,
-      energyScore,
-      finalScore: -penalty,
+      energyErrorPower: adjustment.energyErrorPower,
+      penaltyScale: adjustment.penaltyScale,
+      penalty: 1 - adjustment.energyScore,
+      energyScore: adjustment.energyScore,
+      finalScore: adjustment.energyScore,
       initialRecommendation: true,
       slot,
     };
@@ -3325,9 +3446,7 @@
     const e = energyOf(record);
     const target = targetCurve()[slot] ?? 5;
     const rawError = Number.isFinite(e) ? e - target : 0;
-    const normSq = Math.pow(rawError / 8, 2);
-    const penalty = Number(els.penaltyScale.value || 0) * normSq;
-    const energyScore = 1 - normSq;
+    const adjustment = energyAdjustment(rawError, NaN);
     return {
       idx: Number(destIdx),
       maest_similarity: NaN,
@@ -3346,12 +3465,25 @@
       energy: e,
       target,
       rawError,
-      normSq,
-      penalty,
-      energyScore,
+      energyErrorPower: adjustment.energyErrorPower,
+      penaltyScale: adjustment.penaltyScale,
+      penalty: adjustment.penalty,
+      energyScore: adjustment.energyScore,
       finalScore: NaN,
       missing: true,
     };
+  }
+  function transitionRecommendationRank(sourceIdx, destIdx, slot) {
+    const entry = simMap[String(sourceIdx)] || {};
+    const candidates = Array.isArray(entry.candidates) ? entry.candidates : [];
+    const rows = candidates
+      .filter(c => Number(c.idx) !== Number(sourceIdx))
+      .map(c => ({ idx: Number(c.idx), finalScore: Number(scoreCandidate(c, slot).finalScore) }))
+      .filter(row => Number.isFinite(row.idx) && Number.isFinite(row.finalScore))
+      .sort((a, b) => b.finalScore - a.finalScore);
+    const rankIdx = rows.findIndex(row => Number(row.idx) === Number(destIdx));
+    if (rankIdx < 0) return null;
+    return { rank: rankIdx + 1, total: rows.length };
   }
   function rankedRecommendations() {
     const slot = targetSlot();
@@ -3359,7 +3491,7 @@
     const used = selectedIndicesExcept(slot);
     const ctx = recommendationContext(slot);
     if (ctx.sourceIdx === null) {
-      const penaltyScale = Number(els.penaltyScale.value || 0);
+      const penaltyScale = energyPenaltyScale();
       const rows = [];
       for (const idx of initialRecommendationOrder) {
         if (recFilters.excludeUsed && used.has(idx)) continue;
@@ -3470,6 +3602,9 @@
       y: [pathY],
       text: [pathText],
       customdata: [pathCustom],
+      marker: [{ size: 14, color: 'rgba(251,146,60,0.24)', symbol: 'square', line: { color: roleColors.sequence, width: 2 } }],
+      line: [{ color: 'rgba(251,146,60,0.58)', width: 2 }],
+      textfont: [{ color: '#fed7aa', size: 12 }],
     });
 
     const rows = preparedRecommendationRows(recommendedLinksHighlight()).rows;
@@ -3499,6 +3634,8 @@
       y: [recY],
       text: [recText],
       customdata: [recCustom],
+      marker: [{ size: 15, color: 'rgba(52,211,153,0.12)', line: { color: 'rgba(52,211,153,0.74)', width: 1.5 } }],
+      textfont: [{ color: '#d1fae5', size: 11 }],
       hoverinfo: ['skip'],
     });
   }
@@ -3615,8 +3752,8 @@
         '<td><div class="library-actions">' +
         rowPlayerHtml(r) +
         '<button data-library-current="' + r.idx + '">Current</button>' +
-        '<button data-library-outgoing="' + r.idx + '">Track 1</button>' +
-        '<button data-library-incoming="' + r.idx + '">Track 2</button>' +
+        '<button class="track-one" data-library-outgoing="' + r.idx + '">Track 1</button>' +
+        '<button class="track-two" data-library-incoming="' + r.idx + '">Track 2</button>' +
         '<button class="primary" data-library-place="' + r.idx + '">Place</button>' +
         '</div></td></tr>';
     });
@@ -3636,7 +3773,7 @@
       if (sequenceDragSlot === i) classes.push('drag-source');
       const cls = classes.length ? ' class="' + classes.join(' ') + '"' : '';
       html += '<tr' + cls + ' data-sequence-drop-slot="' + i + '"><td class="num"><span class="sequence-drag-handle" draggable="true" data-sequence-drag-slot="' + i + '" title="Drag to reorder">↕</span> ' + (i + 1) + '</td><td>';
-      if (r) html += trackSummaryHtml(r, { size: 'compact', showArt: true });
+      if (r) html += trackSummaryHtml(r, { size: 'compact', showArt: true, slot: i });
       else html += '<span class="muted">empty</span>';
       const targetValue = Number(targetValues[i]);
       const targetInput = '<input class="target-edit" data-target-slot="' + i + '" type="number" min="1" max="9" step="0.1" placeholder="' + fmt(targets[i], 2) + '" value="' + (Number.isFinite(targetValue) ? fmt(targetValue, 2) : '') + '">';
@@ -3662,7 +3799,7 @@
       { key: 'tempo', label: 'Tempo', value: Number(score && score.tempoScore), weight: weights().tempo },
       { key: 'groove', label: 'Groove', value: Number(score && score.grooveScore), weight: weights().groove },
       { key: 'harmonic', label: 'Harmonic / chroma', value: Number(score && score.keyScore), weight: weights().chroma },
-      { key: 'energy', label: 'Energy fit', value: Number(score && score.energyScore), weight: Number(els.penaltyScale ? els.penaltyScale.value : 0) },
+      { key: 'energy', label: 'Energy fit', value: Number(score && score.energyScore), weight: energyPenaltyScale() },
     ];
   }
   function featureBarsHtml(score, keys=null) {
@@ -3675,6 +3812,23 @@
         '<div class="diagnostic-bar-track"><i style="width:' + pct.toFixed(1) + '%"></i></div>' +
         '<b>' + (finite ? fmt(row.value, 3) : 'n/a') + '</b>' +
         '<em>w ' + metricValue(row.weight, 2) + '</em>' +
+        '</div>';
+    }).join('') + '</div>';
+  }
+  function scoreSummaryBarsHtml(score) {
+    const rows = [
+      { key: 'final', label: 'Final', value: Number(score && score.finalScore), strength: Number(score && score.finalScore) },
+      { key: 'mix', label: 'Mix', value: Number(score && score.baseline), strength: Number(score && score.baseline) },
+      { key: 'penalty', label: 'Loss', value: Number(score && score.penalty), strength: Number(score && score.penalty) },
+    ];
+    return '<div class="diagnostic-feature-bars focused-score-bars">' + rows.map(row => {
+      const finite = Number.isFinite(row.value);
+      const pct = finite && Number.isFinite(row.strength) ? clamp(row.strength, 0, 1) * 100 : 0;
+      return '<div class="diagnostic-feature-bar ' + esc(row.key) + '">' +
+        '<span>' + esc(row.label) + '</span>' +
+        '<div class="diagnostic-bar-track"><i style="width:' + pct.toFixed(1) + '%"></i></div>' +
+        '<b>' + (finite ? fmt(row.value, 2) : 'n/a') + '</b>' +
+        '<em></em>' +
         '</div>';
     }).join('') + '</div>';
   }
@@ -3714,17 +3868,17 @@
   }
   const PITCH_CLASS_LABELS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
   const GROOVE_BAND_LABELS = ['Low', 'Mid', 'High'];
-  function taggedKeyText(record) {
+  const GROOVE_BAND_DISPLAY_ORDER = [2, 1, 0];
+  function taggedCanonicalKeyText(record) {
     const key = String((record && record.key) || '').trim();
-    return key && key.toLowerCase() !== 'nan' ? key : 'n/a';
+    if (!key || key.toLowerCase() === 'nan') return 'n/a';
+    return canonicalKeyText(key) || key;
   }
   function diagnosticTrackHeaderHtml(record, role) {
-    return '<div class="diagnostic-embedding-track">' +
-      '<div class="diagnostic-embedding-title"><b>' + esc(role) + ': ' + esc(record.title || 'Untitled') + '</b>' +
-      '<span>' + esc(record.artists || record.raw_genre || '') + ' / Key ' + esc(taggedKeyText(record)) + '</span></div>' +
-      '</div>';
+    return '<div class="diagnostic-embedding-title"><b>' + esc(role) + ': ' + esc(record.title || 'Untitled') + '</b>' +
+      '<span>' + esc(record.artists || record.raw_genre || '') + ' / Key ' + esc(taggedCanonicalKeyText(record)) + '</span></div>';
   }
-  function diagnosticChromaHtml(record, extent) {
+  function diagnosticChromaHtml(record, extent, role='Track') {
     const values = Array.isArray(record && record.diagnostic_chroma) ? record.diagnostic_chroma : [];
     if (!values.length) return '<div class="muted">No chroma embedding available.</div>';
     const cells = Array.from({ length: 12 }, (_, i) => {
@@ -3733,33 +3887,40 @@
       return '<span class="diagnostic-cell" title="' + esc(PITCH_CLASS_LABELS[i]) + ': ' + esc(label) + '" style="background:' + heatmapColor(value, extent) + '"></span>';
     }).join('');
     const pitchLabels = PITCH_CLASS_LABELS.map(label => '<span>' + esc(label) + '</span>').join('');
-    return '<div class="diagnostic-embedding-block">' +
-      '<div class="diagnostic-embedding-label"><span>Chroma</span><span>Tagged key: ' + esc(taggedKeyText(record)) + '</span></div>' +
+    return '<div class="diagnostic-embedding-panel">' +
+      diagnosticTrackHeaderHtml(record, role) +
+      '<div class="diagnostic-embedding-block">' +
+      '<div class="diagnostic-embedding-label"><span>Chroma</span><span>Tagged key: ' + esc(taggedCanonicalKeyText(record)) + '</span></div>' +
       '<div class="diagnostic-cell-row">' + cells + '</div>' +
       '<div class="diagnostic-pitch-labels">' + pitchLabels + '</div>' +
-      '</div>';
+      '</div></div>';
   }
-  function diagnosticGrooveHtml(record, extent) {
+  function diagnosticGrooveHtml(record, extent, role='Track') {
     const rows = Array.isArray(record && record.diagnostic_groove) ? record.diagnostic_groove : [];
     if (!rows.length) return '<div class="muted">No groove embedding available.</div>';
-    const beatCount = Math.max(1, rows.length || 16);
+    const columnCount = Math.max(1, rows.length || 16);
     const cells = ['<span class="diagnostic-groove-corner"></span>'];
-    for (let beat = 0; beat < beatCount; beat += 1) {
-      cells.push('<span class="diagnostic-groove-beat">' + (beat + 1) + '</span>');
+    for (let col = 0; col < columnCount; col += 1) {
+      const beatLabel = col % 4 === 0 ? ('Beat ' + (Math.floor(col / 4) + 1)) : '';
+      cells.push('<span class="diagnostic-groove-beat">' + esc(beatLabel) + '</span>');
     }
-    for (let band = 0; band < 3; band += 1) {
+    GROOVE_BAND_DISPLAY_ORDER.forEach(band => {
       cells.push('<span class="diagnostic-groove-band">' + esc(GROOVE_BAND_LABELS[band] || ('B' + (band + 1))) + '</span>');
-      for (let beat = 0; beat < beatCount; beat += 1) {
-        const row = Array.isArray(rows[beat]) ? rows[beat] : [];
+      for (let col = 0; col < columnCount; col += 1) {
+        const row = Array.isArray(rows[col]) ? rows[col] : [];
         const value = Number(row[band]);
         const label = Number.isFinite(value) ? fmt(value, 3) : 'n/a';
-        cells.push('<span class="diagnostic-cell" title="Beat ' + (beat + 1) + ', ' + esc(GROOVE_BAND_LABELS[band]) + ': ' + esc(label) + '" style="background:' + heatmapColor(value, extent) + '"></span>');
+        const beat = Math.floor(col / 4) + 1;
+        const subdivision = (col % 4) + 1;
+        cells.push('<span class="diagnostic-cell" title="Beat ' + beat + ', subdivision ' + subdivision + ', ' + esc(GROOVE_BAND_LABELS[band]) + ': ' + esc(label) + '" style="background:' + heatmapColor(value, extent) + '"></span>');
       }
-    }
-    return '<div class="diagnostic-embedding-block">' +
-      '<div class="diagnostic-embedding-label"><span>Groove</span><span>' + beatCount + ' beats x 3 bands</span></div>' +
-      '<div class="diagnostic-groove-grid" style="grid-template-columns:32px repeat(' + beatCount + ', minmax(0, 1fr))">' + cells.join('') + '</div>' +
-      '</div>';
+    });
+    return '<div class="diagnostic-embedding-panel">' +
+      diagnosticTrackHeaderHtml(record, role) +
+      '<div class="diagnostic-embedding-block">' +
+      '<div class="diagnostic-embedding-label"><span>Groove</span><span>4 beats x 4 subdivisions x 3 bands</span></div>' +
+      '<div class="diagnostic-groove-grid" style="grid-template-columns:34px repeat(' + columnCount + ', minmax(0, 1fr))">' + cells.join('') + '</div>' +
+      '</div></div>';
   }
   function diagnosticEmbeddingComparisonHtml(from, to) {
     const extents = {
@@ -3767,150 +3928,87 @@
       groove: heatmapExtent(from && from.diagnostic_groove, to && to.diagnostic_groove),
     };
     return '<div class="diagnostic-embedding-compare">' +
-      diagnosticTrackHeaderHtml(from, 'Track 1') +
-      diagnosticTrackHeaderHtml(to, 'Track 2') +
-      '<div class="diagnostic-embedding-panel">' + diagnosticChromaHtml(from, extents.chroma) + '</div>' +
-      '<div class="diagnostic-embedding-panel">' + diagnosticChromaHtml(to, extents.chroma) + '</div>' +
-      '<div class="diagnostic-embedding-panel">' + diagnosticGrooveHtml(from, extents.groove) + '</div>' +
-      '<div class="diagnostic-embedding-panel">' + diagnosticGrooveHtml(to, extents.groove) + '</div>' +
+      '<div class="diagnostic-embedding-section"><h4>Chroma</h4><div class="diagnostic-embedding-stack">' +
+      diagnosticChromaHtml(from, extents.chroma, 'Track 1') +
+      diagnosticChromaHtml(to, extents.chroma, 'Track 2') +
+      '</div></div>' +
+      '<div class="diagnostic-embedding-section"><h4>Groove</h4><div class="diagnostic-embedding-stack">' +
+      diagnosticGrooveHtml(from, extents.groove, 'Track 1') +
+      diagnosticGrooveHtml(to, extents.groove, 'Track 2') +
+      '</div></div>' +
       '</div>';
   }
-  function diagnosticWaveformCardHtml(record, role) {
+  function diagnosticWaveformCardHtml(record, role, slot=null) {
     const idx = Number(record && record.idx);
+    const meta = [energyMetaHtml(record, slot), esc(durationText(record))].filter(Boolean).join(' &sdot; ');
     return '<div class="diagnostic-waveform-card">' +
-      '<div class="diagnostic-waveform-head"><b>' + esc(role) + ': ' + esc(record.title || 'Untitled') + '</b><span>' + esc(durationText(record)) + '</span></div>' +
+      '<div class="diagnostic-waveform-head"><button class="play-button" data-play-idx="' + idx + '" data-play-mode="diagnostics" aria-label="Play">▶</button><b>' + esc(role) + ': ' + esc(record.title || 'Untitled') + '</b><span>' + meta + '</span></div>' +
       '<canvas class="diagnostic-waveform-canvas" data-diagnostic-waveform-idx="' + idx + '" height="96" aria-label="' + esc(role) + ' full waveform"></canvas>' +
       '</div>';
   }
-  function diagnosticWaveformComparisonHtml(from, to) {
+  function diagnosticWaveformComparisonHtml(from, to, slot=null) {
     return '<div class="diagnostic-waveform-grid">' +
       diagnosticWaveformCardHtml(from, 'Track 1') +
-      diagnosticWaveformCardHtml(to, 'Track 2') +
+      diagnosticWaveformCardHtml(to, 'Track 2', slot) +
       '</div>';
-  }
-  function scoreMetricsHtml(score) {
-    const rows = [
-      ['Final', score && score.finalScore, 4],
-      ['Transition mix', score && score.baseline, 4],
-      ['Target energy', score && score.target, 2],
-      ['Actual energy', score && score.energy, 2],
-      ['Energy error', score && score.rawError, 2],
-      ['Penalty', score && score.penalty, 4],
-    ];
-    return '<div class="diagnostic-metrics">' + rows.map(row =>
-      '<div><span>' + esc(row[0]) + '</span><b>' + metricValue(row[1], row[2]) + '</b></div>'
-    ).join('') + '</div>';
   }
   function transitionFocusHtml(from, to, score, slot) {
     return '<div class="diagnostic-transition-pair">' +
       '<div>' + trackSummaryHtml(from, { size: 'large', showArt: true }) + '</div>' +
-      '<div class="diagnostic-arrow">-&gt;</div>' +
-      '<div>' + trackSummaryHtml(to, { size: 'large', showArt: true }) + '</div>' +
+      '<div class="diagnostic-arrow">→</div>' +
+      '<div>' + trackSummaryHtml(to, { size: 'large', showArt: true, slot }) + '</div>' +
       '</div>' +
       '<div class="diagnostic-subhead">Slot ' + (slot + 1) + (score && score.missing ? ' <span class="warn">missing direct similarity row</span>' : '') + '</div>' +
-      scoreMetricsHtml(score) +
-      featureBarsHtml(score);
-  }
-  function candidateFeatureScore(c, feature) {
-    const fields = {
-      style: ['styleScore', 'maest_score_norm', 'maest_similarity'],
-      tempo: ['tempoScore', 'tempo_score_norm', 'tempo_similarity'],
-      groove: ['grooveScore', 'groove_score_norm', 'groove_similarity'],
-      harmonic: ['keyScore', 'chroma_score_norm', 'chroma_similarity'],
-    }[feature] || [];
-    for (const field of fields) {
-      const value = Number(c && c[field]);
-      if (Number.isFinite(value)) return value;
-    }
-    return NaN;
-  }
-  function featureNeighborListHtml(sourceIdx, feature, label) {
-    const entry = simMap[String(sourceIdx)] || {};
-    const candidates = Array.isArray(entry.candidates) ? entry.candidates : [];
-    const rows = candidates.map(c => ({
-      c,
-      record: byIdx.get(Number(c.idx)),
-      score: candidateFeatureScore(c, feature),
-    })).filter(row => row.record && Number.isFinite(row.score))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 6);
-    if (!rows.length) {
-      return '<div class="diagnostic-neighbor-card"><h4>' + esc(label) + '</h4><div class="muted">No neighbor scores available.</div></div>';
-    }
-    return '<div class="diagnostic-neighbor-card"><h4>' + esc(label) + '</h4><ol class="diagnostic-neighbor-list">' +
-      rows.map(row => '<li>' +
-        '<span class="diagnostic-neighbor-rank">' + metricValue(row.score, 3) + '</span>' +
-        '<div><b>' + esc(row.record.title) + '</b><span>' + esc(rawGenre(row.record)) + ' / ' + esc(row.record.key || 'key n/a') + ' / ' + esc(roundedBpm(row.record) || 'bpm n/a') + '</span></div>' +
-        '</li>').join('') +
-      '</ol></div>';
-  }
-  function diagnosticsSourceContext() {
-    if (transitionFromIdx !== null && byIdx.has(Number(transitionFromIdx))) {
-      return { idx: Number(transitionFromIdx), label: 'Track 1 source' };
-    }
-    if (selectedIdx !== null && byIdx.has(Number(selectedIdx))) {
-      return { idx: Number(selectedIdx), label: 'Selected track' };
-    }
-    const ctx = recommendationContext();
-    if (ctx.sourceIdx !== null && byIdx.has(Number(ctx.sourceIdx))) {
-      return { idx: Number(ctx.sourceIdx), label: ctx.mode === 'sequence' ? 'Current sequence recommendation source' : 'Recommendation source' };
-    }
-    const filled = sequence.find(idx => idx !== null && byIdx.has(Number(idx)));
-    if (filled !== undefined) return { idx: Number(filled), label: 'First sequence track' };
-    return null;
-  }
-  function nearestFeatureNeighborsHtml(source) {
-    if (!source || !byIdx.has(Number(source.idx))) return '';
-    const record = byIdx.get(Number(source.idx));
-    return '<section class="diagnostic-card wide">' +
-      '<h3>Nearest latent neighbors by feature group</h3>' +
-      '<div class="diagnostic-subhead">' + esc(source.label) + ': <b>' + esc(record.title) + '</b></div>' +
-      '<div class="diagnostic-neighbor-grid">' +
-      featureNeighborListHtml(source.idx, 'style', 'Style / MAEST') +
-      featureNeighborListHtml(source.idx, 'tempo', 'Tempo') +
-      featureNeighborListHtml(source.idx, 'groove', 'Groove') +
-      featureNeighborListHtml(source.idx, 'harmonic', 'Harmonic / chroma') +
-      '</div></section>';
+      scoreSummaryBarsHtml(score) +
+      featureBarsHtml(score) +
+      '<div class="focused-transition-section">' + diagnosticEmbeddingComparisonHtml(from, to) + '</div>' +
+      '<div class="focused-transition-waveforms"><h3>Full track waveforms</h3>' +
+      '<div class="diagnostic-subhead">Click or drag either waveform to play and scrub the full track.</div>' +
+      diagnosticWaveformComparisonHtml(from, to, slot) + '</div>';
   }
   function sequenceTransitionTableHtml() {
     const filled = [];
     for (let i = 0; i < sequence.length; i += 1) {
       if (sequence[i] !== null) filled.push({ slot: i, idx: Number(sequence[i]) });
     }
-    if (filled.length < 2) {
-      return '<section class="diagnostic-card wide"><h3>Sequence transition scores</h3><div class="muted">Add at least two tracks to inspect sequence transition scores.</div></section>';
+    if (!filled.length) {
+      return '<section class="diagnostic-card wide sequence-score-card"><div class="muted">Add tracks to inspect sequence transition scores.</div></section>';
     }
 
-    let html = '<section class="diagnostic-card wide"><h3>Sequence transition scores</h3><div class="diagnostic-table-wrap"><table><thead><tr>' +
-      '<th class="num">From</th><th class="num">To</th><th>Transition</th>' +
-      '<th class="num">Final</th><th class="num">Transition</th><th class="num">Target</th><th class="num">Energy</th>' +
-      '<th class="num">Err</th><th class="num">Penalty</th><th class="num">Style</th><th class="num">Tempo</th><th class="num">Groove</th><th class="num">Key</th>' +
+    const metricCell = (value, cls, strength=value, label='') =>
+      recommendationMetricCell(value, cls, strength, 2, label);
+    const emptyMetricCell = () =>
+      '<td class="num recommendation-score-cell sequence-empty-score"><span class="muted">—</span></td>';
+    const rankCell = rankInfo =>
+      '<td class="num recommendation-score-cell">' + (rankInfo ? rankMeterHtml(rankInfo) : '<span class="muted">—</span>') + '</td>';
+
+    let html = '<section class="diagnostic-card wide sequence-score-card"><div class="diagnostic-table-wrap"><table><thead><tr>' +
+      '<th class="num">Slot</th><th class="num">Actions</th><th>Waveform</th><th>Track</th><th class="num">Rank</th><th class="num">Final</th><th class="num">Mix</th><th class="num">Fit</th><th class="num">Loss</th>' +
+      '<th class="num">Style</th><th class="num">Tempo</th><th class="num">Groove</th><th class="num">Key</th>' +
       '</tr></thead><tbody>';
-    for (let i = 0; i < filled.length - 1; i += 1) {
-      const from = filled[i];
-      const to = filled[i + 1];
-      const src = byIdx.get(from.idx);
-      const dst = byIdx.get(to.idx);
-      const score = scoreTransition(from.idx, to.idx, to.slot);
+
+    filled.forEach((current, i) => {
+      const record = byIdx.get(current.idx);
+      const previous = i > 0 ? filled[i - 1] : null;
+      const score = previous ? scoreTransition(previous.idx, current.idx, current.slot) : scoreInitialCandidate(current.idx, current.slot);
+      const rankInfo = previous ? transitionRecommendationRank(previous.idx, current.idx, current.slot) : null;
       html += '<tr>' +
-        '<td class="num">' + (from.slot + 1) + '</td>' +
-        '<td class="num">' + (to.slot + 1) + '</td>' +
-        '<td><b>' + esc(src ? src.title : from.idx) + '</b> -> <b>' + esc(dst ? dst.title : to.idx) + '</b>' +
-        '<br><button class="play-button" data-play-idx="' + from.idx + '" aria-label="Play">▶</button> ' +
-        '<button class="play-button" data-play-idx="' + to.idx + '" aria-label="Play">▶</button>' +
-        (score.missing ? '<br><span class="warn">missing similarity row</span>' : '') + '</td>' +
-        '<td class="num">' + fmt(score.finalScore, 4) + '</td>' +
-        '<td class="num">' + fmt(score.baseline, 4) + '</td>' +
-        '<td class="num">' + fmt(score.target, 2) + '</td>' +
-        '<td class="num">' + fmt(score.energy, 2) + '</td>' +
-        '<td class="num">' + fmt(score.rawError, 2) + '</td>' +
-        '<td class="num">' + fmt(score.penalty, 4) + '</td>' +
-        '<td class="num">' + fmt(score.styleScore, 4) + '</td>' +
-        '<td class="num">' + fmt(score.tempoScore, 4) + '</td>' +
-        '<td class="num">' + fmt(score.grooveScore, 4) + '</td>' +
-        '<td class="num">' + fmt(score.keyScore, 4) + '</td>' +
+        '<td class="num">' + (current.slot + 1) + '</td>' +
+        '<td class="num"><div class="table-actions"><button class="play-button" data-play-idx="' + current.idx + '" data-play-mode="library" aria-label="Play">▶</button></div></td>' +
+        '<td class="waveform-cell">' + rowWaveformScrubberHtml(record, { showTime: false }) + '</td>' +
+        '<td>' + trackSummaryHtml(record, { size: 'compact', showArt: true, slot: current.slot }) +
+          (score && score.missing ? '<div class="warn">missing similarity row</div>' : '') + '</td>' +
+        rankCell(rankInfo) +
+        (previous ? metricCell(score.finalScore, 'final', score.finalScore, 'Final score') : emptyMetricCell()) +
+        (previous ? metricCell(score.baseline, 'mix', score.baseline, 'Weighted mix score') : emptyMetricCell()) +
+        (previous ? metricCell(score.energyScore, 'energy', score.energyScore, 'Energy fit score') : emptyMetricCell()) +
+        metricCell(score.penalty, 'penalty', score.penalty, previous ? 'Energy score loss' : 'Initial target loss') +
+        (previous ? metricCell(score.styleScore, 'style', score.styleScore, 'Style score') : emptyMetricCell()) +
+        (previous ? metricCell(score.tempoScore, 'tempo', score.tempoScore, 'Tempo score') : emptyMetricCell()) +
+        (previous ? metricCell(score.grooveScore, 'groove', score.grooveScore, 'Groove score') : emptyMetricCell()) +
+        (previous ? metricCell(score.keyScore, 'harmonic', score.keyScore, 'Harmonic score') : emptyMetricCell()) +
         '</tr>';
-    }
+    });
     html += '</tbody></table></div></section>';
     return html;
   }
@@ -3932,30 +4030,12 @@
   }
   function renderTransitionDiagnostics() {
     if (!els.transitionDiagnostics) return;
-    const from = transitionFromIdx === null ? null : byIdx.get(transitionFromIdx);
-    const to = transitionToIdx === null ? null : byIdx.get(transitionToIdx);
-    const slot = Math.max(0, targetSlot());
     let html = '<div class="diagnostics-grid">';
-    if (from && to) {
-      const score = scoreTransition(transitionFromIdx, transitionToIdx, slot);
-      html += '<section class="diagnostic-card"><h3>Groove and harmonic comparison</h3>' +
-        '<div class="diagnostic-subhead">' + esc(from.title) + ' -&gt; ' + esc(to.title) + '</div>' +
-        diagnosticEmbeddingComparisonHtml(from, to) +
-        '</section>';
-      html += '<section class="diagnostic-card"><h3>Raw transition metrics</h3>' + scoreMetricsHtml(score) + '</section>';
-      html += '<section class="diagnostic-card wide"><h3>Full track waveforms</h3>' +
-        '<div class="diagnostic-subhead">Click or drag either waveform to play and scrub the full track.</div>' +
-        diagnosticWaveformComparisonHtml(from, to) +
-        '</section>';
-    } else {
-      html += '<section class="diagnostic-card"><h3>Focused transition</h3><div class="muted">Set Track 1 and Track 2 to inspect a specific transition. The neighbor panels below use the current recommendation source when no transition is selected.</div></section>';
-    }
-    html += nearestFeatureNeighborsHtml(diagnosticsSourceContext());
     html += sequenceTransitionTableHtml();
     html += '</div>';
     els.transitionDiagnostics.innerHTML = html;
     updatePlayButtons();
-    drawDiagnosticWaveforms();
+    updateRowScrubbers();
   }
   function valueRange(rows, getter) {
     const vals = rows.map(getter).map(Number).filter(Number.isFinite);
@@ -3987,6 +4067,21 @@
       '<span class="score-meter-track"><i style="width:' + pct.toFixed(1) + '%"></i></span>' +
       '</div>';
   }
+  function rankMeterHtml(rankInfo) {
+    const rank = Number(rankInfo && rankInfo.rank);
+    const total = Number(rankInfo && rankInfo.total);
+    const finite = Number.isFinite(rank) && rank > 0;
+    const strength = finite && Number.isFinite(total) && total > 1
+      ? 1 - ((rank - 1) / Math.max(1, total - 1))
+      : (finite ? 1 : 0);
+    const title = finite
+      ? 'Recommendation rank: #' + rank + (Number.isFinite(total) && total > 0 ? ' of ' + total : '')
+      : 'Recommendation rank: n/a';
+    return '<div class="score-meter rank' + (finite ? '' : ' empty') + (showScoreValues() ? '' : ' bars-only') + '" title="' + esc(title) + '">' +
+      '<span class="score-meter-value">' + (finite ? ('#' + rank) : 'n/a') + '</span>' +
+      '<span class="score-meter-track"><i style="width:' + (clamp(strength, 0, 1) * 100).toFixed(1) + '%"></i></span>' +
+      '</div>';
+  }
   function renderRecommendations() {
     const restoreQueryFocus = document.activeElement
       && document.activeElement.getAttribute
@@ -4000,8 +4095,6 @@
     const ctx = recommendationContext(slot);
     const prepared = preparedRecommendationRows(25);
     const rows = prepared.rows;
-    const finalRange = valueRange(rows, r => r.finalScore);
-    const penaltyRange = valueRange(rows, r => r.penalty);
     const actionLabel = sequence[slot] === null ? 'Append' : 'Replace';
     const actionSymbol = sequence[slot] === null ? '+' : '⇄';
     let html = filterbar +
@@ -4013,22 +4106,23 @@
           (prepared.pinnedOutsideQueryCount ? ', plus <b>' + prepared.pinnedOutsideQueryCount + '</b> pinned outside the search.' : '.')
         : 'Showing top <b>' + Math.min(25, prepared.matchedCount) + '</b> of <b>' + prepared.allRows.length + '</b> scored candidates.') +
       '</div>' +
-      '<table><thead><tr><th class="num">#</th><th>Actions</th><th>Track</th><th class="num">Final</th><th class="num">Mix</th><th class="num">Energy</th><th class="num">Penalty</th><th class="num">Style</th><th class="num">Tempo</th><th class="num">Groove</th><th class="num">Key</th></tr></thead><tbody>';
+      '<table><thead><tr><th class="num">#</th><th>Actions</th><th>Waveform</th><th>Track</th><th class="num">Final</th><th class="num">Mix</th><th class="num">Fit</th><th class="num">Loss</th><th class="num">Style</th><th class="num">Tempo</th><th class="num">Groove</th><th class="num">Key</th></tr></thead><tbody>';
     rows.forEach((r, i) => {
       const isPinned = pinnedRecommendationIdxs.has(Number(r.idx));
       html += '<tr' + (isPinned ? ' class="pinned-row"' : '') + '><td class="num">' + (isPinned ? '★ ' : '') + (r.globalRank || (i + 1)) + '</td>' +
         '<td><div class="table-actions">' +
-        actionSymbolButton('data-pin-rec-idx="' + r.idx + '"', isPinned ? '★' : '☆', isPinned ? 'Unpin candidate' : 'Pin candidate', isPinned ? 'is-active' : '') +
-        '<button class="play-button" data-play-idx="' + r.idx + '" aria-label="Play">▶</button>' +
+        actionSymbolButton('data-pin-rec-idx="' + r.idx + '"', isPinned ? '★' : '☆', isPinned ? 'Unpin candidate' : 'Pin candidate', isPinned ? 'pin-active' : 'pin-button') +
         actionSymbolButton('data-append-idx="' + r.idx + '"', actionSymbol, actionLabel + ' to sequence', 'primary') +
-        actionSymbolButton('data-library-outgoing="' + r.idx + '"', '1', 'Set as Track 1') +
-        actionSymbolButton('data-library-incoming="' + r.idx + '"', '2', 'Set as Track 2') +
+        actionSymbolButton('data-library-outgoing="' + r.idx + '"', '1', 'Set as Track 1', 'track-one') +
+        actionSymbolButton('data-library-incoming="' + r.idx + '"', '2', 'Set as Track 2', 'track-two') +
+        '<button class="play-button" data-play-idx="' + r.idx + '" data-play-mode="library" aria-label="Play">▶</button>' +
         '</div></td>' +
-        '<td>' + trackSummaryHtml(r, { size: 'compact', showArt: true }) + '</td>' +
-        recommendationMetricCell(r.finalScore, 'final', relativeStrength(r.finalScore, finalRange, r.finalScore), 2, 'Final score') +
+        '<td class="waveform-cell">' + rowWaveformScrubberHtml(r, { showTime: false }) + '</td>' +
+        '<td>' + trackSummaryHtml(r, { size: 'compact', showArt: true, slot: r.slot ?? slot }) + '</td>' +
+        recommendationMetricCell(r.finalScore, 'final', r.finalScore, 2, 'Final score') +
         recommendationMetricCell(r.baseline, 'mix', r.baseline, 2, 'Weighted mix score') +
-        recommendationMetricCell(r.energy, 'energy', (Number(r.energy) - 1) / 8, 2, 'Actual energy') +
-        recommendationMetricCell(r.penalty, 'penalty', relativeStrength(r.penalty, penaltyRange, 0), 2, 'Energy penalty') +
+        recommendationMetricCell(r.energyScore, 'energy', r.energyScore, 2, 'Energy fit score') +
+        recommendationMetricCell(r.penalty, 'penalty', r.penalty, 2, 'Energy score loss') +
         recommendationMetricCell(r.styleScore, 'style', r.styleScore, 2, 'Style score') +
         recommendationMetricCell(r.tempoScore, 'tempo', r.tempoScore, 2, 'Tempo score') +
         recommendationMetricCell(r.grooveScore, 'groove', r.grooveScore, 2, 'Groove score') +
@@ -4036,7 +4130,7 @@
         '</tr>';
     });
     if (!rows.length) {
-      html += '<tr><td colspan="11" class="muted" style="padding:10px;">No recommendations match the current filters.</td></tr>';
+      html += '<tr><td colspan="12" class="muted" style="padding:10px;">No recommendations match the current filters.</td></tr>';
     }
     html += '</tbody></table>';
     els.recommendationPanel.innerHTML = html;
@@ -4048,6 +4142,8 @@
         try { queryInput.setSelectionRange(n, n); } catch (err) {}
       }
     }
+    updatePlayButtons();
+    updateRowScrubbers();
   }
   function renderEnergyCurve() {
     const targets = targetCurve();
@@ -4080,6 +4176,7 @@
     if (from && to) {
       const slot = Math.max(0, targetSlot());
       const score = scoreTransition(transitionFromIdx, transitionToIdx, slot);
+      const rankInfo = transitionRecommendationRank(transitionFromIdx, transitionToIdx, slot);
       const meterRows = [
         ['Final', score.finalScore, 'final', score.finalScore, 'Final score'],
         ['Mix', score.baseline, 'mix', score.baseline, 'Weighted mix score'],
@@ -4087,14 +4184,15 @@
         ['Tempo', score.tempoScore, 'tempo', score.tempoScore, 'Tempo score'],
         ['Groove', score.grooveScore, 'groove', score.grooveScore, 'Groove score'],
         ['Key', score.keyScore, 'harmonic', score.keyScore, 'Harmonic score'],
-        ['Penalty', score.penalty, 'penalty', score.penalty, 'Energy penalty'],
+        ['Loss', score.penalty, 'penalty', score.penalty, 'Energy score loss'],
+        ['Rank #', rankInfo, 'rank', NaN, 'Recommendation rank'],
       ];
       scoreHtml =
         '<div class="transition-mini-score">' +
         '<div class="transition-mini-meter-list">' +
         meterRows.map(row =>
           '<div class="transition-mini-meter-row"><span>' + esc(row[0]) + '</span>' +
-          scoreMeterHtml(row[1], row[2], row[3], 2, row[4]) +
+          (row[2] === 'rank' ? rankMeterHtml(row[1]) : scoreMeterHtml(row[1], row[2], row[3], 2, row[4])) +
           '</div>'
         ).join('') +
         '</div>' +
@@ -4157,7 +4255,7 @@
         '<canvas class="transition-section-canvas" data-transition-surface="section" data-transition-deck="' + esc(deck) + '" height="245"></canvas>' +
         '</div>' +
         '<aside class="transition-track-side">' +
-        '<div class="transition-track-meta"><div class="transition-track-label">' + esc(cfg.label) + '</div>' + trackMetaHtml(info.record) + '</div>' +
+        '<div class="transition-track-meta"><div class="transition-track-label">' + esc(cfg.label) + '</div>' + trackPreviewMetaHtml(info.record) + '</div>' +
         laneToolsHtml(deck) +
         '</aside>' +
         '</div>';
@@ -4464,7 +4562,7 @@
     const x0 = xForTransitionTime(selectedStart, view, lane);
     const x1 = xForTransitionTime(selectedEnd, view, lane);
     ctx.save();
-    ctx.fillStyle = info.cfg.deck === 'from' ? 'rgba(16,185,129,.16)' : 'rgba(245,158,11,.16)';
+    ctx.fillStyle = info.cfg.deck === 'from' ? roleColors.track1Fill : roleColors.track2Fill;
     ctx.fillRect(x0, lane.y, Math.max(2, x1 - x0), lane.h);
     ctx.strokeStyle = info.cfg.color;
     ctx.lineWidth = 2;
@@ -4676,7 +4774,7 @@
       '<div class="transition-editor"><div class="transition-editor-empty warn">Transition editor failed to render. Other app controls remain available.</div></div>'
     );
     const t = transitionRender && transitionRender.transition ? transitionRender.transition : null;
-    const metaText = t ? (String(t.from_track_number || '') + ' ' + (t.from_title || '') + ' -> ' + String(t.to_track_number || '') + ' ' + (t.to_title || '') + (t.duration_seconds ? ' / ' + Number(t.duration_seconds).toFixed(2) + 's' : '')) : 'No render yet';
+    const metaText = t ? (String(t.from_track_number || '') + ' ' + (t.from_title || '') + ' → ' + String(t.to_track_number || '') + ' ' + (t.to_title || '') + (t.duration_seconds ? ' / ' + Number(t.duration_seconds).toFixed(2) + 's' : '')) : 'No render yet';
     const linksHtml = transitionRender && transitionRender.urls ?
       '<a href="' + esc(transitionRender.urls.preview) + '" target="_blank">WAV</a>' : '';
     els.transitionPreview.innerHTML =
@@ -5097,8 +5195,8 @@
     if (els.weightChroma) els.weightChroma.value = String((config.weights && config.weights.chroma) || 0.25);
     if (els.weightTempo) els.weightTempo.value = String((config.weights && config.weights.tempo) || 0.15);
   }
-  setActionButton(els.setOutgoing, '1', 'Set selected track as Track 1');
-  setActionButton(els.setIncoming, '2', 'Set selected track as Track 2');
+  setActionButton(els.setOutgoing, '1', 'Set selected track as Track 1', 'track-one');
+  setActionButton(els.setIncoming, '2', 'Set selected track as Track 2', 'track-two');
   setActionButton(els.clearTransition, '×', 'Clear transition pair', 'danger');
   setActionButton(els.clearLast, '−', 'Clear last sequence track', 'danger');
   setActionButton(els.resetSequence, '⌧', 'Reset sequence', 'danger');

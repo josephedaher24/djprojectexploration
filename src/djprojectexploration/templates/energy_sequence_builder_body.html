@@ -36,11 +36,7 @@
           <div id="map-zoom-controls" class="map-zoom-controls" aria-label="Map zoom and pan controls">
             <button type="button" data-map-action="zoom-in" aria-label="Zoom in" title="Zoom in (+ or i)">+</button>
             <button type="button" data-map-action="zoom-out" aria-label="Zoom out" title="Zoom out (-)">−</button>
-            <button type="button" data-map-action="pan-left" aria-label="Pan left" title="Pan left (←)">←</button>
-            <button type="button" data-map-action="pan-up" aria-label="Pan up" title="Pan up (↑)">↑</button>
-            <button type="button" data-map-action="pan-down" aria-label="Pan down" title="Pan down (↓)">↓</button>
-            <button type="button" data-map-action="pan-right" aria-label="Pan right" title="Pan right (→)">→</button>
-            <button type="button" data-map-action="reset" aria-label="Reset map view" title="Home / reset view (R)">H</button>
+            <button type="button" data-map-action="reset" aria-label="Reset map view" title="Reset view (R)">R</button>
           </div>
           <canvas id="map-mini-map" class="map-mini-map" width="180" height="120" aria-label="Mini map"></canvas>
           <div id="song-hover-card" class="song-hover-card hidden"></div>
@@ -76,8 +72,8 @@
               <option value="glm">Auto energy</option>
             </select>
           </label>
-          <label>Energy penalty <input id="energy-penalty-scale" type="range" min="0" max="10" step="0.05" value="2"></label>
-          <output id="energy-penalty-scale-val">2.00</output>
+          <label>Energy penalty <input id="energy-penalty-scale" type="range" min="0" max="1" step="0.01" value="0.25"></label>
+          <output id="energy-penalty-scale-val">0.25</output>
           {{WEIGHT_CONTROLS_HTML}}
         </div>
         <div class="misc-control-grid" aria-label="Map and sequence options">
@@ -144,7 +140,7 @@
       <div id="current-transition-score" class="current-transition-score"></div>
     </div>
     <div>
-      <h2>Diagnostics Workspace</h2>
+      <h2>Sequence Transition Scores</h2>
       <div id="transition-diagnostics" class="transition-diagnostics"></div>
     </div>
   </section>
@@ -162,6 +158,6 @@
   <input id="global-scrub" class="scrub-range global-scrub" type="range" min="0" max="1" step="0.1" value="0">
   <div id="global-time" class="scrub-time">0:00 / 0:00</div>
   <div class="global-volume" title="Volume"><button id="global-volume-button" class="volume-icon" type="button" aria-label="Mute" title="Mute"><svg viewBox="0 0 32 32" focusable="false"><path d="M3 12h7l8-8c1.1-1 3-.3 3 1.2v21.6c0 1.5-1.9 2.2-3 1.2l-8-8H3c-1.1 0-2-.9-2-2v-4c0-1.1.9-2 2-2Z"/><path d="M24 11c1.8 2.9 1.8 7.1 0 10"/><path d="M27.8 7.2c3.8 5.2 3.8 12.4 0 17.6"/></svg></button><span class="sr-only">Volume</span><input id="global-volume" class="scrub-range" type="range" min="0" max="1" step="0.01" value="0.85"></div>
-  <button id="global-track1" type="button">Track 1</button>
-  <button id="global-track2" type="button">Track 2</button>
+  <button id="global-track1" class="track-one" type="button">Track 1</button>
+  <button id="global-track2" class="track-two" type="button">Track 2</button>
 </div>

@@ -32,7 +32,9 @@ from djprojectexploration.pacmap_settings import (
     PacmapSettings,
     SequenceBuilderUiSettings,
     add_pacmap_args,
+    ensure_numba_cache_dir,
     pacmap_settings_from_args,
+    sequence_builder_run_settings_from_args,
     sequence_builder_ui_settings_from_args,
 )
 from djprojectexploration.interactive_visualization_common import simplify_genre
@@ -466,6 +468,7 @@ def _build_similarity_payload(
 
 def _compute_pacmap_coords(features: SongFeatureSet, *, random_state: int, n_neighbors: int) -> np.ndarray:
     try:
+        ensure_numba_cache_dir()
         import pacmap
     except ImportError as exc:
         raise ImportError("PaCMAP is not installed. Install with: pip install pacmap") from exc
@@ -588,7 +591,7 @@ def _build_plot(records: list[dict[str, Any]], coords: np.ndarray, *, plot_div_i
         y=[],
         mode="lines",
         name="Transition pair",
-        line={"color": "rgba(245,158,11,0.0)", "width": 0},
+        line={"color": "rgba(192,132,252,0.0)", "width": 0},
         hoverinfo="skip",
         showlegend=True,
     )
@@ -597,10 +600,10 @@ def _build_plot(records: list[dict[str, Any]], coords: np.ndarray, *, plot_div_i
         y=[],
         mode="markers+text",
         name="Track 1",
-        marker={"size": 20, "color": "rgba(16,185,129,0.18)", "line": {"color": "#10b981", "width": 3}},
+        marker={"size": 20, "color": "rgba(56,189,248,0.18)", "line": {"color": "#38bdf8", "width": 3}},
         text=[],
         textposition="top center",
-        textfont={"color": "#6ee7b7", "size": 12},
+        textfont={"color": "#bae6fd", "size": 12},
         hoverinfo="skip",
         showlegend=True,
     )
@@ -609,10 +612,10 @@ def _build_plot(records: list[dict[str, Any]], coords: np.ndarray, *, plot_div_i
         y=[],
         mode="markers+text",
         name="Track 2",
-        marker={"size": 20, "color": "rgba(245,158,11,0.18)", "line": {"color": "#f59e0b", "width": 3}},
+        marker={"size": 20, "color": "rgba(192,132,252,0.18)", "line": {"color": "#c084fc", "width": 3}},
         text=[],
         textposition="top center",
-        textfont={"color": "#fbbf24", "size": 12},
+        textfont={"color": "#f3e8ff", "size": 12},
         hoverinfo="skip",
         showlegend=True,
     )
@@ -621,10 +624,10 @@ def _build_plot(records: list[dict[str, Any]], coords: np.ndarray, *, plot_div_i
         y=[],
         mode="markers+text",
         name="Sequence path",
-        marker={"size": 13, "color": "#14b8a6", "line": {"color": "#ecfeff", "width": 1.5}},
+        marker={"size": 14, "symbol": "square", "color": "rgba(251,146,60,0.24)", "line": {"color": "#fb923c", "width": 2}},
         text=[],
         textposition="top center",
-        textfont={"color": "#99f6e4", "size": 12},
+        textfont={"color": "#fed7aa", "size": 12},
         hoverinfo="skip",
         showlegend=True,
     )
@@ -633,7 +636,7 @@ def _build_plot(records: list[dict[str, Any]], coords: np.ndarray, *, plot_div_i
         y=[],
         mode="lines",
         name="Recommended next links",
-        line={"color": "rgba(245,158,11,0.0)", "width": 0},
+        line={"color": "rgba(52,211,153,0.0)", "width": 0},
         hoverinfo="skip",
         showlegend=True,
     )
@@ -642,10 +645,10 @@ def _build_plot(records: list[dict[str, Any]], coords: np.ndarray, *, plot_div_i
         y=[],
         mode="markers+text",
         name="Recommended next",
-        marker={"size": 15, "color": "rgba(245,158,11,0.10)", "line": {"color": "rgba(245,158,11,0.62)", "width": 1.5}},
+        marker={"size": 15, "color": "rgba(52,211,153,0.12)", "line": {"color": "rgba(52,211,153,0.74)", "width": 1.5}},
         text=[],
         textposition="bottom center",
-        textfont={"color": "#fbbf24", "size": 11},
+        textfont={"color": "#d1fae5", "size": 11},
         customdata=[],
         hoverinfo="skip",
         hovertemplate=None,
@@ -1096,9 +1099,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Export an interactive energy sequence builder HTML view.")
     parser.add_argument("--output-file", type=Path, default=None)
     parser.add_argument("--energy-npz", type=Path, default=None)
-    parser.add_argument("--sequence-length", type=int, default=10)
+    parser.add_argument("--sequence-length", type=int, default=None)
     parser.add_argument("--mix", action="append", dest="mix_slugs", default=None, help="Mix slug to include; repeatable.")
-    parser.add_argument("--control-mode", choices=CONTROL_MODE_CHOICES, default="genre-mixability")
+    parser.add_argument("--control-mode", choices=CONTROL_MODE_CHOICES, default=None)
     add_pacmap_args(parser, include_static_layout=True)
     parser.add_argument(
         "--static",
@@ -1111,16 +1114,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     pacmap_settings = pacmap_settings_from_args(args)
     ui_settings = sequence_builder_ui_settings_from_args(args)
+    run_settings = sequence_builder_run_settings_from_args(args)
+    project_root = PROJECT_ROOT.expanduser().resolve()
+    if run_settings.tracklists and not (args.mix_slugs or run_settings.mix_slugs):
+        raise SystemExit("Standalone sequence-builder export presets must use mix_slugs; tracklists are supported by the served app.")
 
     output_file = export_dj_sequence(
-        output_file=args.output_file,
-        energy_npz_path=args.energy_npz,
-        default_length=args.sequence_length,
-        control_mode=args.control_mode,
+        output_file=_resolve_project_path(project_root, args.output_file or run_settings.output_file),
+        energy_npz_path=_resolve_project_path(project_root, args.energy_npz or run_settings.energy_npz_path),
+        default_length=args.sequence_length or run_settings.sequence_length or 10,
+        control_mode=args.control_mode or run_settings.control_mode or "genre-mixability",
         pacmap_settings=pacmap_settings,
         ui_settings=ui_settings,
         settings_preset_source=args.pacmap_preset,
-        mix_slugs=args.mix_slugs,
+        mix_slugs=args.mix_slugs or run_settings.mix_slugs,
         open_browser=bool(args.open),
     )
     print(f"Saved DJ sequence builder HTML: {output_file}")
@@ -1128,6 +1135,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 export_energy_sequence_builder = export_dj_sequence
+
+
+def _resolve_project_path(project_root: Path, path: Path | None) -> Path | None:
+    if path is None:
+        return None
+    path = path.expanduser()
+    return path if path.is_absolute() else project_root / path
 
 
 if __name__ == "__main__":

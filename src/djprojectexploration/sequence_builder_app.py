@@ -25,6 +25,7 @@ from djprojectexploration.pacmap_settings import (
     SequenceBuilderUiSettings,
     add_pacmap_args,
     pacmap_settings_from_args,
+    sequence_builder_run_settings_from_args,
     sequence_builder_ui_settings_from_args,
 )
 from djprojectexploration.tracklists import load_playlist_tracks
@@ -43,6 +44,19 @@ def _tracklists_from_mix_slugs(project_root: Path, mix_slugs: list[str] | None) 
         project_root / "music" / mix_slug / f"{mix_slug.replace('-', '_')}_tracks.csv"
         for mix_slug in mix_slugs
     ]
+
+
+def _resolve_project_path(project_root: Path, path: Path | None) -> Path | None:
+    if path is None:
+        return None
+    path = path.expanduser()
+    return path if path.is_absolute() else project_root / path
+
+
+def _resolve_project_paths(project_root: Path, paths: list[Path] | None) -> list[Path] | None:
+    if paths is None:
+        return None
+    return [_resolve_project_path(project_root, path) for path in paths if _resolve_project_path(project_root, path) is not None]
 
 
 class SequenceBuilderApp:
@@ -239,10 +253,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
     parser.add_argument("--mix", action="append", dest="mix_slugs", default=None, help="Mix slug to include; repeatable.")
     parser.add_argument("--tracklist", action="append", type=Path, default=None, help="Tracklist CSV to include; repeatable.")
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--energy-npz", type=Path, default=None)
-    parser.add_argument("--sequence-length", type=int, default=10)
-    parser.add_argument("--control-mode", choices=CONTROL_MODE_CHOICES, default="genre-mixability")
+    parser.add_argument("--sequence-length", type=int, default=None)
+    parser.add_argument("--control-mode", choices=CONTROL_MODE_CHOICES, default=None)
     add_pacmap_args(parser, include_static_layout=False)
     parser.add_argument(
         "--dynamic-layout",
@@ -257,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     pacmap_settings = pacmap_settings_from_args(args)
     ui_settings = sequence_builder_ui_settings_from_args(args)
+    run_settings = sequence_builder_run_settings_from_args(args)
     use_dynamic_layout = not bool(args.static_layout)
     if bool(args.dynamic_layout) or bool(args.static_layout) or args.pacmap_preset is None:
         pacmap_settings = PacmapSettings(
@@ -267,16 +282,20 @@ def main(argv: list[str] | None = None) -> int:
         ).validate()
 
     project_root = args.project_root.expanduser().resolve()
-    tracklists = args.tracklist or _tracklists_from_mix_slugs(project_root, args.mix_slugs)
+    preset_tracklists = _resolve_project_paths(project_root, run_settings.tracklists)
+    tracklists = args.tracklist or preset_tracklists or _tracklists_from_mix_slugs(
+        project_root,
+        args.mix_slugs or run_settings.mix_slugs,
+    )
     serve_sequence_builder_app(
         host=args.host,
         port=args.port,
         project_root=project_root,
         tracklists=tracklists,
-        output_dir=args.output_dir,
-        energy_npz_path=args.energy_npz,
-        sequence_length=args.sequence_length,
-        control_mode=args.control_mode,
+        output_dir=_resolve_project_path(project_root, args.output_dir or run_settings.output_dir) or DEFAULT_OUTPUT_DIR,
+        energy_npz_path=_resolve_project_path(project_root, args.energy_npz or run_settings.energy_npz_path),
+        sequence_length=args.sequence_length or run_settings.sequence_length or 10,
+        control_mode=args.control_mode or run_settings.control_mode or "genre-mixability",
         pacmap_settings=pacmap_settings,
         ui_settings=ui_settings,
         settings_preset_source=args.pacmap_preset,

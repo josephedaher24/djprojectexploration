@@ -1,4 +1,12 @@
 {
+  "mix_slugs": [
+    "aries-mix",
+    "ara-mix"
+  ],
+  "energy_npz": "data/energy_embeddings/aries_ara_energy_features.npz",
+  "output_file": "data/exports/aries_ara_sequence_builder.html",
+  "sequence_length": 10,
+  "control_mode": "genre-mixability",
   "n_neighbors": 15,
   "MN_ratio": 1.0,
   "FP_ratio": 1.0,

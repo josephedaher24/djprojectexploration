@@ -1,9 +1,11 @@
 {
   "mix_slugs": [
-    "energycurvedataset"
+    "aries-mix",
+    "ara-mix",
+    "bootes-mix"
   ],
-  "energy_npz": "data/energy_embeddings/energycurvedataset_energy_features.npz",
-  "output_file": "data/exports/energycurvedataset_sequence_builder.html",
+  "energy_npz": "data/energy_embeddings/aries_ara_bootes_energy_features.npz",
+  "output_file": "data/exports/aries_ara_bootes_sequence_builder.html",
   "sequence_length": 10,
   "control_mode": "genre-mixability",
   "n_neighbors": 25,
@@ -19,7 +21,7 @@
   "random_state": 7777,
   "ui": {
     "latent_links_per_track": 3,
-    "recommended_links_highlight": 10,
+    "recommended_links_highlight": 25,
     "point_color": "genre",
     "map_renderer": "webgl",
     "map_fx": true

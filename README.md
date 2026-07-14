@@ -324,9 +324,22 @@ For the current energy curve dataset preset:
 
 ```bash
 uv run djprojectexploration-sequence-builder-app \
-  --mix energycurvedataset \
-  --energy-npz data/energy_embeddings/energycurvedataset_energy_features.npz \
   --pacmap-preset presets/pacmap/energycurvedataset_dynamic.json
+```
+
+Presets can also include the sequence-builder dataset inputs, so a combined Aries/Ara/Bootes export can be built with
+one argument:
+
+```bash
+uv run djprojectexploration-energy-sequence-builder \
+  --pacmap-preset presets/pacmap/aries_ara_bootes_dynamic.json
+```
+
+Serve the same preset locally:
+
+```bash
+uv run djprojectexploration-sequence-builder-app \
+  --pacmap-preset presets/pacmap/aries_ara_bootes_dynamic.json
 ```
 
 ### Interactive DJ PaCMAP / UMAP

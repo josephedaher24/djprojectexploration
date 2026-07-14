@@ -34,6 +34,7 @@ from djprojectexploration.pacmap_settings import (
     PACMAP_PAIR_SOURCE_CHOICES,
     PacmapSettings,
     add_pacmap_args,
+    ensure_numba_cache_dir,
     pacmap_settings_from_args,
 )
 
@@ -464,6 +465,7 @@ def _compute_pacmap_knn_simplex_layouts(
     layout_init: str,
 ) -> dict[str, list[list[float]]]:
     try:
+        ensure_numba_cache_dir()
         import pacmap
     except ImportError as exc:
         raise ImportError("PaCMAP is not installed. Install with: uv add pacmap") from exc
@@ -554,6 +556,7 @@ def _compute_pacmap_knn_4way_layouts(
     layout_init: str,
 ) -> dict[str, list[list[float]]]:
     try:
+        ensure_numba_cache_dir()
         import pacmap
     except ImportError as exc:
         raise ImportError("PaCMAP is not installed. Install with: uv add pacmap") from exc
