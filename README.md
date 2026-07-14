@@ -97,11 +97,10 @@ The generated CSV includes `track_number`, `title`, `artists`, `mp3_name`, `file
 `genre`, `key shift`, and `energy`. Tag values are filled from audio metadata when available; cue/onset, key-shift, and
 energy can be added later by importers or manual labeling.
 
-For a fuller app-ready build, use the dataset orchestrator. Snippet caches are optional legacy playback artifacts; the
-current sequence-builder app uses source audio plus waveform features, so app-focused builds can skip snippets:
+For a fuller app-ready build, use the dataset orchestrator:
 
 ```bash
-uv run djprojectexploration-build-dataset path/to/music-folder --name my-set --skip-snippets
+uv run djprojectexploration-build-dataset path/to/music-folder --name my-set
 ```
 
 This creates `music/my-set/my_set_tracks.csv`, validates it, then runs waveform extraction, MAEST, chroma, tempo,
@@ -112,8 +111,7 @@ explicitly:
 ```bash
 uv run djprojectexploration-build-dataset path/to/music-folder \
   --name my-set \
-  --tracklist path/to/my_tracks.csv \
-  --skip-snippets
+  --tracklist path/to/my_tracks.csv
 ```
 
 The build writes:
@@ -125,13 +123,14 @@ data/exports/<name>_sequence_builder.html
 data/exports/<name>_pacmap.html
 ```
 
-By default, existing feature bundles are reused. Use `--force` to regenerate, `--skip-snippets`, `--skip-waveforms`,
-`--skip-embeddings`, `--skip-energy`, `--skip-sequence-export`, or `--skip-pacmap-export` while iterating. In a full
-build, tempo is extracted once and then reused by groove and energy when those stages need BPM estimates. Energy NPZ
-generation applies the frozen
+By default, existing feature bundles are reused. Use `--force` to regenerate, `--skip-waveforms`, `--skip-embeddings`,
+`--skip-energy`, `--skip-sequence-export`, or `--skip-pacmap-export` while iterating. In a full build, tempo is extracted
+once and then reused by groove and energy when those stages need BPM estimates. Energy NPZ generation applies the frozen
 `data/energy_models/energycurvedataset_maest_full_plus_peak30_pca64_ridge.joblib` model by default; the builder also
 creates the required peak-RMS 30-second MAEST bundle when that model is active. Pass `--energy-model-file` to use a
-different frozen model, or `--refit-energy-model` when you intentionally want to fit from the dataset being built.
+different frozen model, or `--refit-energy-model` when you intentionally want to fit from the dataset being built. The
+dataset builder no longer creates snippet caches; use `djprojectexploration-snippet-cache` directly for older notebooks
+or preview-section utilities.
 
 ### Energy Features and Models
 

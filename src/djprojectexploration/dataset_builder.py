@@ -10,7 +10,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from djprojectexploration.audio_snippets import DEFAULT_SCAN_HOP_SECONDS, ensure_cached_snippet
 from djprojectexploration.energy_features import (
     DEFAULT_FROZEN_ENERGY_MODEL_FILE,
     create_energy_embedding_npz,
@@ -27,7 +26,7 @@ from djprojectexploration.playlist_embedding_pipeline import (
     create_maest_playlist_embeddings_npz,
     create_tempo_playlist_embeddings_npz,
 )
-from djprojectexploration.tracklists import PROJECT_ROOT, load_playlist_tracks
+from djprojectexploration.tracklists import PROJECT_ROOT
 from djprojectexploration.tracklist_validation import validate_tracklist, write_validation_json
 from djprojectexploration.waveform_features import create_waveform_playlist_features_npz
 
@@ -95,26 +94,6 @@ def _stage(name: str) -> Iterator[None]:
         print(f"[stage] {name}: done in {_format_duration(time.monotonic() - start)}", flush=True)
 
 
-def _build_snippet_cache(tracklist_csv: Path, *, music_dir: Path | None, skip_missing_audio: bool, overwrite: bool) -> Path:
-    tracks = load_playlist_tracks(tracklist_csv, music_dir=music_dir, skip_missing_audio=skip_missing_audio)
-    output_dir = PROJECT_ROOT / "data" / "snippets" / tracklist_csv.stem
-    output_dir.mkdir(parents=True, exist_ok=True)
-    total = len(tracks)
-    for index, track in enumerate(tracks, start=1):
-        print(f"[{index}/{total}] Caching snippet: {track.title}")
-        ensure_cached_snippet(
-            audio_path=track.audio_path,
-            output_dir=output_dir,
-            key=track.mp3_name,
-            snippet_seconds=8.0,
-            middle_fraction=0.66,
-            hop_seconds=DEFAULT_SCAN_HOP_SECONDS,
-            overwrite=overwrite,
-            project_root=PROJECT_ROOT,
-        )
-    return output_dir
-
-
 def build_dataset(
     source: str | Path,
     *,
@@ -123,7 +102,6 @@ def build_dataset(
     project_root: Path = PROJECT_ROOT,
     overwrite_tracklist: bool = False,
     skip_missing_audio: bool = False,
-    skip_snippets: bool = False,
     skip_waveforms: bool = False,
     skip_embeddings: bool = False,
     skip_energy: bool = False,
@@ -134,7 +112,7 @@ def build_dataset(
     force: bool = False,
     pacmap_settings: PacmapSettings | None = None,
 ) -> dict[str, Path]:
-    """Build tracklist, media caches, feature bundles, energy NPZ, and app HTML."""
+    """Build tracklist, waveform caches, feature bundles, energy NPZ, and app HTML."""
     project_root = project_root.expanduser().resolve()
     mix_slug = _slug(name)
     source_path = Path(source).expanduser().resolve()
@@ -177,15 +155,6 @@ def build_dataset(
 
     def should_build(path: Path | None) -> bool:
         return force or path is None or not path.exists()
-
-    if not skip_snippets:
-        with _stage("snippets"):
-            outputs["snippets"] = _build_snippet_cache(
-                tracklist_path,
-                music_dir=music_dir,
-                skip_missing_audio=skip_missing_audio,
-                overwrite=False,
-            )
 
     waveform_path = project_root / "data" / "waveform_features" / f"{tracklist_path.stem}.npz"
     if not skip_waveforms:
@@ -305,7 +274,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--tracklist", type=Path, default=None, help="Use an existing tracklist instead of scanning source.")
     parser.add_argument("--overwrite-tracklist", action="store_true")
     parser.add_argument("--skip-missing-audio", action="store_true")
-    parser.add_argument("--skip-snippets", action="store_true")
+    parser.add_argument("--skip-snippets", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--skip-waveforms", action="store_true")
     parser.add_argument("--skip-embeddings", action="store_true")
     parser.add_argument("--skip-energy", action="store_true")
@@ -340,7 +309,6 @@ def main(argv: list[str] | None = None) -> int:
         tracklist=args.tracklist,
         overwrite_tracklist=bool(args.overwrite_tracklist),
         skip_missing_audio=bool(args.skip_missing_audio),
-        skip_snippets=bool(args.skip_snippets),
         skip_waveforms=bool(args.skip_waveforms),
         skip_embeddings=bool(args.skip_embeddings),
         skip_energy=bool(args.skip_energy),
