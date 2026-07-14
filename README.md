@@ -21,10 +21,10 @@ The most active workflows are:
 - **Playlist feature pipelines**: MAEST, chroma, tempo, groove, waveform, energy, and optional DEAM feature extraction into
   compact NPZ files.
 
-Generated HTML, snippets, artwork, waveforms, transition renders, and local audio are treated as disposable artifacts.
-Commit source code, docs, small CSV metadata, intentionally shared feature bundles, and the packaged frontend assets under
-`src/djprojectexploration/templates/` and `src/djprojectexploration/static/`; avoid committing generated exports unless
-they are explicitly part of a handoff.
+Generated HTML, artwork, waveform caches, transition renders, optional snippets, and local audio are treated as
+disposable artifacts. Commit source code, docs, small CSV metadata, intentionally shared feature/model bundles, and the
+packaged frontend assets under `src/djprojectexploration/templates/` and `src/djprojectexploration/static/`; avoid
+committing generated exports unless they are explicitly part of a handoff.
 
 ## Requirements
 
@@ -69,7 +69,9 @@ data/tempo_embeddings/<csv-stem>.npz
 data/groove_embeddings/<csv-stem>.npz
 data/waveform_features/<csv-stem>.npz
 data/energy_features/<csv-stem>_energy_features.csv
-data/energy_embeddings/aries_ara_energy_features.npz
+data/energy_embeddings/<dataset>_energy_features.npz
+data/energy_models/<model-name>.joblib
+data/energy_models/<model-name>.json
 
 data/artwork/
 data/transitions/
@@ -95,10 +97,11 @@ The generated CSV includes `track_number`, `title`, `artists`, `mp3_name`, `file
 `genre`, `key shift`, and `energy`. Tag values are filled from audio metadata when available; cue/onset, key-shift, and
 energy can be added later by importers or manual labeling.
 
-For a fuller app-ready build, use the dataset orchestrator:
+For a fuller app-ready build, use the dataset orchestrator. Snippet caches are optional legacy playback artifacts; the
+current sequence-builder app uses source audio plus waveform features, so app-focused builds can skip snippets:
 
 ```bash
-uv run djprojectexploration-build-dataset path/to/music-folder --name my-set
+uv run djprojectexploration-build-dataset path/to/music-folder --name my-set --skip-snippets
 ```
 
 This creates `music/my-set/my_set_tracks.csv`, validates it, then runs waveform extraction, MAEST, chroma, tempo,
@@ -109,7 +112,8 @@ explicitly:
 ```bash
 uv run djprojectexploration-build-dataset path/to/music-folder \
   --name my-set \
-  --tracklist path/to/my_tracks.csv
+  --tracklist path/to/my_tracks.csv \
+  --skip-snippets
 ```
 
 The build writes:
@@ -121,9 +125,13 @@ data/exports/<name>_sequence_builder.html
 data/exports/<name>_pacmap.html
 ```
 
-By default, existing feature bundles are reused. Use `--force` to regenerate, `--skip-embeddings`, `--skip-energy`,
-`--skip-sequence-export`, or `--skip-pacmap-export` while iterating. In a full build, tempo is extracted once and then
-reused by groove and energy when those stages need BPM estimates.
+By default, existing feature bundles are reused. Use `--force` to regenerate, `--skip-snippets`, `--skip-waveforms`,
+`--skip-embeddings`, `--skip-energy`, `--skip-sequence-export`, or `--skip-pacmap-export` while iterating. In a full
+build, tempo is extracted once and then reused by groove and energy when those stages need BPM estimates. Energy NPZ
+generation applies the frozen
+`data/energy_models/energycurvedataset_maest_full_plus_peak30_pca64_ridge.joblib` model by default; the builder also
+creates the required peak-RMS 30-second MAEST bundle when that model is active. Pass `--energy-model-file` to use a
+different frozen model, or `--refit-energy-model` when you intentionally want to fit from the dataset being built.
 
 ### Energy Features and Models
 
@@ -172,25 +180,38 @@ uv run djprojectexploration-energy-npz \
 Omit `--model-file` when you want to refit directly from the provided feature CSV rows. That mode requires labeled
 `energy` values in the input CSVs.
 
-The default app energy NPZ model is currently `maest_full_plus_peak30_pca64_ridge`. It fits a ridge model using PCA-64
-components from full-track MAEST embeddings plus PCA-64 components from peak30 MAEST embeddings, then writes both the
-manual labels and predicted energy values for the sequence builder. This default requires matching MAEST files in
-`data/maest_embeddings/`:
+The default reusable app model artifact is
+`data/energy_models/energycurvedataset_maest_full_plus_peak30_pca64_ridge.joblib`. It stores a ridge model trained on
+PCA-64 components from full-track MAEST embeddings plus PCA-64 components from peak30 MAEST embeddings. Applying that
+artifact writes predicted energy values for new datasets without fitting on the target dataset. This requires matching
+MAEST files in `data/maest_embeddings/`:
 
 ```text
 data/maest_embeddings/<tracklist-stem>.npz
 data/maest_embeddings/<tracklist-stem>_peak30.npz
 ```
 
-Create the default MAEST-backed energy NPZ:
+Create an app-consumable energy NPZ for a new dataset with the frozen model:
 
 ```bash
 uv run djprojectexploration-energy-npz \
   data/energy_features/dj_dataset_1_tracks_energy_features.csv \
-  --name dj_dataset_1_energy_features
+  --name dj_dataset_1_energy_features \
+  --model-file data/energy_models/energycurvedataset_maest_full_plus_peak30_pca64_ridge.joblib
 ```
 
-Use `--model full` when you want the older handcrafted-only fit instead of the MAEST-backed default.
+Retrain the canonical MAEST full+peak30 model only when you have labeled energy rows and the corresponding full/peak30
+MAEST bundles:
+
+```bash
+uv run djprojectexploration-energy-train-model \
+  data/energy_features/energycurvedataset_tracks_energy_features.csv \
+  --model maest_full_plus_peak30_pca64_ridge \
+  --name energycurvedataset_maest_full_plus_peak30_pca64_ridge
+```
+
+Use `--model full` with `djprojectexploration-energy-npz` or `djprojectexploration-energy-train-model` when you want the
+handcrafted-only ridge path instead of the MAEST-backed model.
 
 ## Source Layout
 
@@ -282,8 +303,9 @@ uv run djprojectexploration-sequence-builder-app \
   --pacmap-preset presets/pacmap/aries_ara_dynamic_pca.json
 ```
 
-Sequence-builder presets can also include frontend visualization defaults under `ui`. These values are embedded into the
-generated app as `app_settings`, shown in the settings popup, and used to initialize the matching controls:
+Sequence-builder presets can also include frontend visualization defaults under `ui` and, optionally, the dataset inputs
+used by the sequence builder. These values are embedded into the generated app as `app_settings`, shown in the settings
+popup, and used to initialize the matching controls:
 
 ```json
 {
@@ -294,11 +316,15 @@ generated app as `app_settings`, shown in the settings popup, and used to initia
   "distance_combine": "l1",
   "layout_init": "pca",
   "static_layout": false,
+  "mix_slugs": ["aries-mix", "ara-mix", "bootes-mix"],
+  "energy_npz": "data/energy_embeddings/aries_ara_bootes_energy_features.npz",
+  "output_file": "data/exports/aries_ara_bootes_sequence_builder.html",
+  "sequence_length": 10,
   "ui": {
     "latent_links_per_track": 3,
     "recommended_links_highlight": 25,
     "point_color": "genre",
-    "map_renderer": "plotly",
+    "map_renderer": "webgl",
     "map_fx": true
   }
 }
@@ -319,6 +345,8 @@ Recent sequence-builder interaction conventions:
   changes.
 - The main map supports Plotly zoom/pan plus keyboard controls: `+` or `i` to zoom in, `-` to zoom out, arrow keys to pan,
   and `R` to reset. Press `?` in the app for the full shortcut panel.
+- The diagnostics view shows the focused transition, score bars, chroma/groove comparisons, sequence transition rows,
+  and full-track waveform scrubbers when waveform features are available.
 
 For the current energy curve dataset preset:
 
@@ -507,13 +535,14 @@ Create the canonical app-consumable energy NPZ from one or more energy feature C
 uv run djprojectexploration-energy-npz \
   data/energy_features/aries_mix_tracks_energy_features.csv \
   data/energy_features/ara_mix_tracks_energy_features.csv \
-  --name aries_ara_energy_features
+  --name aries_ara_energy_features \
+  --model-file data/energy_models/energycurvedataset_maest_full_plus_peak30_pca64_ridge.joblib
 ```
 
-By default, the NPZ writer fits the MAEST full+peak30 PCA64 ridge model described above. Pass `--model full` to fit a
-handcrafted ridge model using one of the `--feature-set` options. If labeled `energy` values are present, the writer
-stores fitted predictions and out-of-fold diagnostics fields; otherwise it still writes the canonical NPZ with unavailable
-predictions.
+For new app datasets, use the saved model so the target dataset is scored rather than refit. If `--model-file` is
+omitted, the NPZ writer fits from the provided rows: the default fit is MAEST full+peak30 PCA64 ridge, and `--model full`
+selects the handcrafted ridge model using one of the `--feature-set` options. Refit modes need labeled `energy` values
+for meaningful predictions and diagnostics.
 
 Useful common options:
 
@@ -538,7 +567,7 @@ Generate preview-section CSVs from snippet metadata:
 uv run djprojectexploration-preview-sections
 ```
 
-Create snippet caches for lightweight playback:
+Create snippet caches for older notebooks or lightweight playback experiments:
 
 ```bash
 uv run djprojectexploration-snippet-cache music/ara-mix/ara_mix_tracks.csv --music-dir music/ara-mix
@@ -596,6 +625,7 @@ When preparing a commit, usually include:
 - scripts under `scripts/`
 - `pyproject.toml` and `uv.lock`
 - small tracklist/cue CSV metadata
+- intentionally shared energy model artifacts under `data/energy_models/`
 - documentation
 
 Usually leave out:

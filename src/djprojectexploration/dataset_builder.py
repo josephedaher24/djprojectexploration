@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Iterator
 
 from djprojectexploration.audio_snippets import DEFAULT_SCAN_HOP_SECONDS, ensure_cached_snippet
-from djprojectexploration.energy_features import create_energy_embedding_npz, create_energy_feature_csv
+from djprojectexploration.energy_features import (
+    DEFAULT_FROZEN_ENERGY_MODEL_FILE,
+    create_energy_embedding_npz,
+    create_energy_feature_csv,
+    energy_model_artifact_uses_maest_full_peak30,
+)
 from djprojectexploration.energy_sequence_builder import export_dj_sequence
 from djprojectexploration.interactive_pacmap_knn_simplex import export_dj_pacmap
 from djprojectexploration.music_folder_ingest import ingest_music_folder
@@ -38,6 +43,23 @@ def _tracklist_stem(mix_slug: str) -> str:
 
 def _default_tracklist_path(project_root: Path, mix_slug: str) -> Path:
     return project_root / "music" / mix_slug / f"{_tracklist_stem(mix_slug)}.csv"
+
+
+def _default_energy_model_path(project_root: Path) -> Path:
+    return project_root / "data" / "energy_models" / DEFAULT_FROZEN_ENERGY_MODEL_FILE.name
+
+
+def _resolve_energy_model_file(
+    project_root: Path,
+    energy_model_file: str | Path | None,
+    *,
+    refit_energy_model: bool,
+) -> Path | None:
+    if refit_energy_model:
+        return None
+    if energy_model_file is None:
+        return _default_energy_model_path(project_root)
+    return Path(energy_model_file).expanduser().resolve()
 
 
 def _copy_tracklist_if_needed(source: Path, target: Path, *, overwrite: bool) -> Path:
@@ -106,6 +128,7 @@ def build_dataset(
     skip_embeddings: bool = False,
     skip_energy: bool = False,
     energy_model_file: str | Path | None = None,
+    refit_energy_model: bool = False,
     skip_sequence_export: bool = False,
     skip_pacmap_export: bool = False,
     force: bool = False,
@@ -141,6 +164,16 @@ def build_dataset(
             project_root / "data" / "exports" / f"{mix_slug}_validation.json",
         )
     pacmap_settings = (pacmap_settings or PacmapSettings()).validate()
+    resolved_energy_model_file = _resolve_energy_model_file(
+        project_root,
+        energy_model_file,
+        refit_energy_model=refit_energy_model,
+    )
+    energy_model_needs_peak30_maest = False
+    if not skip_energy and resolved_energy_model_file is not None:
+        if not resolved_energy_model_file.exists():
+            raise FileNotFoundError(f"Energy model artifact not found: {resolved_energy_model_file}")
+        energy_model_needs_peak30_maest = energy_model_artifact_uses_maest_full_peak30(resolved_energy_model_file)
 
     def should_build(path: Path | None) -> bool:
         return force or path is None or not path.exists()
@@ -168,6 +201,7 @@ def build_dataset(
             )
 
     maest_path = project_root / "data" / "maest_embeddings" / f"{tracklist_path.stem}.npz"
+    maest_peak30_path = project_root / "data" / "maest_embeddings" / f"{tracklist_path.stem}_peak30.npz"
     chroma_path = project_root / "data" / "chroma_embeddings" / f"{tracklist_path.stem}.npz"
     tempo_path = project_root / "data" / "tempo_embeddings" / f"{tracklist_path.stem}.npz"
     groove_path = project_root / "data" / "groove_embeddings" / f"{tracklist_path.stem}.npz"
@@ -178,6 +212,14 @@ def build_dataset(
                 music_dir=music_dir,
                 skip_missing_audio=skip_missing_audio,
             ) if should_build(maest_path) else maest_path
+        if energy_model_needs_peak30_maest:
+            with _stage("maest peak30"):
+                outputs["maest_peak30"] = create_maest_playlist_embeddings_npz(
+                    tracklist_path,
+                    music_dir=music_dir,
+                    skip_missing_audio=skip_missing_audio,
+                    section="peak30",
+                ) if should_build(maest_peak30_path) else maest_peak30_path
         with _stage("chroma"):
             outputs["chroma"] = create_chroma_playlist_embeddings_npz(
                 tracklist_path,
@@ -213,7 +255,7 @@ def build_dataset(
             outputs["energy_npz"] = create_energy_embedding_npz(
                 [energy_csv],
                 name=f"{mix_slug.replace('-', '_')}_energy_features",
-                model_file=energy_model_file,
+                model_file=resolved_energy_model_file,
             ) if should_build(energy_npz_path) else energy_npz_path
 
     if not skip_sequence_export:
@@ -244,7 +286,8 @@ def build_dataset(
         "tracklist": str(tracklist_path),
         "validation": validation.to_dict(),
         "pacmap_settings": pacmap_settings.to_dict(),
-        "energy_model_file": None if energy_model_file is None else str(Path(energy_model_file).expanduser().resolve()),
+        "energy_model_file": None if resolved_energy_model_file is None else str(resolved_energy_model_file),
+        "refit_energy_model": bool(refit_energy_model),
         "outputs": {key: str(path) for key, path in outputs.items()},
     }
     manifest_path = project_root / "data" / "exports" / f"{mix_slug}_build_manifest.json"
@@ -266,7 +309,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-waveforms", action="store_true")
     parser.add_argument("--skip-embeddings", action="store_true")
     parser.add_argument("--skip-energy", action="store_true")
-    parser.add_argument("--energy-model-file", type=Path, default=None, help="Frozen energy model artifact to apply.")
+    parser.add_argument(
+        "--energy-model-file",
+        type=Path,
+        default=None,
+        help=(
+            "Frozen energy model artifact to apply. Defaults to "
+            f"data/energy_models/{DEFAULT_FROZEN_ENERGY_MODEL_FILE.name}."
+        ),
+    )
+    parser.add_argument(
+        "--refit-energy-model",
+        action="store_true",
+        help="Fit an energy model from this dataset instead of applying the default frozen model artifact.",
+    )
     parser.add_argument("--skip-app-export", action="store_true", help="Deprecated alias for --skip-sequence-export.")
     parser.add_argument("--skip-sequence-export", action="store_true")
     parser.add_argument("--skip-pacmap-export", action="store_true")
@@ -289,6 +345,7 @@ def main(argv: list[str] | None = None) -> int:
         skip_embeddings=bool(args.skip_embeddings),
         skip_energy=bool(args.skip_energy),
         energy_model_file=args.energy_model_file,
+        refit_energy_model=bool(args.refit_energy_model),
         skip_sequence_export=bool(args.skip_app_export or args.skip_sequence_export),
         skip_pacmap_export=bool(args.skip_pacmap_export),
         force=bool(args.force),

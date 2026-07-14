@@ -23,6 +23,8 @@ from djprojectexploration.tracklists import PROJECT_ROOT, optional_float, to_pro
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "energy_features"
 DEFAULT_ENERGY_EMBEDDING_DIR = PROJECT_ROOT / "data" / "energy_embeddings"
 DEFAULT_ENERGY_MODEL_DIR = PROJECT_ROOT / "data" / "energy_models"
+DEFAULT_FROZEN_ENERGY_MODEL_NAME = "energycurvedataset_maest_full_plus_peak30_pca64_ridge"
+DEFAULT_FROZEN_ENERGY_MODEL_FILE = DEFAULT_ENERGY_MODEL_DIR / f"{DEFAULT_FROZEN_ENERGY_MODEL_NAME}.joblib"
 DEFAULT_MAEST_EMBEDDING_DIR = PROJECT_ROOT / "data" / "maest_embeddings"
 DEFAULT_TEMPO_EMBEDDING_DIR = PROJECT_ROOT / "data" / "tempo_embeddings"
 DEFAULT_ENERGY_TARGET_MIN = 1.0
@@ -1132,7 +1134,14 @@ def fit_maest_full_peak30_pca64_energy_model(
     y_train = y_all[train_mask]
     full_dim = int(X_full.shape[1])
     peak30_dim = int(X_peak30.shape[1])
-    n_components = min(FINAL_MAEST_PCA_COMPONENTS, full_dim, peak30_dim, max(1, int(y_train.size) - 1))
+    n_splits = min(5, int(y_train.size))
+    min_cv_train_size = int(y_train.size) - int(math.ceil(float(y_train.size) / float(n_splits)))
+    n_components = min(
+        FINAL_MAEST_PCA_COMPONENTS,
+        full_dim,
+        peak30_dim,
+        max(1, min_cv_train_size),
+    )
 
     try:
         from sklearn.base import clone
@@ -1174,7 +1183,6 @@ def fit_maest_full_peak30_pca64_energy_model(
         Ridge(alpha=1.0),
     )
     grid = np.asarray(alpha_grid if alpha_grid is not None else np.logspace(-2, 4, 50), dtype=np.float64)
-    n_splits = min(5, int(y_train.size))
     alpha_scores: list[float] = []
     cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     for alpha in grid:
@@ -1335,6 +1343,28 @@ def load_energy_model_artifact(model_file: str | Path) -> dict[str, Any]:
     return artifact
 
 
+def _artifact_model_name(artifact: dict[str, Any]) -> str:
+    metadata = artifact.get("metadata") if isinstance(artifact.get("metadata"), dict) else {}
+    return str(artifact.get("model_name") or metadata.get("model_name") or "")
+
+
+def _artifact_feature_names(artifact: dict[str, Any]) -> list[str]:
+    return [str(name) for name in artifact["feature_names"]]
+
+
+def _artifact_uses_maest_full_peak30(artifact: dict[str, Any]) -> bool:
+    model_name = _artifact_model_name(artifact)
+    feature_names = _artifact_feature_names(artifact)
+    has_full = any(name.startswith("maest_full_") for name in feature_names)
+    has_peak30 = any(name.startswith("maest_peak30_") for name in feature_names)
+    return model_name.startswith(FINAL_MAEST_FULL_PEAK30_MODEL_NAME) or (has_full and has_peak30)
+
+
+def energy_model_artifact_uses_maest_full_peak30(model_file: str | Path) -> bool:
+    """Return whether a frozen energy model expects full + peak30 MAEST inputs."""
+    return _artifact_uses_maest_full_peak30(load_energy_model_artifact(model_file))
+
+
 def train_energy_model_from_feature_csvs(
     feature_csvs: list[str | Path],
     *,
@@ -1345,12 +1375,25 @@ def train_energy_model_from_feature_csvs(
     target_min: float = DEFAULT_ENERGY_TARGET_MIN,
     target_max: float = DEFAULT_ENERGY_TARGET_MAX,
     feature_set: str = DEFAULT_ENERGY_MODEL_FEATURE_SET,
+    model: str = "full",
+    maest_dir: str | Path = DEFAULT_MAEST_EMBEDDING_DIR,
 ) -> Path:
     """Train and freeze a reusable full energy model from labeled feature CSVs."""
     rows = _read_feature_csvs(feature_csvs)
     if not rows:
         raise RuntimeError("No rows found in energy feature CSV inputs.")
-    result = fit_full_energy_model(rows, feature_set=feature_set)
+    if model == "full":
+        result = fit_full_energy_model(rows, feature_set=feature_set)
+    elif model == FINAL_MAEST_FULL_PEAK30_MODEL_NAME:
+        maest_full = _load_maest_embeddings_for_rows(feature_csvs, section="full", maest_dir=maest_dir)
+        maest_peak30 = _load_maest_embeddings_for_rows(feature_csvs, section="peak30", maest_dir=maest_dir)
+        result = fit_maest_full_peak30_pca64_energy_model(
+            rows,
+            maest_full=maest_full,
+            maest_peak30=maest_peak30,
+        )
+    else:
+        raise ValueError(f"Unsupported energy model: {model!r}")
     y_all = np.asarray([_energy_value(row) for row in rows], dtype=np.float64)
     labeled_values = y_all[np.isfinite(y_all)]
     labeled_rows = int(labeled_values.size)
@@ -1374,20 +1417,43 @@ def train_energy_model_from_feature_csvs(
     )
     print(f"Training rows: {len(rows)}")
     print(f"Labeled rows: {labeled_rows}")
-    print(f"Feature set: {feature_set}")
+    print(f"Model: {model}")
+    if model == "full":
+        print(f"Feature set: {feature_set}")
     print(f"Features retained: {len(result.feature_names)}")
     print(f"Best alpha: {result.best_alpha:.4g}")
     print(f"OOF MAE: {result.oof_mae:.3f}; train MAE: {result.train_mae:.3f}")
     return model_path
 
 
-def predict_with_energy_model_artifact(rows: list[dict[str, Any]], model_file: str | Path) -> EnergyModelResult:
+def predict_with_energy_model_artifact(
+    rows: list[dict[str, Any]],
+    model_file: str | Path,
+    *,
+    artifact: dict[str, Any] | None = None,
+    feature_matrix: np.ndarray | None = None,
+) -> EnergyModelResult:
     """Apply a frozen energy model artifact to feature rows."""
-    artifact = load_energy_model_artifact(model_file)
-    feature_names = [str(name) for name in artifact["feature_names"]]
+    artifact = artifact if artifact is not None else load_energy_model_artifact(model_file)
+    feature_names = _artifact_feature_names(artifact)
     estimator = artifact["estimator"]
     metadata = artifact.get("metadata") if isinstance(artifact.get("metadata"), dict) else {}
-    X = _feature_matrix(rows, feature_names)
+    if feature_matrix is None:
+        X = _feature_matrix(rows, feature_names)
+    else:
+        X = np.asarray(feature_matrix, dtype=np.float64)
+        if X.ndim != 2:
+            raise ValueError(f"Frozen energy model feature matrix must be 2D; got shape {X.shape}")
+        if X.shape[0] != len(rows):
+            raise ValueError(
+                "Frozen energy model feature matrix row count must match energy feature rows. "
+                f"rows={len(rows)}, matrix={X.shape[0]}"
+            )
+        if X.shape[1] != len(feature_names):
+            raise ValueError(
+                "Frozen energy model feature matrix width must match artifact feature names. "
+                f"features={len(feature_names)}, matrix={X.shape[1]}"
+            )
     predictions = np.asarray(estimator.predict(X), dtype=np.float64)
     target_min = _safe_feature(metadata.get("target_min"))
     target_max = _safe_feature(metadata.get("target_max"))
@@ -1436,9 +1502,21 @@ def create_energy_embedding_npz(
     maest_full: np.ndarray | None = None
     maest_peak30: np.ndarray | None = None
     if model_file is not None:
-        model_result = predict_with_energy_model_artifact(rows, model_file)
+        artifact = load_energy_model_artifact(model_file)
+        if _artifact_uses_maest_full_peak30(artifact):
+            maest_full = _load_maest_embeddings_for_rows(feature_csvs, section="full", maest_dir=maest_dir)
+            maest_peak30 = _load_maest_embeddings_for_rows(feature_csvs, section="peak30", maest_dir=maest_dir)
+            embeddings = np.hstack([maest_full, maest_peak30]).astype(np.float32)
+            model_result = predict_with_energy_model_artifact(
+                rows,
+                model_file,
+                artifact=artifact,
+                feature_matrix=embeddings,
+            )
+        else:
+            model_result = predict_with_energy_model_artifact(rows, model_file, artifact=artifact)
+            embeddings = _feature_matrix(rows, list(model_result.feature_names or FULL_ENERGY_FEATURE_KEYS)).astype(np.float32)
         feature_names = list(model_result.feature_names or FULL_ENERGY_FEATURE_KEYS)
-        embeddings = _feature_matrix(rows, feature_names).astype(np.float32)
     elif model == "full":
         model_result = fit_full_energy_model(rows, feature_set=feature_set)
         feature_names = list(model_result.feature_names or FULL_ENERGY_FEATURE_KEYS)
@@ -1668,10 +1746,22 @@ def parse_train_model_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-min", type=float, default=DEFAULT_ENERGY_TARGET_MIN)
     parser.add_argument("--target-max", type=float, default=DEFAULT_ENERGY_TARGET_MAX)
     parser.add_argument(
+        "--model",
+        default="full",
+        choices=["full", FINAL_MAEST_FULL_PEAK30_MODEL_NAME],
+        help="Energy model spec to train.",
+    )
+    parser.add_argument(
         "--feature-set",
         default=DEFAULT_ENERGY_MODEL_FEATURE_SET,
         choices=sorted(ENERGY_MODEL_FEATURE_SETS),
-        help="Feature set to train.",
+        help="Feature set to train when --model full is used.",
+    )
+    parser.add_argument(
+        "--maest-dir",
+        type=Path,
+        default=DEFAULT_MAEST_EMBEDDING_DIR,
+        help="Directory containing <tracklist>.npz and <tracklist>_peak30.npz MAEST embeddings.",
     )
     return parser.parse_args(argv)
 
@@ -1772,6 +1862,8 @@ def energy_train_model_main(argv: list[str] | None = None) -> int:
         target_min=float(args.target_min),
         target_max=float(args.target_max),
         feature_set=str(args.feature_set),
+        model=str(args.model),
+        maest_dir=args.maest_dir,
     )
     return 0
 

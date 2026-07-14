@@ -36,6 +36,23 @@
     sequenceLine: 'rgba(251, 146, 60, __A__)',
     selectedSlot: '#94a3b8',
   };
+  const DEFAULT_TARGET_ENERGY = 5;
+  const ENERGY_AXIS_TICKS = [1, 3, 5, 7, 9];
+  const MAP_MIN_ZOOM_FRACTION = 0.045;
+  const MAP_MAX_ZOOM_FRACTION = 1.35;
+  const MAP_WHEEL_ZOOM_IN_FACTOR = 0.945;
+  const MAP_WHEEL_ZOOM_OUT_FACTOR = 1.06;
+  const MAP_BUTTON_ZOOM_IN_FACTOR = 0.92;
+  const MAP_BUTTON_ZOOM_OUT_FACTOR = 1.09;
+  const DIAGNOSTIC_CHROMA_HEATMAP_STOPS = [
+    [0, '#000004'],
+    [0.18, '#3b0f70'],
+    [0.42, '#8c2981'],
+    [0.66, '#de4968'],
+    [0.84, '#fe9f6d'],
+    [1, '#fcfdbf'],
+  ];
+  const DIAGNOSTIC_GROOVE_HEATMAP_STOPS = DIAGNOSTIC_CHROMA_HEATMAP_STOPS;
 
   const byIdx = new Map(records.map(r => [Number(r.idx), r]));
   const initialRecommendationOrder = records.map(r => Number(r.idx)).filter(Number.isFinite);
@@ -50,7 +67,7 @@
   let selectedSlot = null;
   let sequenceLength = Number(config.default_length || 10);
   let sequence = Array.from({ length: sequenceLength }, () => null);
-  let targetValues = Array.from({ length: sequenceLength }, () => null);
+  let targetValues = Array.from({ length: sequenceLength }, () => DEFAULT_TARGET_ENERGY);
   let sequenceDragSlot = null;
   let draggingEnergySlot = null;
   let currentPoints = [];
@@ -58,6 +75,7 @@
   let transitionFromIdx = null;
   let transitionToIdx = null;
   let webglMap = null;
+  let mapRelayoutClampActive = false;
   const pinnedRecommendationIdxs = new Set();
   let lastClickedIdx = null;
   let lastClickMs = 0;
@@ -623,7 +641,7 @@
       return bestIdx;
     }
     function setViewRanges(x0, x1, y0, y1) {
-      const next = normalizedView({ x0, x1, y0, y1 });
+      const next = normalizedView(constrainMapRanges(x0, x1, y0, y1));
       if (!next) return;
       view = next;
       render();
@@ -702,7 +720,7 @@
       if (!usingWebglMap() || !view) return;
       const at = screenToData(ev.clientX, ev.clientY);
       if (!at) return;
-      const factor = ev.deltaY < 0 ? 0.91 : 1.10;
+      const factor = ev.deltaY < 0 ? MAP_WHEEL_ZOOM_IN_FACTOR : MAP_WHEEL_ZOOM_OUT_FACTOR;
       const width = Math.abs(view.x1 - view.x0) * factor;
       const height = Math.abs(view.y1 - view.y0) * factor;
       const x0 = at.x - at.nx * width;
@@ -2605,16 +2623,53 @@
     if (![x0, x1, y0, y1].every(Number.isFinite)) return null;
     return { x0, x1, y0, y1 };
   }
+  function constrainMapRanges(x0, x1, y0, y1) {
+    x0 = Number(x0);
+    x1 = Number(x1);
+    y0 = Number(y0);
+    y1 = Number(y1);
+    if (![x0, x1, y0, y1].every(Number.isFinite)) return null;
+    const bounds = mapDataBounds();
+    if (!bounds) return { x0, x1, y0, y1 };
+    const baseW = Math.max(1e-9, Number(bounds.maxX) - Number(bounds.minX));
+    const baseH = Math.max(1e-9, Number(bounds.maxY) - Number(bounds.minY));
+    const width = clamp(Math.abs(x1 - x0), baseW * MAP_MIN_ZOOM_FRACTION, baseW * MAP_MAX_ZOOM_FRACTION);
+    const height = clamp(Math.abs(y1 - y0), baseH * MAP_MIN_ZOOM_FRACTION, baseH * MAP_MAX_ZOOM_FRACTION);
+    const dataCx = (Number(bounds.minX) + Number(bounds.maxX)) / 2;
+    const dataCy = (Number(bounds.minY) + Number(bounds.maxY)) / 2;
+    let cx = (x0 + x1) / 2;
+    let cy = (y0 + y1) / 2;
+    if (width <= baseW) cx = clamp(cx, Number(bounds.minX) + width / 2, Number(bounds.maxX) - width / 2);
+    else cx = dataCx;
+    if (height <= baseH) cy = clamp(cy, Number(bounds.minY) + height / 2, Number(bounds.maxY) - height / 2);
+    else cy = dataCy;
+    return {
+      x0: cx - width / 2,
+      x1: cx + width / 2,
+      y0: cy - height / 2,
+      y1: cy + height / 2,
+    };
+  }
+  function mapRangesDiffer(a, b) {
+    if (!a || !b) return false;
+    const scale = Math.max(1, Math.abs(a.x1 - a.x0), Math.abs(a.y1 - a.y0));
+    return Math.abs(a.x0 - b.x0) > scale * 1e-5
+      || Math.abs(a.x1 - b.x1) > scale * 1e-5
+      || Math.abs(a.y0 - b.y0) > scale * 1e-5
+      || Math.abs(a.y1 - b.y1) > scale * 1e-5;
+  }
   function relayoutMapRanges(x0, x1, y0, y1) {
+    const next = constrainMapRanges(x0, x1, y0, y1);
+    if (!next) return;
     if (usingWebglMap() && webglMap) {
-      webglMap.setViewRanges(x0, x1, y0, y1);
+      webglMap.setViewRanges(next.x0, next.x1, next.y0, next.y1);
       safeUi('map overlays after webgl map control', updatePacmapOverlays);
       return;
     }
     if (!window.Plotly || !plot) return;
     Plotly.relayout(plot, {
-      'xaxis.range': [x0, x1],
-      'yaxis.range': [y0, y1],
+      'xaxis.range': [next.x0, next.x1],
+      'yaxis.range': [next.y0, next.y1],
     }).then(() => {
       safeUi('map overlays after map control', updatePacmapOverlays);
       safeUi('map effects after map control', ensureMapEffectsLoop);
@@ -2655,8 +2710,8 @@
     });
   }
   function handleMapAction(action) {
-    if (action === 'zoom-in') zoomMap(0.88);
-    else if (action === 'zoom-out') zoomMap(1.14);
+    if (action === 'zoom-in') zoomMap(MAP_BUTTON_ZOOM_IN_FACTOR);
+    else if (action === 'zoom-out') zoomMap(MAP_BUTTON_ZOOM_OUT_FACTOR);
     else if (action === 'pan-left') panMap(-0.18, 0);
     else if (action === 'pan-right') panMap(0.18, 0);
     else if (action === 'pan-up') panMap(0, 0.18);
@@ -3347,13 +3402,20 @@
     const oldTargets = targetValues.slice();
     sequenceLength = n;
     sequence = Array.from({ length: n }, (_, i) => i < old.length ? old[i] : null);
-    targetValues = Array.from({ length: n }, (_, i) => i < oldTargets.length ? oldTargets[i] : null);
+    targetValues = Array.from({ length: n }, (_, i) => i < oldTargets.length
+      ? normalizeTargetEnergy(oldTargets[i])
+      : DEFAULT_TARGET_ENERGY);
     selectedSlot = selectedSlot !== null && selectedSlot < n ? selectedSlot : null;
     renderAll();
   }
+  function normalizeTargetEnergy(value, fallback=DEFAULT_TARGET_ENERGY) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.round(clamp(n, 1, 9) * 10) / 10;
+  }
   function setTargetSlotValue(slot, value, shouldRender=true) {
     slot = Math.round(Number(slot));
-    value = Math.round(clamp(Number(value), 1, 9) * 10) / 10;
+    value = normalizeTargetEnergy(value, NaN);
     if (!Number.isFinite(slot) || !Number.isFinite(value)) return;
     targetValues[slot] = value;
     selectedSlot = slot;
@@ -3853,22 +3915,70 @@
     }
     return { min, max };
   }
-  function heatmapColor(value, extent) {
+  function heatmapColor(value, extent, stops=DIAGNOSTIC_GROOVE_HEATMAP_STOPS) {
     const n = Number(value);
     if (!Number.isFinite(n)) return '#1f2937';
     const t = (n - Number(extent.min)) / Math.max(1e-9, Number(extent.max) - Number(extent.min));
-    return segmentedColor([
-      [0, '#000004'],
-      [0.18, '#3b0f70'],
-      [0.42, '#8c2981'],
-      [0.66, '#de4968'],
-      [0.84, '#fe9f6d'],
-      [1, '#fcfdbf'],
-    ], t);
+    return segmentedColor(stops, t);
   }
-  const PITCH_CLASS_LABELS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  function diagnosticHeatmapGradientCss(stops=DIAGNOSTIC_GROOVE_HEATMAP_STOPS) {
+    return 'linear-gradient(90deg, ' + stops.map(stop => stop[1] + ' ' + Math.round(stop[0] * 100) + '%').join(', ') + ')';
+  }
+  function diagnosticHeatmapLegendHtml(extent, stops=DIAGNOSTIC_GROOVE_HEATMAP_STOPS) {
+    const min = Number(extent && extent.min);
+    const max = Number(extent && extent.max);
+    return '<div class="diagnostic-heatmap-legend" title="Embedding cell color scale">' +
+      '<span>low ' + esc(Number.isFinite(min) ? fmt(min, 2) : '') + '</span>' +
+      '<i style="background:' + esc(diagnosticHeatmapGradientCss(stops)) + '"></i>' +
+      '<span>high ' + esc(Number.isFinite(max) ? fmt(max, 2) : '') + '</span>' +
+      '</div>';
+  }
+  const PITCH_CLASS_LABELS = ['A', 'A#', 'B', 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#'];
+  const PITCH_CLASS_INDEX = {
+    A: 0,
+    'A#': 1, BB: 1,
+    B: 2, CB: 2,
+    'B#': 3, C: 3,
+    'C#': 4, DB: 4,
+    D: 5,
+    'D#': 6, EB: 6,
+    E: 7, FB: 7,
+    'E#': 8, F: 8,
+    'F#': 9, GB: 9,
+    G: 10,
+    'G#': 11, AB: 11,
+  };
   const GROOVE_BAND_LABELS = ['Low', 'Mid', 'High'];
   const GROOVE_BAND_DISPLAY_ORDER = [2, 1, 0];
+  function normalizePitchName(value) {
+    const raw = String(value || '').trim().replace(/♯/g, '#').replace(/♭/g, 'b');
+    const m = raw.toUpperCase().match(/^([A-G])([#B]?)/);
+    if (!m) return '';
+    return m[1] + (m[2] || '');
+  }
+  function parseTaggedKey(value) {
+    const raw = String(value || '').trim();
+    if (!raw || raw.toLowerCase() === 'nan') return null;
+    const camelot = raw.toUpperCase().match(/^(\d{1,2})([AB])$/);
+    const canonical = camelot ? camelotCanonicalName(raw) : '';
+    const keyText = canonical || ((raw.match(/\(([A-G][#b♯♭]?m?)\)/i) || [])[1]) || raw;
+    const parsed = String(keyText).trim().replace(/\s+/g, '').replace(/♯/g, '#').replace(/♭/g, 'b').match(/^([A-G])([#b]?)(m|min|minor|maj|major)?$/i);
+    if (!parsed) return null;
+    const pitch = normalizePitchName(parsed[1] + (parsed[2] || ''));
+    if (!(pitch in PITCH_CLASS_INDEX)) return null;
+    const suffix = String(parsed[3] || '').toLowerCase();
+    const mode = camelot
+      ? (camelot[2] === 'A' ? 'minor' : 'major')
+      : (suffix === 'm' || suffix === 'min' || suffix === 'minor' ? 'minor' : 'major');
+    return { tonic: pitch, mode };
+  }
+  function taggedKeyPitchClassSet(record) {
+    const parsed = parseTaggedKey(record && record.key);
+    if (!parsed) return new Set();
+    const tonic = PITCH_CLASS_INDEX[parsed.tonic];
+    const intervals = parsed.mode === 'minor' ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11];
+    return new Set(intervals.map(interval => PITCH_CLASS_LABELS[(tonic + interval) % 12]));
+  }
   function taggedCanonicalKeyText(record) {
     const key = String((record && record.key) || '').trim();
     if (!key || key.toLowerCase() === 'nan') return 'n/a';
@@ -3884,9 +3994,13 @@
     const cells = Array.from({ length: 12 }, (_, i) => {
       const value = Number(values[i]);
       const label = Number.isFinite(value) ? fmt(value, 3) : 'n/a';
-      return '<span class="diagnostic-cell" title="' + esc(PITCH_CLASS_LABELS[i]) + ': ' + esc(label) + '" style="background:' + heatmapColor(value, extent) + '"></span>';
+      return '<span class="diagnostic-cell" title="' + esc(PITCH_CLASS_LABELS[i]) + ': ' + esc(label) + '" style="background:' + heatmapColor(value, extent, DIAGNOSTIC_CHROMA_HEATMAP_STOPS) + '"></span>';
     }).join('');
-    const pitchLabels = PITCH_CLASS_LABELS.map(label => '<span>' + esc(label) + '</span>').join('');
+    const inKey = taggedKeyPitchClassSet(record);
+    const pitchLabels = PITCH_CLASS_LABELS.map(label => {
+      const isInKey = inKey.has(label);
+      return '<span' + (isInKey ? ' class="in-key" title="In tagged key"' : '') + '>' + esc(label) + '</span>';
+    }).join('');
     return '<div class="diagnostic-embedding-panel">' +
       diagnosticTrackHeaderHtml(record, role) +
       '<div class="diagnostic-embedding-block">' +
@@ -3928,11 +4042,15 @@
       groove: heatmapExtent(from && from.diagnostic_groove, to && to.diagnostic_groove),
     };
     return '<div class="diagnostic-embedding-compare">' +
-      '<div class="diagnostic-embedding-section"><h4>Chroma</h4><div class="diagnostic-embedding-stack">' +
+      '<div class="diagnostic-embedding-section"><h4>Chroma</h4>' +
+      diagnosticHeatmapLegendHtml(extents.chroma, DIAGNOSTIC_CHROMA_HEATMAP_STOPS) +
+      '<div class="diagnostic-embedding-stack">' +
       diagnosticChromaHtml(from, extents.chroma, 'Track 1') +
       diagnosticChromaHtml(to, extents.chroma, 'Track 2') +
       '</div></div>' +
-      '<div class="diagnostic-embedding-section"><h4>Groove</h4><div class="diagnostic-embedding-stack">' +
+      '<div class="diagnostic-embedding-section"><h4>Groove</h4>' +
+      diagnosticHeatmapLegendHtml(extents.groove) +
+      '<div class="diagnostic-embedding-stack">' +
       diagnosticGrooveHtml(from, extents.groove, 'Track 1') +
       diagnosticGrooveHtml(to, extents.groove, 'Track 2') +
       '</div></div>' +
@@ -4056,18 +4174,19 @@
       scoreMeterHtml(value, cls, strength, digits, label) +
       '</td>';
   }
-  function scoreMeterHtml(value, cls, strength, digits=2, label='') {
+  function scoreMeterHtml(value, cls, strength, digits=2, label='', options={}) {
     const numeric = Number(value);
     const finite = Number.isFinite(numeric);
     const s = Number(strength);
     const pct = finite && Number.isFinite(s) ? clamp(s, 0, 1) * 100 : 0;
     const title = label ? label + ': ' + (finite ? fmt(numeric, digits) : 'n/a') : '';
-    return '<div class="score-meter ' + esc(cls) + (finite ? '' : ' empty') + (showScoreValues() ? '' : ' bars-only') + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' +
+    const valuesVisible = Boolean(options && options.forceValues) || showScoreValues();
+    return '<div class="score-meter ' + esc(cls) + (finite ? '' : ' empty') + (valuesVisible ? '' : ' bars-only') + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' +
       '<span class="score-meter-value">' + (finite ? fmt(numeric, digits) : 'n/a') + '</span>' +
       '<span class="score-meter-track"><i style="width:' + pct.toFixed(1) + '%"></i></span>' +
       '</div>';
   }
-  function rankMeterHtml(rankInfo) {
+  function rankMeterHtml(rankInfo, options={}) {
     const rank = Number(rankInfo && rankInfo.rank);
     const total = Number(rankInfo && rankInfo.total);
     const finite = Number.isFinite(rank) && rank > 0;
@@ -4077,7 +4196,8 @@
     const title = finite
       ? 'Recommendation rank: #' + rank + (Number.isFinite(total) && total > 0 ? ' of ' + total : '')
       : 'Recommendation rank: n/a';
-    return '<div class="score-meter rank' + (finite ? '' : ' empty') + (showScoreValues() ? '' : ' bars-only') + '" title="' + esc(title) + '">' +
+    const valuesVisible = Boolean(options && options.forceValues) || showScoreValues();
+    return '<div class="score-meter rank' + (finite ? '' : ' empty') + (valuesVisible ? '' : ' bars-only') + '" title="' + esc(title) + '">' +
       '<span class="score-meter-value">' + (finite ? ('#' + rank) : 'n/a') + '</span>' +
       '<span class="score-meter-track"><i style="width:' + (clamp(strength, 0, 1) * 100).toFixed(1) + '%"></i></span>' +
       '</div>';
@@ -4151,7 +4271,7 @@
     const actual = sequence.map(idx => idx === null ? null : energyOf(byIdx.get(idx)));
     const traces = [
       { x, y: targets, type: 'scatter', mode: 'lines+markers', name: 'Target energy', line: { color: '#e5e7eb', width: 2 }, marker: { size: 10 } },
-      { x, y: actual, type: 'scatter', mode: 'lines+markers', name: 'Selected actual energy', line: { color: '#14b8a6', width: 2 }, marker: { size: 9 } }
+      { x, y: actual, type: 'scatter', mode: 'lines+markers', name: 'Selected energy', line: { color: '#14b8a6', width: 2 }, marker: { size: 9 } }
     ];
     const slot = targetSlot();
     if (slot >= 0) traces.push({ x: [slot + 1], y: [targets[slot]], type: 'scatter', mode: 'markers', name: 'Next slot', marker: { size: 14, color: '#f59e0b', symbol: 'x' } });
@@ -4164,7 +4284,7 @@
       font: { color: '#e5e7eb' },
       dragmode: false,
       xaxis: { title: 'Sequence slot', dtick: 1, range: [0.5, sequence.length + 0.5], fixedrange: true, gridcolor: '#263244', zerolinecolor: '#263244' },
-      yaxis: { title: 'Energy', range: [0.5, 9.5], fixedrange: true, gridcolor: '#263244', zerolinecolor: '#263244' },
+      yaxis: { title: 'Energy', range: [0.5, 9.5], fixedrange: true, tickmode: 'array', tickvals: ENERGY_AXIS_TICKS, ticktext: ENERGY_AXIS_TICKS.map(String), gridcolor: '#263244', zerolinecolor: '#263244' },
       legend: { orientation: 'h', x: 0, y: -0.24, xanchor: 'left', yanchor: 'top' }
     }, { displayModeBar: false, scrollZoom: false, doubleClick: false, responsive: true });
   }
@@ -4192,7 +4312,9 @@
         '<div class="transition-mini-meter-list">' +
         meterRows.map(row =>
           '<div class="transition-mini-meter-row"><span>' + esc(row[0]) + '</span>' +
-          (row[2] === 'rank' ? rankMeterHtml(row[1]) : scoreMeterHtml(row[1], row[2], row[3], 2, row[4])) +
+          (row[2] === 'rank'
+            ? rankMeterHtml(row[1], { forceValues: true })
+            : scoreMeterHtml(row[1], row[2], row[3], 2, row[4], { forceValues: true })) +
           '</div>'
         ).join('') +
         '</div>' +
@@ -5338,7 +5460,12 @@
     for (let i = sequence.length - 1; i >= 0; i -= 1) { if (sequence[i] !== null) { sequence[i] = null; break; } }
     renderAll();
   });
-  els.resetSequence.addEventListener('click', () => { sequence = Array.from({ length: sequenceLength }, () => null); selectedSlot = null; renderAll(); });
+  els.resetSequence.addEventListener('click', () => {
+    sequence = Array.from({ length: sequenceLength }, () => null);
+    targetValues = Array.from({ length: sequenceLength }, () => DEFAULT_TARGET_ENERGY);
+    selectedSlot = null;
+    renderAll();
+  });
   els.downloadSequence.addEventListener('click', downloadCsv);
   if (els.librarySearch) els.librarySearch.addEventListener('input', () => {
     libraryQuery = els.librarySearch.value || '';
@@ -5609,8 +5736,7 @@
     if (slotValue === null) return;
     const slot = Number(slotValue);
     const val = Number(ev.target.value);
-    if (Number.isFinite(val)) targetValues[slot] = Math.round(clamp(val, 1, 9) * 10) / 10;
-    else targetValues[slot] = null;
+    targetValues[slot] = Number.isFinite(val) ? normalizeTargetEnergy(val) : DEFAULT_TARGET_ENERGY;
     selectedSlot = Number.isFinite(slot) ? slot : selectedSlot;
     renderAll();
   });
@@ -5669,6 +5795,24 @@
     plot.on('plotly_unhover', () => { if (!usingWebglMap()) hideSongHover(); });
     plot.on('plotly_relayout', () => {
       if (usingWebglMap()) return;
+      const view = mapViewRanges();
+      const next = view ? constrainMapRanges(view.x0, view.x1, view.y0, view.y1) : null;
+      if (!mapRelayoutClampActive && next && mapRangesDiffer(view, next) && window.Plotly && plot) {
+        mapRelayoutClampActive = true;
+        const done = () => {
+          mapRelayoutClampActive = false;
+          safeUi('map overlays after zoom clamp', updatePacmapOverlays);
+          safeUi('map effects after zoom clamp', ensureMapEffectsLoop);
+          safeUi('mini map after zoom clamp', drawMiniMap);
+        };
+        const relayout = Plotly.relayout(plot, {
+          'xaxis.range': [next.x0, next.x1],
+          'yaxis.range': [next.y0, next.y1],
+        });
+        if (relayout && typeof relayout.finally === 'function') relayout.finally(done);
+        else done();
+        return;
+      }
       safeUi('map overlays after zoom', updatePacmapOverlays);
       safeUi('map effects after zoom', ensureMapEffectsLoop);
       safeUi('mini map after zoom', drawMiniMap);
