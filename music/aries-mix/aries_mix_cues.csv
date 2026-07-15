@@ -1,0 +1,203 @@
+track_number,mp3_name,title,artists,cue_name,cue_role,cue_index,start_seconds,end_seconds,source,rekordbox_type,rekordbox_num,rekordbox_location
+1,filmic.mp3,Filmic,Above & Beyond,START,start,,0.04,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filmic.mp3
+1,filmic.mp3,Filmic,Above & Beyond,INTRO,intro,,0.502,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filmic.mp3
+1,filmic.mp3,Filmic,Above & Beyond,IN 1,in,1,30.04,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filmic.mp3
+1,filmic.mp3,Filmic,Above & Beyond,IN 2,in,2,59.117,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filmic.mp3
+1,filmic.mp3,Filmic,Above & Beyond,OUT 1,out,1,177.733,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filmic.mp3
+1,filmic.mp3,Filmic,Above & Beyond,END,end,,206.81,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filmic.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",START,start,,0.024,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",START,start,,0.024,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",IN 1,in,1,30.743,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",IN 2,in,2,61.463,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",IN 3,in,3,122.903,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",BREAK,break,,253.463,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",DROP,drop,,368.663,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",OUT 1,out,1,430.102,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",OUT 2,out,2,460.822,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+3,breakthesilence.mp3,Break the Silence,"aname, Bri Zoli",START,start,,0.022,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/breakthesilence.mp3
+3,breakthesilence.mp3,Break the Silence,"aname, Bri Zoli",START,start,,0.022,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/breakthesilence.mp3
+3,breakthesilence.mp3,Break the Silence,"aname, Bri Zoli",IN 1,in,1,30.99,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/breakthesilence.mp3
+3,breakthesilence.mp3,Break the Silence,"aname, Bri Zoli",DROP 1,drop,1,123.893,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/breakthesilence.mp3
+3,breakthesilence.mp3,Break the Silence,"aname, Bri Zoli",DROP 2,drop,2,251.635,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/breakthesilence.mp3
+3,breakthesilence.mp3,Break the Silence,"aname, Bri Zoli",OUT 1,out,1,329.055,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/breakthesilence.mp3
+3,breakthesilence.mp3,Break the Silence,"aname, Bri Zoli",OUT 2,out,2,360.022,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/breakthesilence.mp3
+4,loveyougot.mp3,Love You Got,Kelly Lee Owens,IN 1,in,1,0.192,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/loveyougot.mp3
+4,loveyougot.mp3,Love You Got,Kelly Lee Owens,START,start,,0.192,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/loveyougot.mp3
+4,loveyougot.mp3,Love You Got,Kelly Lee Owens,START,start,,0.192,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/loveyougot.mp3
+4,loveyougot.mp3,Love You Got,Kelly Lee Owens,IN 2,in,2,31.16,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/loveyougot.mp3
+4,loveyougot.mp3,Love You Got,Kelly Lee Owens,CHORUS 1,chorus,1,62.128,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/loveyougot.mp3
+4,loveyougot.mp3,Love You Got,Kelly Lee Owens,CHORUS 2,chorus,2,201.483,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/loveyougot.mp3
+4,loveyougot.mp3,Love You Got,Kelly Lee Owens,OUT 1,out,1,232.45,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/loveyougot.mp3
+4,loveyougot.mp3,Love You Got,Kelly Lee Owens,OUT 2,out,2,247.934,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/loveyougot.mp3
+5,parasite.mp3,Parasite,"ANUQRAM, Eleanora",START,start,,0.022,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+5,parasite.mp3,Parasite,"ANUQRAM, Eleanora",START,start,,0.022,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+5,parasite.mp3,Parasite,"ANUQRAM, Eleanora",IN 1,in,1,30.99,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+5,parasite.mp3,Parasite,"ANUQRAM, Eleanora",BREAK 1,break,1,61.958,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+5,parasite.mp3,Parasite,"ANUQRAM, Eleanora",DROP 1,drop,1,92.925,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+5,parasite.mp3,Parasite,"ANUQRAM, Eleanora",DROP 2,drop,2,247.764,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+5,parasite.mp3,Parasite,"ANUQRAM, Eleanora",OUT 3,out,3,294.216,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+5,parasite.mp3,Parasite,"ANUQRAM, Eleanora",OUT 1,out,1,309.7,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+5,parasite.mp3,Parasite,"ANUQRAM, Eleanora",OUT 2,out,2,340.668,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+6,lately.mp3,Lately (Adam Ten & Mita Gami Remix),RUFUS DU SOL,START,start,,0.404,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/lately.mp3
+6,lately.mp3,Lately (Adam Ten & Mita Gami Remix),RUFUS DU SOL,START,start,,0.404,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/lately.mp3
+6,lately.mp3,Lately (Adam Ten & Mita Gami Remix),RUFUS DU SOL,IN 1,in,1,15.642,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/lately.mp3
+6,lately.mp3,Lately (Adam Ten & Mita Gami Remix),RUFUS DU SOL,IN 2,in,2,30.88,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/lately.mp3
+6,lately.mp3,Lately (Adam Ten & Mita Gami Remix),RUFUS DU SOL,CHORUS,chorus,,152.785,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/lately.mp3
+6,lately.mp3,Lately (Adam Ten & Mita Gami Remix),RUFUS DU SOL,OUT 1,out,1,198.499,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/lately.mp3
+7,comealive.mp3,Come Alive,"Grum, Sarah Appel",START,start,,0.325,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/comealive.mp3
+7,comealive.mp3,Come Alive,"Grum, Sarah Appel",START,start,,0.325,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/comealive.mp3
+7,comealive.mp3,Come Alive,"Grum, Sarah Appel",IN 1,in,1,31.293,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/comealive.mp3
+7,comealive.mp3,Come Alive,"Grum, Sarah Appel",BREAK 1,break,1,93.228,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/comealive.mp3
+7,comealive.mp3,Come Alive,"Grum, Sarah Appel",BREAK 2,break,2,170.648,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/comealive.mp3
+7,comealive.mp3,Come Alive,"Grum, Sarah Appel",DROP,drop,,201.615,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/comealive.mp3
+7,comealive.mp3,Come Alive,"Grum, Sarah Appel",OUT 1,out,1,263.551,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/comealive.mp3
+7,comealive.mp3,Come Alive,"Grum, Sarah Appel",OUT 3,out,3,294.518,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/comealive.mp3
+8,subterranean.mp3,Subterranean,"Miss Monique, AVIRA",START,start,,0.032,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/subterranean.mp3
+8,subterranean.mp3,Subterranean,"Miss Monique, AVIRA",START,start,,0.032,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/subterranean.mp3
+8,subterranean.mp3,Subterranean,"Miss Monique, AVIRA",IN 1,in,1,31.251,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/subterranean.mp3
+8,subterranean.mp3,Subterranean,"Miss Monique, AVIRA",IN 2,in,2,62.471,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/subterranean.mp3
+8,subterranean.mp3,Subterranean,"Miss Monique, AVIRA",DROP 1,drop,1,124.91,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/subterranean.mp3
+8,subterranean.mp3,Subterranean,"Miss Monique, AVIRA",DROP 2,drop,2,234.178,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/subterranean.mp3
+8,subterranean.mp3,Subterranean,"Miss Monique, AVIRA",OUT 1,out,1,265.397,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/subterranean.mp3
+8,subterranean.mp3,Subterranean,"Miss Monique, AVIRA",OUT 2,out,2,281.007,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/subterranean.mp3
+9,thalassophobia.mp3,Thalassophobia (Dark Mix),J Ribbon,START,start,,0.022,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/thalassophobia.mp3
+9,thalassophobia.mp3,Thalassophobia (Dark Mix),J Ribbon,START,start,,0.022,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/thalassophobia.mp3
+9,thalassophobia.mp3,Thalassophobia (Dark Mix),J Ribbon,IN 3,in,3,30.259,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/thalassophobia.mp3
+9,thalassophobia.mp3,Thalassophobia (Dark Mix),J Ribbon,IN 1,in,1,60.495,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/thalassophobia.mp3
+9,thalassophobia.mp3,Thalassophobia (Dark Mix),J Ribbon,IN 2,in,2,75.613,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/thalassophobia.mp3
+9,thalassophobia.mp3,Thalassophobia (Dark Mix),J Ribbon,DROP 1,drop,1,136.085,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/thalassophobia.mp3
+9,thalassophobia.mp3,Thalassophobia (Dark Mix),J Ribbon,DROP 2,drop,2,257.03,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/thalassophobia.mp3
+9,thalassophobia.mp3,Thalassophobia (Dark Mix),J Ribbon,OUT 1,out,1,302.385,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/thalassophobia.mp3
+9,thalassophobia.mp3,Thalassophobia (Dark Mix),J Ribbon,OUT 2,out,2,317.503,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/thalassophobia.mp3
+10,illusion.mp3,Illusion,Yotto,START,start,,0.105,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/illusion.mp3
+10,illusion.mp3,Illusion,Yotto,START,start,,0.105,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/illusion.mp3
+10,illusion.mp3,Illusion,Yotto,IN 1,in,1,31.073,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/illusion.mp3
+10,illusion.mp3,Illusion,Yotto,IN 2,in,2,62.04,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/illusion.mp3
+10,illusion.mp3,Illusion,Yotto,DROP 1,drop,1,93.008,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/illusion.mp3
+10,illusion.mp3,Illusion,Yotto,DROP 2,drop,2,247.846,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/illusion.mp3
+10,illusion.mp3,Illusion,Yotto,OUT 1,out,1,309.781,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/illusion.mp3
+10,illusion.mp3,Illusion,Yotto,OUT 2,out,2,340.749,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/illusion.mp3
+11,brainwasher.mp3,Brainwasher,Nox Vahn,START,start,,0.115,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/brainwasher.mp3
+11,brainwasher.mp3,Brainwasher,Nox Vahn,START,start,,2.115,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/brainwasher.mp3
+11,brainwasher.mp3,Brainwasher,Nox Vahn,IN 1,in,1,34.115,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/brainwasher.mp3
+11,brainwasher.mp3,Brainwasher,Nox Vahn,IN 2,in,2,66.115,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/brainwasher.mp3
+11,brainwasher.mp3,Brainwasher,Nox Vahn,DROP 1,drop,1,98.115,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/brainwasher.mp3
+11,brainwasher.mp3,Brainwasher,Nox Vahn,DROP 2,drop,2,218.116,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/brainwasher.mp3
+11,brainwasher.mp3,Brainwasher,Nox Vahn,OUT 1,out,1,250.116,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/brainwasher.mp3
+11,brainwasher.mp3,Brainwasher,Nox Vahn,OUT 2,out,2,314.116,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/brainwasher.mp3
+12,warrior.mp3,Warrior,Marsh,START,start,,0.046,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/warrior.mp3
+12,warrior.mp3,Warrior,Marsh,START,start,,0.046,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/warrior.mp3
+12,warrior.mp3,Warrior,Marsh,IN 1,in,1,60.999,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/warrior.mp3
+12,warrior.mp3,Warrior,Marsh,IN 2,in,2,106.713,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/warrior.mp3
+12,warrior.mp3,Warrior,Marsh,DROP 1,drop,1,137.19,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/warrior.mp3
+12,warrior.mp3,Warrior,Marsh,CHORUS 1,chorus,1,304.809,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/warrior.mp3
+12,warrior.mp3,Warrior,Marsh,DROP 2,drop,2,365.762,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/warrior.mp3
+12,warrior.mp3,Warrior,Marsh,OUT 1,out,1,396.238,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/warrior.mp3
+12,warrior.mp3,Warrior,Marsh,OUT 2,out,2,426.714,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/warrior.mp3
+13,walktheplank.mp3,Walk the Plank,Lane 8,START,start,,0.045,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/walktheplank.mp3
+13,walktheplank.mp3,Walk the Plank,Lane 8,START,start,,0.529,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/walktheplank.mp3
+13,walktheplank.mp3,Walk the Plank,Lane 8,IN 1,in,1,31.496,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/walktheplank.mp3
+13,walktheplank.mp3,Walk the Plank,Lane 8,DROP 1,drop,1,62.464,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/walktheplank.mp3
+13,walktheplank.mp3,Walk the Plank,Lane 8,BREAK 1,break,1,186.335,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/walktheplank.mp3
+13,walktheplank.mp3,Walk the Plank,Lane 8,DROP 2,drop,2,217.303,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/walktheplank.mp3
+13,walktheplank.mp3,Walk the Plank,Lane 8,OUT 1,out,1,248.271,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/walktheplank.mp3
+13,walktheplank.mp3,Walk the Plank,Lane 8,OUT 2,out,2,263.755,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/walktheplank.mp3
+14,powerdrive.mp3,Power Drive,Pryda,IN 1,in,1,0.111,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/powerdrive.mp3
+14,powerdrive.mp3,Power Drive,Pryda,START,start,,0.111,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/powerdrive.mp3
+14,powerdrive.mp3,Power Drive,Pryda,IN 2,in,2,61.064,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/powerdrive.mp3
+14,powerdrive.mp3,Power Drive,Pryda,IN 3,in,3,91.54,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/powerdrive.mp3
+14,powerdrive.mp3,Power Drive,Pryda,DROP 1,drop,1,122.016,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/powerdrive.mp3
+14,powerdrive.mp3,Power Drive,Pryda,CHORUS 1,chorus,1,243.922,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/powerdrive.mp3
+14,powerdrive.mp3,Power Drive,Pryda,DROP 2,drop,2,282.017,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/powerdrive.mp3
+14,powerdrive.mp3,Power Drive,Pryda,OUT 1,out,1,464.875,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/powerdrive.mp3
+15,water.mp3,Water,"Bicep, Clara La San",START,start,,0.433,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/water.mp3
+15,water.mp3,Water,"Bicep, Clara La San",START,start,,0.433,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/water.mp3
+15,water.mp3,Water,"Bicep, Clara La San",IN 2,in,2,29.972,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/water.mp3
+15,water.mp3,Water,"Bicep, Clara La San",IN 1,in,1,59.51,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/water.mp3
+15,water.mp3,Water,"Bicep, Clara La San",BREAK 1,break,1,103.817,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/water.mp3
+15,water.mp3,Water,"Bicep, Clara La San",CHORUS 1,chorus,1,133.356,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/water.mp3
+15,water.mp3,Water,"Bicep, Clara La San",DROP 1,drop,1,192.432,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/water.mp3
+15,water.mp3,Water,"Bicep, Clara La San",OUT 1,out,1,221.971,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/water.mp3
+15,water.mp3,Water,"Bicep, Clara La San",OUT 2,out,2,236.74,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/water.mp3
+16,holdthatsuckerdown.mp3,Hold That Sucker Down (HEL:SLOWED Remix),Jerome Isma-Ae,START,start,,0.023,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/holdthatsuckerdown.mp3
+16,holdthatsuckerdown.mp3,Hold That Sucker Down (HEL:SLOWED Remix),Jerome Isma-Ae,START,start,,0.023,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/holdthatsuckerdown.mp3
+16,holdthatsuckerdown.mp3,Hold That Sucker Down (HEL:SLOWED Remix),Jerome Isma-Ae,IN 1,in,1,61.463,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/holdthatsuckerdown.mp3
+16,holdthatsuckerdown.mp3,Hold That Sucker Down (HEL:SLOWED Remix),Jerome Isma-Ae,IN 2,in,2,92.183,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/holdthatsuckerdown.mp3
+16,holdthatsuckerdown.mp3,Hold That Sucker Down (HEL:SLOWED Remix),Jerome Isma-Ae,BREAK 1,break,1,138.263,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/holdthatsuckerdown.mp3
+16,holdthatsuckerdown.mp3,Hold That Sucker Down (HEL:SLOWED Remix),Jerome Isma-Ae,DROP 1,drop,1,184.343,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/holdthatsuckerdown.mp3
+16,holdthatsuckerdown.mp3,Hold That Sucker Down (HEL:SLOWED Remix),Jerome Isma-Ae,DROP 2,drop,2,245.783,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/holdthatsuckerdown.mp3
+16,holdthatsuckerdown.mp3,Hold That Sucker Down (HEL:SLOWED Remix),Jerome Isma-Ae,OUT 1,out,1,276.503,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/holdthatsuckerdown.mp3
+16,holdthatsuckerdown.mp3,Hold That Sucker Down (HEL:SLOWED Remix),Jerome Isma-Ae,OUT 2,out,2,291.863,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/holdthatsuckerdown.mp3
+17,flame.mp3,Flame,ARTBAT,START,start,,0.024,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/flame.mp3
+17,flame.mp3,Flame,ARTBAT,START,start,,0.024,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/flame.mp3
+17,flame.mp3,Flame,ARTBAT,IN 1,in,1,30.26,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/flame.mp3
+17,flame.mp3,Flame,ARTBAT,IN 2,in,2,60.496,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/flame.mp3
+17,flame.mp3,Flame,ARTBAT,DROP 1,drop,1,158.764,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/flame.mp3
+17,flame.mp3,Flame,ARTBAT,DROP 2,drop,2,342.071,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/flame.mp3
+17,flame.mp3,Flame,ARTBAT,OUT 1,out,1,370.418,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/flame.mp3
+17,flame.mp3,Flame,ARTBAT,OUT 2,out,2,400.654,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/flame.mp3
+18,ashes.mp3,Ashes,Camden Cox,START,start,,0.336,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/ashes.mp3
+18,ashes.mp3,Ashes,Camden Cox,START,start,,0.798,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/ashes.mp3
+18,ashes.mp3,Ashes,Camden Cox,IN 1,in,1,15.567,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/ashes.mp3
+18,ashes.mp3,Ashes,Camden Cox,DROP 1,drop,1,52.49,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/ashes.mp3
+18,ashes.mp3,Ashes,Camden Cox,CHORUS 1,chorus,1,67.26,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/ashes.mp3
+18,ashes.mp3,Ashes,Camden Cox,CHORUS 2,chorus,2,122.644,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/ashes.mp3
+18,ashes.mp3,Ashes,Camden Cox,OUT 1,out,1,137.875,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/ashes.mp3
+18,ashes.mp3,Ashes,Camden Cox,OUT 2,out,2,166.952,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/ashes.mp3
+19,atnight.mp3,At Night,"Maur, Dave Spoon",START,start,,0.033,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/atnight.mp3
+19,atnight.mp3,At Night,"Maur, Dave Spoon",START,start,,0.033,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/atnight.mp3
+19,atnight.mp3,At Night,"Maur, Dave Spoon",IN 1,in,1,29.571,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/atnight.mp3
+19,atnight.mp3,At Night,"Maur, Dave Spoon",BREAK 1,break,1,59.109,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/atnight.mp3
+19,atnight.mp3,At Night,"Maur, Dave Spoon",DROP 2,drop,2,88.648,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/atnight.mp3
+19,atnight.mp3,At Night,"Maur, Dave Spoon",BREAK 2,break,2,162.494,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/atnight.mp3
+19,atnight.mp3,At Night,"Maur, Dave Spoon",DROP 3,drop,3,206.801,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/atnight.mp3
+19,atnight.mp3,At Night,"Maur, Dave Spoon",OUT 1,out,1,265.878,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/atnight.mp3
+19,atnight.mp3,At Night,"Maur, Dave Spoon",OUT 2,out,2,295.416,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/atnight.mp3
+20,yesman.mp3,Yes Man,Ferry Corsten,START,start,,0.023,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/yesman.mp3
+20,yesman.mp3,Yes Man,Ferry Corsten,START,start,,0.023,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/yesman.mp3
+20,yesman.mp3,Yes Man,Ferry Corsten,IN 1,in,1,43.008,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/yesman.mp3
+20,yesman.mp3,Yes Man,Ferry Corsten,BREAK 1,break,1,100.322,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/yesman.mp3
+20,yesman.mp3,Yes Man,Ferry Corsten,DROP 1,drop,1,171.963,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/yesman.mp3
+20,yesman.mp3,Yes Man,Ferry Corsten,DROP 2,drop,2,286.59,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/yesman.mp3
+20,yesman.mp3,Yes Man,Ferry Corsten,OUT 1,out,1,329.575,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/yesman.mp3
+20,yesman.mp3,Yes Man,Ferry Corsten,OUT 2,out,2,358.232,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/yesman.mp3
+21,filthyacid.mp3,FILTHY ACID,Paul Van Dyk,START,start,,0.022,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filthyacid.mp3
+21,filthyacid.mp3,FILTHY ACID,Paul Van Dyk,START,start,,0.023,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filthyacid.mp3
+21,filthyacid.mp3,FILTHY ACID,Paul Van Dyk,IN 2,in,2,29.113,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filthyacid.mp3
+21,filthyacid.mp3,FILTHY ACID,Paul Van Dyk,IN 1,in,1,58.205,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filthyacid.mp3
+21,filthyacid.mp3,FILTHY ACID,Paul Van Dyk,BREAK 1,break,1,189.113,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filthyacid.mp3
+21,filthyacid.mp3,FILTHY ACID,Paul Van Dyk,OUT 1,out,1,305.477,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filthyacid.mp3
+21,filthyacid.mp3,FILTHY ACID,Paul Van Dyk,OUT 2,out,2,334.568,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/filthyacid.mp3
+22,access.mp3,Access (John Askew Remix),"DJ Misjah, DJ Tim",START,start,,0.024,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/access.mp3
+22,access.mp3,Access (John Askew Remix),"DJ Misjah, DJ Tim",START,start,,0.024,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/access.mp3
+22,access.mp3,Access (John Askew Remix),"DJ Misjah, DJ Tim",IN 1,in,1,27.452,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/access.mp3
+22,access.mp3,Access (John Askew Remix),"DJ Misjah, DJ Tim",IN 2,in,2,54.881,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/access.mp3
+22,access.mp3,Access (John Askew Remix),"DJ Misjah, DJ Tim",DROP 1,drop,1,281.167,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/access.mp3
+22,access.mp3,Access (John Askew Remix),"DJ Misjah, DJ Tim",DROP 2,drop,2,363.453,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/access.mp3
+22,access.mp3,Access (John Askew Remix),"DJ Misjah, DJ Tim",OUT 1,out,1,418.31,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/access.mp3
+22,access.mp3,Access (John Askew Remix),"DJ Misjah, DJ Tim",OUT 2,out,2,445.739,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/access.mp3
+23,outofthesky.mp3,Out of the Sky (Chris Schweizer Remix),"Audrey Gallagher, John O'Callaghan",START,start,,0.051,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/outofthesky.mp3
+23,outofthesky.mp3,Out of the Sky (Chris Schweizer Remix),"Audrey Gallagher, John O'Callaghan",START,start,,0.051,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/outofthesky.mp3
+23,outofthesky.mp3,Out of the Sky (Chris Schweizer Remix),"Audrey Gallagher, John O'Callaghan",IN 1,in,1,27.877,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/outofthesky.mp3
+23,outofthesky.mp3,Out of the Sky (Chris Schweizer Remix),"Audrey Gallagher, John O'Callaghan",IN 2,in,2,69.616,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/outofthesky.mp3
+23,outofthesky.mp3,Out of the Sky (Chris Schweizer Remix),"Audrey Gallagher, John O'Callaghan",BREAK 1,break,1,198.312,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/outofthesky.mp3
+23,outofthesky.mp3,Out of the Sky (Chris Schweizer Remix),"Audrey Gallagher, John O'Callaghan",BREAK 2,break,2,240.051,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/outofthesky.mp3
+23,outofthesky.mp3,Out of the Sky (Chris Schweizer Remix),"Audrey Gallagher, John O'Callaghan",DROP 1,drop,1,267.877,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/outofthesky.mp3
+23,outofthesky.mp3,Out of the Sky (Chris Schweizer Remix),"Audrey Gallagher, John O'Callaghan",OUT 1,out,1,351.356,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/outofthesky.mp3
+23,outofthesky.mp3,Out of the Sky (Chris Schweizer Remix),"Audrey Gallagher, John O'Callaghan",OUT 2,out,2,379.182,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/outofthesky.mp3
+24,apex.mp3,Apex (John Askew Remix),Simon Patterson,START,start,,0.065,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/apex.mp3
+24,apex.mp3,Apex (John Askew Remix),Simon Patterson,START,start,,0.065,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/apex.mp3
+24,apex.mp3,Apex (John Askew Remix),Simon Patterson,IN 1,in,1,27.891,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/apex.mp3
+24,apex.mp3,Apex (John Askew Remix),Simon Patterson,DROP 1,drop,1,55.718,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/apex.mp3
+24,apex.mp3,Apex (John Askew Remix),Simon Patterson,DROP 2,drop,2,222.674,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/apex.mp3
+24,apex.mp3,Apex (John Askew Remix),Simon Patterson,OUT 1,out,1,333.978,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/apex.mp3
+24,apex.mp3,Apex (John Askew Remix),Simon Patterson,OUT 2,out,2,361.804,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/apex.mp3
+25,opulence.mp3,Opulence,Simon Patterson,START,start,,0.022,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/opulence.mp3
+25,opulence.mp3,Opulence,Simon Patterson,START,start,,0.022,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/opulence.mp3
+25,opulence.mp3,Opulence,Simon Patterson,IN 1,in,1,27.451,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/opulence.mp3
+25,opulence.mp3,Opulence,Simon Patterson,IN 2,in,2,54.879,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/opulence.mp3
+25,opulence.mp3,Opulence,Simon Patterson,DROP 2,drop,2,258.451,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/opulence.mp3
+25,opulence.mp3,Opulence,Simon Patterson,DROP 1,drop,1,285.88,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/opulence.mp3
+25,opulence.mp3,Opulence,Simon Patterson,DROP 3,drop,3,340.737,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/opulence.mp3
+25,opulence.mp3,Opulence,Simon Patterson,OUT 1,out,1,368.166,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/opulence.mp3
+25,opulence.mp3,Opulence,Simon Patterson,OUT 2,out,2,395.595,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/opulence.mp3
