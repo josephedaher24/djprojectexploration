@@ -1,0 +1,13 @@
+{
+  "source_audio_path": "/Users/mamingchen/GitHub/djprojectexploration/music/warren/Martin Garrix; JRM; Dyro - These Are The Times (Dyro Remix).mp3",
+  "snippet_path": "/Users/mamingchen/GitHub/djprojectexploration/data/snippets/warren_tracks/martin_garrix_jrm_dyro_-_these_are_the_times_dyro_remix_1b2201e822.wav",
+  "start_seconds": 66.88963718820861,
+  "end_seconds": 74.88963718820861,
+  "duration_seconds": 8.0,
+  "rms": 0.49646653227960097,
+  "sample_rate": 22050,
+  "snippet_seconds_requested": 8.0,
+  "middle_fraction": 0.66,
+  "hop_seconds": 0.25,
+  "created_utc": "2026-07-15T01:59:59.475886+00:00"
+}

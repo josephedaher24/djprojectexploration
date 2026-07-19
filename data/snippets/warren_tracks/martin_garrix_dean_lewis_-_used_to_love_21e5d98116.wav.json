@@ -1,0 +1,13 @@
+{
+  "source_audio_path": "/Users/mamingchen/GitHub/djprojectexploration/music/warren/Martin Garrix; Dean Lewis - Used To Love.mp3",
+  "snippet_path": "/Users/mamingchen/GitHub/djprojectexploration/data/snippets/warren_tracks/martin_garrix_dean_lewis_-_used_to_love_21e5d98116.wav",
+  "start_seconds": 56.509455782312926,
+  "end_seconds": 64.50945578231293,
+  "duration_seconds": 8.0,
+  "rms": 0.37739254252400806,
+  "sample_rate": 22050,
+  "snippet_seconds_requested": 8.0,
+  "middle_fraction": 0.66,
+  "hop_seconds": 0.25,
+  "created_utc": "2026-07-15T01:59:57.881329+00:00"
+}

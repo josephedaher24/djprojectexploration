@@ -1,0 +1,13 @@
+{
+  "source_audio_path": "/Users/mamingchen/GitHub/djprojectexploration/music/warren/Martin Garrix; JRM - These Are The Times.mp3",
+  "snippet_path": "/Users/mamingchen/GitHub/djprojectexploration/data/snippets/warren_tracks/martin_garrix_jrm_-_these_are_the_times_c2448a320f.wav",
+  "start_seconds": 92.5962358276644,
+  "end_seconds": 100.5962358276644,
+  "duration_seconds": 8.0,
+  "rms": 0.40711389101518936,
+  "sample_rate": 22050,
+  "snippet_seconds_requested": 8.0,
+  "middle_fraction": 0.66,
+  "hop_seconds": 0.25,
+  "created_utc": "2026-07-15T01:59:59.293725+00:00"
+}

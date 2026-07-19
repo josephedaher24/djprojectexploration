@@ -1,0 +1,3 @@
+track_number,title,artists,mp3_name,filepath,key,bpm,onset-time,genre,key shift,source_mix,source_track_number
+1,Filmic,Above & Beyond,filmic.mp3,/Users/mamingchen/GitHub/djprojectexploration/music/aries-mix/filmic.mp3,5A,130,0.526,chillout,-1.0,aries-mix,1
+2,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",tearsfromthemoon.mp3,/Users/mamingchen/GitHub/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3,9A,125,0,progressive house,0.0,aries-mix,2

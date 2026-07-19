@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sequence-builder-app",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "djprojectexploration-sequence-builder-app"],
+      "port": 8770
+    }
+  ]
+}

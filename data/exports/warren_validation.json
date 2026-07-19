@@ -1,0 +1,14 @@
+{
+  "tracklist": "/Users/mamingchen/GitHub/djprojectexploration/music/warren/warren_tracks.csv",
+  "rows": 20,
+  "resolved_audio": 20,
+  "missing_audio": 0,
+  "duplicate_filenames": 0,
+  "duplicate_track_numbers": 0,
+  "missing_title": 0,
+  "missing_artist": 0,
+  "missing_genre": 20,
+  "missing_key": 20,
+  "missing_bpm": 20,
+  "warnings": []
+}

@@ -1,0 +1,13 @@
+{
+  "source_audio_path": "/Users/mamingchen/GitHub/djprojectexploration/music/warren/Martin Garrix; Jay Hardway - Wizard (Original Mix).mp3",
+  "snippet_path": "/Users/mamingchen/GitHub/djprojectexploration/data/snippets/warren_tracks/martin_garrix_jay_hardway_-_wizard_original_mix_a89adc5b8b.wav",
+  "start_seconds": 194.08707482993196,
+  "end_seconds": 202.08707482993196,
+  "duration_seconds": 8.0,
+  "rms": 0.5147598243777649,
+  "sample_rate": 22050,
+  "snippet_seconds_requested": 8.0,
+  "middle_fraction": 0.66,
+  "hop_seconds": 0.25,
+  "created_utc": "2026-07-15T01:59:59.085986+00:00"
+}

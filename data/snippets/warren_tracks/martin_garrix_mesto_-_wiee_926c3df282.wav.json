@@ -1,0 +1,13 @@
+{
+  "source_audio_path": "/Users/mamingchen/GitHub/djprojectexploration/music/warren/Martin Garrix; Mesto - WIEE.mp3",
+  "snippet_path": "/Users/mamingchen/GitHub/djprojectexploration/data/snippets/warren_tracks/martin_garrix_mesto_-_wiee_926c3df282.wav",
+  "start_seconds": 64.04757369614512,
+  "end_seconds": 72.04757369614512,
+  "duration_seconds": 8.0,
+  "rms": 0.3493152965227439,
+  "sample_rate": 22050,
+  "snippet_seconds_requested": 8.0,
+  "middle_fraction": 0.66,
+  "hop_seconds": 0.25,
+  "created_utc": "2026-07-15T02:00:02.187293+00:00"
+}

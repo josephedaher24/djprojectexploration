@@ -1,0 +1,27 @@
+{
+  "mix_slugs": [
+    "warren"
+  ],
+  "energy_npz": "data/energy_embeddings/warren_energy_features.npz",
+  "output_file": "data/exports/warren_sequence_builder_app.html",
+  "sequence_length": 10,
+  "control_mode": "genre-mixability",
+  "n_neighbors": 10,
+  "MN_ratio": 1.25,
+  "FP_ratio": 0.5,
+  "distance": "angular",
+  "pair_source": "combined-all",
+  "distance_combine": "l1",
+  "layout_init": "pca",
+  "layout_selection_mode": "discrete",
+  "step": 0.1,
+  "static_layout": false,
+  "random_state": 7777,
+  "ui": {
+    "latent_links_per_track": 3,
+    "recommended_links_highlight": 25,
+    "point_color": "genre",
+    "map_renderer": "webgl",
+    "map_fx": true
+  }
+}

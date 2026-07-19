@@ -1,0 +1,13 @@
+{
+  "source_audio_path": "/Users/mamingchen/GitHub/djprojectexploration/music/warren/Martin Garrix; Macklemore; Patrick Stump; Vintage Culture; Bruno Be - Summer Days (Vintage Culture & Bruno Be Remix).mp3",
+  "snippet_path": "/Users/mamingchen/GitHub/djprojectexploration/data/snippets/warren_tracks/martin_garrix_macklemore_patrick_stump_vintage_culture_bruno_be_-_summer_days_vi_d227bc0655.wav",
+  "start_seconds": 73.29625850340136,
+  "end_seconds": 81.29625850340136,
+  "duration_seconds": 8.0,
+  "rms": 0.38609681421092706,
+  "sample_rate": 22050,
+  "snippet_seconds_requested": 8.0,
+  "middle_fraction": 0.66,
+  "hop_seconds": 0.25,
+  "created_utc": "2026-07-15T02:00:00.978702+00:00"
+}

@@ -1,0 +1,19 @@
+track_number,mp3_name,title,artists,cue_name,cue_role,cue_index,start_seconds,end_seconds,source,rekordbox_type,rekordbox_num,rekordbox_location
+1,parasite.mp3,Parasite,"ANUQRAM, Eleanora",START,start,,0.022,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+1,parasite.mp3,Parasite,"ANUQRAM, Eleanora",START,start,,0.022,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+1,parasite.mp3,Parasite,"ANUQRAM, Eleanora",IN 1,in,1,30.99,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+1,parasite.mp3,Parasite,"ANUQRAM, Eleanora",BREAK 1,break,1,61.958,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+1,parasite.mp3,Parasite,"ANUQRAM, Eleanora",DROP 1,drop,1,92.925,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+1,parasite.mp3,Parasite,"ANUQRAM, Eleanora",DROP 2,drop,2,247.764,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+1,parasite.mp3,Parasite,"ANUQRAM, Eleanora",OUT 3,out,3,294.216,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+1,parasite.mp3,Parasite,"ANUQRAM, Eleanora",OUT 1,out,1,309.7,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+1,parasite.mp3,Parasite,"ANUQRAM, Eleanora",OUT 2,out,2,340.668,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/parasite.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",START,start,,0.024,,rekordbox,beatgrid,,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",START,start,,0.024,,rekordbox,0,0,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",IN 1,in,1,30.743,,rekordbox,0,1,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",IN 2,in,2,61.463,,rekordbox,0,2,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",IN 3,in,3,122.903,,rekordbox,0,3,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",BREAK,break,,253.463,,rekordbox,0,4,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",DROP,drop,,368.663,,rekordbox,0,5,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",OUT 1,out,1,430.102,,rekordbox,0,6,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3
+2,tearsfromthemoon.mp3,Tears from the Moon (aname Mix),"Conjure One, Sinead O'Connor",OUT 2,out,2,460.822,,rekordbox,0,7,file://localhost/Users/josephdaher/Git%20Repositories/djprojectexploration/music/aries-mix/tearsfromthemoon.mp3

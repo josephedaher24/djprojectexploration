@@ -1,0 +1,13 @@
+{
+  "source_audio_path": "/Users/mamingchen/GitHub/djprojectexploration/music/warren/Martin Garrix; G-Eazy; Sasha Alex Sloan - Love Runs Out.mp3",
+  "snippet_path": "/Users/mamingchen/GitHub/djprojectexploration/data/snippets/warren_tracks/martin_garrix_g-eazy_sasha_alex_sloan_-_love_runs_out_04508375d0.wav",
+  "start_seconds": 78.65834467120182,
+  "end_seconds": 86.65834467120182,
+  "duration_seconds": 8.0,
+  "rms": 0.3616808356164187,
+  "sample_rate": 22050,
+  "snippet_seconds_requested": 8.0,
+  "middle_fraction": 0.66,
+  "hop_seconds": 0.25,
+  "created_utc": "2026-07-15T01:59:58.758363+00:00"
+}
