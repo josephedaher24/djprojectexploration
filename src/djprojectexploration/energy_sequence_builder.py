@@ -19,23 +19,26 @@ import plotly.graph_objects as go
 
 from djprojectexploration.frontend_assets import frontend_asset_text, render_standalone_document
 from djprojectexploration.interactive_pacmap_knn_simplex import (
-    _build_similarity_payload_4way,
-    _component_matrices_4way,
-    _compute_pacmap_knn_4way_layouts,
+    _build_similarity_payload_style_rhythm_harmony,
+    _component_matrices_style_rhythm_harmony,
+    _compute_pacmap_knn_simplex_layouts,
     _load_combined_groove_embeddings,
-    _simplex_grid_4way,
+    _simplex_grid,
 )
 from djprojectexploration.pacmap_settings import (
     DISTANCE_COMBINE_CHOICES,
     LAYOUT_INIT_CHOICES,
     PACMAP_PAIR_SOURCE_CHOICES,
     PacmapSettings,
+    MetadataEnrichmentSettings,
     SequenceBuilderUiSettings,
+    TransitionScoringSettings,
     add_pacmap_args,
     ensure_numba_cache_dir,
     pacmap_settings_from_args,
     sequence_builder_run_settings_from_args,
     sequence_builder_ui_settings_from_args,
+    transition_scoring_settings_from_args,
 )
 from djprojectexploration.interactive_visualization_common import simplify_genre
 from djprojectexploration.multimodal_compatibility import (
@@ -48,10 +51,22 @@ from djprojectexploration.waveform_features import (
     default_waveform_npz_path,
     load_waveform_feature_lookup,
 )
+from djprojectexploration.transition_scoring import weight_shorthand
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CONTROL_MODE_CHOICES = ("genre-mixability", "legacy-weights")
+CANONICAL_CONTROL_MODE = "style-rhythm-harmony"
+CONTROL_MODE_CHOICES = (
+    CANONICAL_CONTROL_MODE,
+    "genre-mixability",
+    "legacy-weights",
+)
+
+
+def _canonical_control_mode(value: str) -> str:
+    if value not in CONTROL_MODE_CHOICES:
+        raise ValueError(f"control_mode must be one of {CONTROL_MODE_CHOICES}, got {value!r}.")
+    return CANONICAL_CONTROL_MODE
 
 
 def _norm_token(value: str) -> str:
@@ -63,6 +78,49 @@ def _norm_mix(value: str) -> str:
     if text.endswith("-mix"):
         text = text[: -len("-mix")]
     return text
+
+
+def _meaningful_source_tag(value: str) -> bool:
+    return str(value or "").strip().casefold() not in {"", "unknown", "music", "people & blogs"}
+
+
+def _load_annotation_values(tracklist_csv: Path, annotation_dir: Path, annotation_type: str) -> dict[str, dict[str, Any]]:
+    candidates = sorted(annotation_dir.glob(f"{tracklist_csv.stem}__{annotation_type}_*.npz"))
+    if not candidates:
+        return {}
+    with np.load(candidates[-1], allow_pickle=False) as data:
+        filenames = np.asarray(data["filenames"], dtype=np.str_)
+        out: dict[str, dict[str, Any]] = {}
+        if annotation_type == "genre":
+            labels, scores = np.asarray(data["label_names"], dtype=np.str_), np.asarray(data["scores"], dtype=np.float32)
+            for i, filename in enumerate(filenames):
+                label_i = int(np.argmax(scores[i])); out[_norm_token(filename)] = {"label": str(labels[label_i]), "confidence": float(scores[i, label_i])}
+        else:
+            keys, modes, confidence = np.asarray(data["key_label"], dtype=np.str_), np.asarray(data["mode"], dtype=np.str_), np.asarray(data["confidence"], dtype=np.float32)
+            for i, filename in enumerate(filenames):
+                out[_norm_token(filename)] = {"label": " ".join(x for x in (str(keys[i]).strip(), str(modes[i]).strip()) if x), "confidence": float(confidence[i])}
+    return out
+
+
+def _resolve_enriched_tag(source: str, enriched: dict[str, Any] | None, policy: str, minimum: float) -> tuple[str, str, float | None]:
+    source, enriched = str(source or "").strip(), enriched or {}
+    label, confidence = str(enriched.get("label") or "").strip(), float(enriched.get("confidence", np.nan))
+    usable = bool(label) and np.isfinite(confidence) and confidence >= minimum
+    if policy == "source" or (policy == "prefer_source" and _meaningful_source_tag(source)):
+        return source, "source", None
+    if usable and policy in {"enriched", "prefer_enriched", "prefer_source"}:
+        return label, "enriched", confidence
+    return source, "source_fallback", None
+
+
+def _energy_npz_stem_for_mix_slugs(mix_slugs: list[str]) -> str:
+    if len(mix_slugs) == 1:
+        return mix_slugs[0].replace("-", "_")
+    return "_".join(_norm_mix(slug).replace("-", "_") for slug in mix_slugs)
+
+
+def default_energy_npz_path_for_mix_slugs(project_root: Path, mix_slugs: list[str]) -> Path:
+    return project_root / "data" / "energy_embeddings" / f"{_energy_npz_stem_for_mix_slugs(mix_slugs)}_energy_features.npz"
 
 
 def _json_script_payload(value: Any) -> str:
@@ -251,6 +309,7 @@ def _load_combined_records_and_features(
     chroma_dir: Path,
     tempo_dir: Path,
     html_output_dir: Path,
+    metadata_enrichment: MetadataEnrichmentSettings | None = None,
 ) -> tuple[list[dict[str, Any]], SongFeatureSet]:
     energy_lookup = _load_energy_lookup(energy_npz_path)
 
@@ -268,6 +327,9 @@ def _load_combined_records_and_features(
             raise FileNotFoundError(f"Tracklist CSV not found: {tracklist_csv}")
 
         music_dir = tracklist_csv.parent
+        annotation_dir = (project_root / (metadata_enrichment.annotation_dir if metadata_enrichment else Path("data/annotations"))).resolve()
+        genre_annotations = _load_annotation_values(tracklist_csv, annotation_dir, "genre") if metadata_enrichment and metadata_enrichment.enabled else {}
+        key_annotations = _load_annotation_values(tracklist_csv, annotation_dir, "key") if metadata_enrichment and metadata_enrichment.enabled else {}
         mix_features = load_aries_mix_feature_set(
             mix_csv_path=tracklist_csv,
             maest_dir=maest_dir,
@@ -307,9 +369,20 @@ def _load_combined_records_and_features(
 
             title = (row.get("title") or meta.title or Path(meta.filename).stem).strip()
             artists = (row.get("artists") or meta.artist or "").strip()
-            key_tag = (row.get("key") or "").strip()
+            source_key = (row.get("key") or "").strip()
             bpm_tag = (row.get("bpm") or "").strip()
-            raw_genre = (row.get("genre") or meta.genre or "Unknown").strip() or "Unknown"
+            source_genre = (row.get("genre") or meta.genre or "Unknown").strip() or "Unknown"
+            genre_value, genre_origin, genre_confidence = _resolve_enriched_tag(
+                source_genre, genre_annotations.get(token),
+                metadata_enrichment.genre_policy if metadata_enrichment else "source",
+                metadata_enrichment.genre_min_score if metadata_enrichment else 1.0,
+            )
+            key_value, key_origin, key_confidence = _resolve_enriched_tag(
+                source_key, key_annotations.get(token),
+                metadata_enrichment.key_policy if metadata_enrichment else "source",
+                metadata_enrichment.key_min_confidence if metadata_enrichment else 1.0,
+            )
+            raw_genre = genre_value or "Unknown"
             genre = simplify_genre(raw_genre)
             track_num_tag = (row.get("track_number") or row.get("#") or str(meta.track_number)).strip()
             track_id = f"{mix_slug}:{track_num_tag}"
@@ -378,7 +451,13 @@ def _load_combined_records_and_features(
                     "artists": artists,
                     "genre": genre,
                     "raw_genre": raw_genre,
-                    "key": key_tag,
+                    "source_genre": source_genre,
+                    "genre_origin": genre_origin,
+                    "genre_confidence": genre_confidence,
+                    "key": key_value,
+                    "source_key": source_key,
+                    "key_origin": key_origin,
+                    "key_confidence": key_confidence,
                     "csv_bpm": bpm_tag,
                     "est_bpm": est_bpm,
                     "est_conf": est_conf,
@@ -438,8 +517,11 @@ def _build_similarity_payload(
     tempo_distance: np.ndarray,
     groove_distance: np.ndarray,
     chroma_distance: np.ndarray,
+    rhythm_similarity: np.ndarray,
+    rhythm_distance: np.ndarray,
+    rhythm_tempo_weight: float,
 ) -> dict[str, dict[str, Any]]:
-    payload = _build_similarity_payload_4way(
+    payload = _build_similarity_payload_style_rhythm_harmony(
         records=records,
         maest_similarity=maest_similarity,
         tempo_similarity=tempo_similarity,
@@ -449,6 +531,9 @@ def _build_similarity_payload(
         tempo_distance=tempo_distance,
         groove_distance=groove_distance,
         chroma_distance=chroma_distance,
+        rhythm_similarity=rhythm_similarity,
+        rhythm_distance=rhythm_distance,
+        rhythm_tempo_weight=rhythm_tempo_weight,
         temperature=temperature,
     )
     for src_idx, group in payload.items():
@@ -527,14 +612,12 @@ def _feature_visual_payload(features: SongFeatureSet, groove_embeddings: np.ndar
     return payload
 
 
-def _default_genre_mixability_weights(default_weights: dict[str, float]) -> tuple[float, float, float, float]:
-    style = float(np.clip(default_weights.get("maest", 0.45), 0.0, 1.0))
-    tempo = max(0.0, float(default_weights.get("mix_tempo", 0.34)))
-    groove = max(0.0, float(default_weights.get("mix_groove", 0.33)))
-    chroma = max(0.0, float(default_weights.get("mix_chroma", 0.33)))
-    total = max(tempo + groove + chroma, 1e-12)
-    mix = 1.0 - style
-    return style, mix * tempo / total, mix * groove / total, mix * chroma / total
+def _default_component_weights(default_weights: dict[str, float]) -> tuple[float, float, float]:
+    return (
+        float(default_weights["style_weight"]),
+        float(default_weights["rhythm_weight"]),
+        float(default_weights["harmony_weight"]),
+    )
 
 
 def _build_plot(records: list[dict[str, Any]], coords: np.ndarray, *, plot_div_id: str, title: str) -> str:
@@ -730,7 +813,13 @@ def _build_html(
             "artists": str(r["artists"]),
             "genre": str(r["genre"]),
             "raw_genre": str(r.get("raw_genre", r["genre"])),
+            "source_genre": str(r.get("source_genre", r.get("raw_genre", r["genre"]))),
+            "genre_origin": str(r.get("genre_origin", "source")),
+            "genre_confidence": r.get("genre_confidence"),
             "key": str(r["key"]),
+            "source_key": str(r.get("source_key", "")),
+            "key_origin": str(r.get("key_origin", "source")),
+            "key_confidence": r.get("key_confidence"),
             "csv_bpm": str(r["csv_bpm"]),
             "est_bpm": float(r["est_bpm"]),
             "est_conf": float(r["est_conf"]),
@@ -795,10 +884,9 @@ def _build_html(
         ]
     )
 
-    if control_mode == "legacy-weights":
-        weight_controls_html = frontend_asset_text("templates/energy_sequence_builder_legacy_weights.html")
-    else:
-        weight_controls_html = frontend_asset_text("templates/energy_sequence_builder_mixability_weights.html")
+    weight_controls_html = frontend_asset_text(
+        "templates/energy_sequence_builder_mixability_weights.html"
+    )
 
     body_html = (
         frontend_asset_text("templates/energy_sequence_builder_body.html")
@@ -825,7 +913,7 @@ def export_dj_sequence(
     mix_slugs: list[str] | None = None,
     energy_npz_path: Path | None = None,
     default_length: int = 10,
-    control_mode: str = "genre-mixability",
+    control_mode: str = CANONICAL_CONTROL_MODE,
     step: float = 0.1,
     static_layout: bool = False,
     n_neighbors: int = 10,
@@ -840,6 +928,8 @@ def export_dj_sequence(
     layout_selection_mode: str = "interpolated",
     pacmap_settings: PacmapSettings | None = None,
     ui_settings: SequenceBuilderUiSettings | None = None,
+    scoring_settings: TransitionScoringSettings | None = None,
+    metadata_enrichment: MetadataEnrichmentSettings | None = None,
     settings_preset_source: Path | None = None,
     open_browser: bool = False,
     app_mode: bool = False,
@@ -868,13 +958,24 @@ def export_dj_sequence(
             "latent_links": "Top-K weighted candidate links per track, using the current transition weight sliders.",
             "recommended_links": "Current selected track's ranked next-track recommendations highlighted on the map.",
         },
+        "metadata_enrichment": {
+            "enabled": bool(metadata_enrichment and metadata_enrichment.enabled),
+            "genre_policy": metadata_enrichment.genre_policy if metadata_enrichment else "source",
+            "key_policy": metadata_enrichment.key_policy if metadata_enrichment else "source",
+        },
     }
-    if control_mode not in CONTROL_MODE_CHOICES:
-        raise ValueError(f"control_mode must be one of {CONTROL_MODE_CHOICES}, got {control_mode!r}.")
+    control_mode = _canonical_control_mode(control_mode)
+    scoring_current = (scoring_settings or TransitionScoringSettings()).validate()
+    default_weights = scoring_current.to_dict()
     if pair_source not in PACMAP_PAIR_SOURCE_CHOICES:
         raise ValueError(f"pair_source must be one of {PACMAP_PAIR_SOURCE_CHOICES}, got {pair_source!r}.")
     if distance_combine not in DISTANCE_COMBINE_CHOICES:
         raise ValueError(f"distance_combine must be one of {DISTANCE_COMBINE_CHOICES}, got {distance_combine!r}.")
+    if distance_combine != "l1":
+        raise ValueError(
+            "Style/Rhythm/Harmony layouts require distance_combine='l1' so "
+            "D = w_style*D_style + w_rhythm*D_rhythm + w_harmony*D_harmony."
+        )
     if layout_init not in LAYOUT_INIT_CHOICES:
         raise ValueError(f"layout_init must be one of {LAYOUT_INIT_CHOICES}, got {layout_init!r}.")
     if layout_selection_mode not in {"interpolated", "discrete"}:
@@ -882,7 +983,7 @@ def export_dj_sequence(
     mix_slugs = mix_slugs or ["aries-mix", "ara-mix"]
     output_file = output_file or (project_root / "data" / "exports" / "dj_sequence_builder.html")
     output_file = output_file.expanduser().resolve()
-    energy_npz_path = energy_npz_path or (project_root / "data" / "energy_embeddings" / "aries_ara_energy_features.npz")
+    energy_npz_path = energy_npz_path or default_energy_npz_path_for_mix_slugs(project_root, mix_slugs)
     maest_dir = project_root / "data" / "maest_embeddings"
     chroma_dir = project_root / "data" / "chroma_embeddings"
     tempo_dir = project_root / "data" / "tempo_embeddings"
@@ -897,6 +998,7 @@ def export_dj_sequence(
         "tempo_similarity_shape": "gaussian",
         "tempo_softflat_sharpness": 8.0,
         "tempo_use_confidence": False,
+        "rhythm_tempo_weight": float(scoring_current.rhythm_tempo_weight),
         "harmonic_exact_weight": 1.0,
         "harmonic_first_fifth_weight": 0.2,
         "harmonic_second_fifth_weight": 0.0,
@@ -942,18 +1044,14 @@ def export_dj_sequence(
         chroma_dir=chroma_dir,
         tempo_dir=tempo_dir,
         html_output_dir=output_file.parent,
-    )
-    default_weights = (
-        {"maest": 0.45, "mix_tempo": 0.34, "mix_groove": 0.33, "mix_chroma": 0.33}
-        if control_mode == "genre-mixability"
-        else {"maest": 0.60, "chroma": 0.25, "tempo": 0.15}
+        metadata_enrichment=metadata_enrichment,
     )
     groove_embeddings = _load_combined_groove_embeddings(
         project_root=project_root,
         mix_slugs=mix_slugs,
         groove_dir=groove_dir,
     )
-    matrices = _component_matrices_4way(
+    matrices = _component_matrices_style_rhythm_harmony(
         features,
         groove_embeddings=groove_embeddings,
         **matrix_settings,
@@ -969,6 +1067,9 @@ def export_dj_sequence(
         tempo_distance=matrices["tempo_distance"],
         groove_distance=matrices["groove_distance"],
         chroma_distance=matrices["chroma_distance"],
+        rhythm_similarity=matrices["rhythm_similarity"],
+        rhythm_distance=matrices["rhythm_distance"],
+        rhythm_tempo_weight=float(scoring_current.rhythm_tempo_weight),
     )
     pacmap_settings["n_samples"] = int(features.maest.shape[0])
     pacmap_settings["effective_n_neighbors"] = min(
@@ -977,13 +1078,12 @@ def export_dj_sequence(
     )
     layouts = None
     coords: np.ndarray
-    if control_mode == "genre-mixability" and static_layout:
-        static_weights = _default_genre_mixability_weights(default_weights)
-        static_layouts = _compute_pacmap_knn_4way_layouts(
+    if static_layout:
+        static_weights = _default_component_weights(default_weights)
+        static_layouts = _compute_pacmap_knn_simplex_layouts(
             X_reference=features.maest,
             D_maest=matrices["maest_distance"],
-            D_tempo=matrices["tempo_distance"],
-            D_groove=matrices["groove_distance"],
+            D_tempo=matrices["rhythm_distance"],
             D_chroma=matrices["chroma_distance"],
             grid=[static_weights],
             n_neighbors=int(pacmap_settings["effective_n_neighbors"]),
@@ -997,14 +1097,13 @@ def export_dj_sequence(
             layout_init=str(pacmap_settings["layout_init"]),
         )
         coords = np.asarray(next(iter(static_layouts.values())), dtype=np.float32)
-    elif control_mode == "genre-mixability":
-        layouts = _compute_pacmap_knn_4way_layouts(
+    else:
+        layouts = _compute_pacmap_knn_simplex_layouts(
             X_reference=features.maest,
             D_maest=matrices["maest_distance"],
-            D_tempo=matrices["tempo_distance"],
-            D_groove=matrices["groove_distance"],
+            D_tempo=matrices["rhythm_distance"],
             D_chroma=matrices["chroma_distance"],
-            grid=_simplex_grid_4way(step),
+            grid=_simplex_grid(step),
             n_neighbors=int(pacmap_settings["effective_n_neighbors"]),
             mn_ratio=float(pacmap_settings["MN_ratio"]),
             fp_ratio=float(pacmap_settings["FP_ratio"]),
@@ -1016,38 +1115,6 @@ def export_dj_sequence(
             layout_init=str(pacmap_settings["layout_init"]),
         )
         coords = np.asarray(next(iter(layouts.values())), dtype=np.float32)
-    else:
-        pacmap_settings = {
-            "n_components": 2,
-            "random_state": 7777,
-            "n_neighbors": 10,
-            "MN_ratio": 0.5,
-            "FP_ratio": 1.5,
-            "pair_neighbors": None,
-            "pair_MN": None,
-            "pair_FP": None,
-            "distance": "euclidean",
-            "lr": 1.0,
-            "num_iters": [100, 100, 250],
-            "verbose": False,
-            "apply_pca": True,
-            "intermediate": False,
-            "intermediate_snapshots": [0, 10, 30, 60, 100, 120, 140, 170, 200, 250, 300, 350, 450],
-            "save_tree": False,
-            "knn_backend": "faiss",
-            "fit_transform_init": None,
-            "layout_mode": "legacy-weights",
-        }
-        pacmap_settings["n_samples"] = int(features.maest.shape[0])
-        pacmap_settings["effective_n_neighbors"] = min(
-            int(pacmap_settings["n_neighbors"]),
-            max(2, int(features.maest.shape[0]) - 1),
-        )
-        coords = _compute_pacmap_coords(
-            features,
-            random_state=int(pacmap_settings["random_state"]),
-            n_neighbors=int(pacmap_settings["effective_n_neighbors"]),
-        )
 
     title = "DJ Sequence Builder"
     plot_div_id = "dj_sequence_builder_pacmap"
@@ -1075,6 +1142,10 @@ def export_dj_sequence(
             "step": step,
             "pacmap": pacmap_settings,
             "similarity": matrix_settings,
+            "transition_scoring": {
+                **default_weights,
+                "shorthand": weight_shorthand(default_weights),
+            },
             "paths": {
                 "project_root": str(project_root),
                 "output_file": str(output_file),
@@ -1114,6 +1185,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     pacmap_settings = pacmap_settings_from_args(args)
     ui_settings = sequence_builder_ui_settings_from_args(args)
+    scoring_settings = transition_scoring_settings_from_args(args)
     run_settings = sequence_builder_run_settings_from_args(args)
     project_root = PROJECT_ROOT.expanduser().resolve()
     if run_settings.tracklists and not (args.mix_slugs or run_settings.mix_slugs):
@@ -1123,9 +1195,10 @@ def main(argv: list[str] | None = None) -> int:
         output_file=_resolve_project_path(project_root, args.output_file or run_settings.output_file),
         energy_npz_path=_resolve_project_path(project_root, args.energy_npz or run_settings.energy_npz_path),
         default_length=args.sequence_length or run_settings.sequence_length or 10,
-        control_mode=args.control_mode or run_settings.control_mode or "genre-mixability",
+        control_mode=args.control_mode or run_settings.control_mode or CANONICAL_CONTROL_MODE,
         pacmap_settings=pacmap_settings,
         ui_settings=ui_settings,
+        scoring_settings=scoring_settings,
         settings_preset_source=args.pacmap_preset,
         mix_slugs=args.mix_slugs or run_settings.mix_slugs,
         open_browser=bool(args.open),

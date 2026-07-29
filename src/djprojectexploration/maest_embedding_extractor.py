@@ -25,6 +25,10 @@ DEFAULT_MODEL_FILENAME = "discogs-maest-30s-pw-519l-2.pb"
 DEFAULT_OUTPUT_NODE = "PartitionedCall/Identity_7"
 DEFAULT_OUTPUT_FILENAME = "maest_embedding_discogs-maest-30s-pw.json"
 EPS = 1e-12
+MAEST_SAMPLE_RATE = 16000
+MAEST_MEL_HOP_SAMPLES = 256
+MAEST_PATCH_SIZE_FRAMES = 1876
+MAEST_MIN_INPUT_SAMPLES = MAEST_MEL_HOP_SAMPLES * MAEST_PATCH_SIZE_FRAMES
 
 
 def _to_project_relpath(path: Path, project_root: Path) -> str:
@@ -60,6 +64,17 @@ def _reduce_to_track_embedding(raw_predictions: np.ndarray) -> tuple[np.ndarray,
 
     flattened = raw_predictions.reshape(raw_predictions.shape[0], -1)
     return flattened.mean(axis=0).astype(np.float32), "mean_over_segments_flattened"
+
+
+def _pad_short_maest_audio(audio: np.ndarray) -> tuple[np.ndarray, int]:
+    """Pad audio to the minimum MAEST patch length when a section is too short."""
+    signal = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if signal.size == 0:
+        raise ValueError("Cannot extract MAEST embedding from empty audio.")
+    if signal.size >= MAEST_MIN_INPUT_SAMPLES:
+        return signal, 0
+    pad_samples = int(MAEST_MIN_INPUT_SAMPLES - signal.size)
+    return np.pad(signal, (0, pad_samples), mode="constant"), pad_samples
 
 
 def _rms_db(audio: np.ndarray) -> float:
@@ -111,9 +126,157 @@ def extract_embedding_from_audio(
     model: TensorflowPredictMAEST | None = None,
 ) -> tuple[np.ndarray, tuple[int, ...], str]:
     predictor = model or TensorflowPredictMAEST(graphFilename=str(model_file), output=output_node)
-    raw_predictions = np.asarray(predictor(audio))
+    signal, padded_samples = _pad_short_maest_audio(audio)
+    raw_predictions = np.asarray(predictor(signal))
     embedding, reduction = _reduce_to_track_embedding(raw_predictions)
+    if padded_samples:
+        padded_sec = padded_samples / float(MAEST_SAMPLE_RATE)
+        reduction = f"{reduction}+silence_padded_short_input_{padded_sec:.3f}s"
     return embedding, tuple(raw_predictions.shape), reduction
+
+
+def predict_discogs519_genres_from_audio(
+    audio: np.ndarray,
+    *,
+    embedding_model: TensorflowPredictMAEST,
+    genre_model: object,
+) -> np.ndarray:
+    """Run the official Discogs-519 head from MAEST's required final output.
+
+    ``embedding_model`` must be configured with ``PartitionedCall/Identity_12``.
+    The generic similarity embedding remains the seventh-layer output and is not
+    suitable input for this head.
+    """
+    from essentia import Pool
+
+    signal, _ = _pad_short_maest_audio(audio)
+    final_layer_embeddings = np.asarray(embedding_model(signal))
+    pool = Pool()
+    pool.set("embeddings", final_layer_embeddings)
+    prediction_pool = genre_model(pool)
+    predictions = np.asarray(prediction_pool["PartitionedCall/Identity_1"], dtype=np.float32)
+    if predictions.ndim == 0:
+        raise ValueError("Discogs-519 genre head returned a scalar instead of class predictions.")
+    if predictions.shape[-1] != 519:
+        raise ValueError(
+            "Discogs-519 genre head returned an unexpected class dimension: "
+            f"{predictions.shape}. Expected the last dimension to be 519."
+        )
+    # The head returns one prediction vector per MAEST patch. Pool patches to one
+    # fixed-width, track-level multi-label score vector.
+    return predictions.reshape(-1, predictions.shape[-1]).mean(axis=0, dtype=np.float32)
+
+
+def extract_peak_rms_embedding_from_audio(
+    audio: np.ndarray,
+    model_file: Path,
+    output_node: str,
+    *,
+    model: TensorflowPredictMAEST | None = None,
+    window_sec: float = 30.0,
+    hop_sec: float = 1.0,
+) -> tuple[np.ndarray, tuple[int, ...], str, float, float, float]:
+    """Peak-RMS MAEST embedding without loading the audio a second time."""
+    peak_audio, start_sec, end_sec, rms_db = _highest_rms_window(
+        audio, sample_rate=MAEST_SAMPLE_RATE, window_sec=window_sec, hop_sec=hop_sec,
+    )
+    embedding, raw_shape, reduction = extract_embedding_from_audio(
+        peak_audio, model_file, output_node, model=model,
+    )
+    return embedding, raw_shape, reduction, start_sec, end_sec, rms_db
+
+
+def _cls_embedding(raw_prediction: np.ndarray) -> np.ndarray:
+    """Return one embedding vector from a single MAEST inference window."""
+    if raw_prediction.size == 0:
+        raise ValueError("MAEST returned an empty prediction tensor for a segment.")
+
+    if raw_prediction.ndim == 1:
+        return raw_prediction.astype(np.float32)
+    if raw_prediction.ndim == 2:
+        return raw_prediction[0].astype(np.float32)
+    if raw_prediction.ndim == 4 and raw_prediction.shape[0] >= 1 and raw_prediction.shape[1] == 1:
+        # MAEST attention-layer output: [batch, 1, tokens, embedding_dim].
+        return raw_prediction[0, 0, 0, :].astype(np.float32)
+
+    return raw_prediction.reshape(raw_prediction.shape[0], -1)[0].astype(np.float32)
+
+
+def _cls_embeddings(raw_predictions: np.ndarray) -> np.ndarray:
+    """Return one CLS vector per MAEST inference patch."""
+    if raw_predictions.size == 0:
+        raise ValueError("MAEST returned an empty prediction tensor for a segment series.")
+    if raw_predictions.ndim == 1:
+        return raw_predictions.astype(np.float32)[None, :]
+    if raw_predictions.ndim == 2:
+        return raw_predictions.astype(np.float32)
+    if raw_predictions.ndim == 4 and raw_predictions.shape[1] == 1:
+        return raw_predictions[:, 0, 0, :].astype(np.float32)
+    return raw_predictions.reshape(raw_predictions.shape[0], -1).astype(np.float32)
+
+
+def extract_segment_embeddings_from_audio(
+    audio: np.ndarray,
+    model_file: Path,
+    output_node: str,
+    *,
+    model: TensorflowPredictMAEST | None = None,
+    sample_rate: int = 16000,
+    window_sec: float = 30.0,
+    hop_sec: float = 15.0,
+    include_partial: bool = False,
+) -> dict[str, np.ndarray | float | int | str]:
+    """Extract a time-stamped MAEST CLS series with one inference per track.
+
+    Essentia generates overlapping MAEST patches internally. ``window_sec`` must
+    match the selected MAEST model duration (30 seconds for this project model);
+    ``hop_sec`` is converted to the model's mel-frame hop, so its effective value
+    is quantized to the nearest 256-sample frame.
+    """
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive.")
+    if window_sec <= 0 or hop_sec <= 0:
+        raise ValueError("window_sec and hop_sec must be positive.")
+
+    if sample_rate != MAEST_SAMPLE_RATE:
+        raise ValueError(f"MAEST requires {MAEST_SAMPLE_RATE} Hz audio, got {sample_rate}.")
+    signal = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if signal.size == 0:
+        raise ValueError("Cannot extract MAEST segment embeddings from empty audio.")
+
+    model_window_sec = MAEST_PATCH_SIZE_FRAMES * MAEST_MEL_HOP_SAMPLES / MAEST_SAMPLE_RATE
+    if not np.isclose(window_sec, model_window_sec, rtol=0.0, atol=0.05):
+        raise ValueError(
+            f"window_sec={window_sec:g} does not match this MAEST model's "
+            f"{model_window_sec:.3f}-second patch duration."
+        )
+    patch_hop_frames = max(1, int(round(float(hop_sec) * MAEST_SAMPLE_RATE / MAEST_MEL_HOP_SAMPLES)))
+    effective_hop_sec = patch_hop_frames * MAEST_MEL_HOP_SAMPLES / MAEST_SAMPLE_RATE
+    last_patch_mode = "repeat" if include_partial else "discard"
+    predictor = model or TensorflowPredictMAEST(
+        graphFilename=str(model_file),
+        output=output_node,
+        patchSize=MAEST_PATCH_SIZE_FRAMES,
+        patchHopSize=patch_hop_frames,
+        lastPatchMode=last_patch_mode,
+    )
+    raw_predictions = np.asarray(predictor(signal))
+    embeddings = _cls_embeddings(raw_predictions)
+    start_sec = np.arange(embeddings.shape[0], dtype=np.float32) * np.float32(effective_hop_sec)
+    duration_sec = float(signal.size) / float(sample_rate)
+    end_sec = np.minimum(start_sec + np.float32(model_window_sec), duration_sec).astype(np.float32)
+    raw_shape = np.asarray(raw_predictions.shape, dtype=np.int32)
+    return {
+        "embeddings": embeddings,
+        "start_sec": start_sec,
+        "end_sec": end_sec,
+        "center_sec": (start_sec + end_sec) * 0.5,
+        "raw_prediction_shape": np.tile(raw_shape, (embeddings.shape[0], 1)),
+        "sample_rate": int(sample_rate),
+        "window_sec": float(window_sec),
+        "hop_sec": float(effective_hop_sec),
+        "last_window_mode": last_patch_mode,
+    }
 
 
 def extract_embedding(
@@ -127,6 +290,31 @@ def extract_embedding(
     return extract_embedding_from_audio(audio, model_file, output_node, model=model)
 
 
+def extract_segment_embeddings(
+    audio_file: Path,
+    model_file: Path,
+    output_node: str,
+    *,
+    model: TensorflowPredictMAEST | None = None,
+    window_sec: float = 30.0,
+    hop_sec: float = 15.0,
+    include_partial: bool = False,
+) -> dict[str, np.ndarray | float | int | str]:
+    """Load an audio file and return explicit, time-stamped MAEST segment embeddings."""
+    sample_rate = 16000
+    audio = MonoLoader(filename=str(audio_file), sampleRate=sample_rate, resampleQuality=4)()
+    return extract_segment_embeddings_from_audio(
+        audio,
+        model_file,
+        output_node,
+        model=model,
+        sample_rate=sample_rate,
+        window_sec=window_sec,
+        hop_sec=hop_sec,
+        include_partial=include_partial,
+    )
+
+
 def extract_peak_rms_embedding(
     audio_file: Path,
     model_file: Path,
@@ -138,19 +326,9 @@ def extract_peak_rms_embedding(
 ) -> tuple[np.ndarray, tuple[int, ...], str, float, float, float]:
     sample_rate = 16000
     audio = MonoLoader(filename=str(audio_file), sampleRate=sample_rate, resampleQuality=4)()
-    peak_audio, start_sec, end_sec, rms_db = _highest_rms_window(
-        audio,
-        sample_rate=sample_rate,
-        window_sec=window_sec,
-        hop_sec=hop_sec,
+    return extract_peak_rms_embedding_from_audio(
+        audio, model_file, output_node, model=model, window_sec=window_sec, hop_sec=hop_sec,
     )
-    embedding, raw_shape, reduction = extract_embedding_from_audio(
-        peak_audio,
-        model_file,
-        output_node,
-        model=model,
-    )
-    return embedding, raw_shape, reduction, start_sec, end_sec, rms_db
 
 
 def parse_args() -> argparse.Namespace:

@@ -7,15 +7,15 @@ functions that export a single compressed NPZ collection per playlist.
 from __future__ import annotations
 
 import argparse
-import os
-import sys
-from contextlib import contextmanager
 from datetime import datetime, timezone
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from djprojectexploration.native_warnings import suppress_native_stderr
 from djprojectexploration.tracklists import (
     PROJECT_ROOT,
     PlaylistTrack,
@@ -30,29 +30,13 @@ DEFAULT_CHROMA_OUTPUT_DIR = PROJECT_ROOT / "data" / "chroma_embeddings"
 DEFAULT_TEMPO_OUTPUT_DIR = PROJECT_ROOT / "data" / "tempo_embeddings"
 DEFAULT_DEAM_OUTPUT_DIR = PROJECT_ROOT / "data" / "deam_embeddings"
 DEFAULT_GROOVE_OUTPUT_DIR = PROJECT_ROOT / "data" / "groove_embeddings"
+DEFAULT_ANNOTATION_OUTPUT_DIR = PROJECT_ROOT / "data" / "annotations"
 DEFAULT_MODEL_FILENAME = "discogs-maest-30s-pw-519l-2.pb"
 DEFAULT_OUTPUT_NODE = "PartitionedCall/Identity_7"
 DEFAULT_MODEL_FILE = PROJECT_ROOT / "models" / DEFAULT_MODEL_FILENAME
-
-
-@contextmanager
-def _suppress_native_stderr(enabled: bool = True):
-    if not enabled:
-        yield
-        return
-    try:
-        stderr_fd = sys.stderr.fileno()
-    except (AttributeError, OSError):
-        yield
-        return
-    saved_fd = os.dup(stderr_fd)
-    try:
-        with open(os.devnull, "w", encoding="utf-8") as devnull:
-            os.dup2(devnull.fileno(), stderr_fd)
-            yield
-    finally:
-        os.dup2(saved_fd, stderr_fd)
-        os.close(saved_fd)
+DEFAULT_GENRE_MODEL_FILE = PROJECT_ROOT / "models" / "genre_discogs519-discogs-maest-30s-pw-519l-1.pb"
+GENRE_EMBEDDING_OUTPUT_NODE = "PartitionedCall/Identity_12"
+KEY_TONIC_INDEX = {name: index for index, name in enumerate(("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"))}
 
 
 def _string_array(values: list[str]) -> np.ndarray:
@@ -81,7 +65,54 @@ def _metadata_arrays(tracks: list[PlaylistTrack]) -> dict[str, np.ndarray]:
             [np.nan if t.key_shift is None else float(t.key_shift) for t in tracks],
             dtype=np.float32,
         ),
+        "track_uid": _string_array([_track_uid(t) for t in tracks]),
     }
+
+
+def _track_uid(track: PlaylistTrack) -> str:
+    """Stable join key for local collections; paths are resolved by the loader."""
+    identity = f"{track.audio_path.as_posix()}\0{track.mp3_name}"
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _annotation_output_file(playlist_csv: Path, annotation_type: str, model_slug: str) -> Path:
+    return DEFAULT_ANNOTATION_OUTPUT_DIR / f"{_default_npz_name(playlist_csv)[:-4]}__{annotation_type}_{model_slug}.npz"
+
+
+def _annotation_common(
+    *, tracks: list[PlaylistTrack], playlist_csv: Path, annotation_type: str,
+    input_artifact_type: str, model_id: str, metadata: dict[str, np.ndarray],
+) -> dict[str, Any]:
+    return {
+        "annotation_schema_version": np.array(1, dtype=np.int32),
+        "annotation_type": np.array(annotation_type, dtype=np.str_),
+        "created_utc": np.array(datetime.now(tz=timezone.utc).isoformat(), dtype=np.str_),
+        "playlist_csv": np.array(_to_project_relpath(playlist_csv), dtype=np.str_),
+        "input_artifact_type": np.array(input_artifact_type, dtype=np.str_),
+        "model_id": np.array(model_id, dtype=np.str_),
+        "num_tracks": np.array(len(tracks), dtype=np.int32),
+        "track_uid": metadata["track_uid"],
+        "track_numbers": metadata["track_numbers"],
+        "filenames": metadata["filenames"],
+    }
+
+
+def _genre_label_names(metadata_file: Path, expected_count: int) -> list[str]:
+    """Read Essentia model metadata without coupling to one metadata revision."""
+    if not metadata_file.exists():
+        return [f"class_{i}" for i in range(expected_count)]
+    raw = json.loads(metadata_file.read_text(encoding="utf-8"))
+    for key in ("classes", "labels", "class_names"):
+        values = raw.get(key)
+        if isinstance(values, list) and len(values) == expected_count:
+            return [str(value) for value in values]
+    return [f"class_{i}" for i in range(expected_count)]
+
+
+def _tonic_index(key_label: str) -> int:
+    normalized = str(key_label).strip().upper().replace("♯", "#").replace("♭", "B")
+    enharmonic = {"DB": "C#", "EB": "D#", "GB": "F#", "AB": "G#", "BB": "A#", "CB": "B", "FB": "E"}
+    return KEY_TONIC_INDEX.get(enharmonic.get(normalized, normalized), -1)
 
 
 def _default_npz_name(tracklist_csv: Path, *, variant: str | None = None) -> str:
@@ -154,11 +185,18 @@ def create_maest_playlist_embeddings_npz(
     section: str = "full",
     peak_window_sec: float = 30.0,
     peak_hop_sec: float = 1.0,
+    enrich_genre: bool = False,
+    genre_model_file: str | Path = DEFAULT_GENRE_MODEL_FILE,
+    genre_annotation_file: str | Path | None = None,
+    genre_top_k: int = 5,
 ) -> Path:
     """Build MAEST embeddings for playlist tracks and save one NPZ collection."""
-    from essentia.standard import TensorflowPredictMAEST
+    from essentia.standard import MonoLoader, TensorflowPredict, TensorflowPredictMAEST
 
-    from djprojectexploration.maest_embedding_extractor import extract_embedding, extract_peak_rms_embedding
+    from djprojectexploration.maest_embedding_extractor import (
+        extract_embedding_from_audio, extract_peak_rms_embedding_from_audio,
+        predict_discogs519_genres_from_audio,
+    )
 
     section = str(section).lower().strip()
     if section not in {"full", "peak30"}:
@@ -177,6 +215,15 @@ def create_maest_playlist_embeddings_npz(
             f"MAEST model file not found: {resolved_model_file}. "
             "Download from https://essentia.upf.edu/models.html#MAEST or pass --model-file."
         )
+    resolved_genre_model_file = Path(genre_model_file).expanduser().resolve()
+    if enrich_genre and not resolved_genre_model_file.exists():
+        raise FileNotFoundError(
+            f"Genre head model file not found: {resolved_genre_model_file}. "
+            "Download genre_discogs519-discogs-maest-30s-pw-519l-1.pb from Essentia "
+            "or pass enrich_genre=False."
+        )
+    if enrich_genre and section != "full":
+        raise ValueError("Genre enrichment is only supported for MAEST section='full'.")
 
     vectors: list[np.ndarray] = []
     reductions: list[str] = []
@@ -184,14 +231,26 @@ def create_maest_playlist_embeddings_npz(
     peak_start_sec: list[float] = []
     peak_end_sec: list[float] = []
     peak_window_rms_db: list[float] = []
-    with _suppress_native_stderr(suppress_essentia_warnings):
+    genre_scores: list[np.ndarray] = []
+    with suppress_native_stderr(suppress_essentia_warnings):
         model = TensorflowPredictMAEST(graphFilename=str(resolved_model_file), output=output_node)
+        genre_embedding_model = (
+            TensorflowPredictMAEST(graphFilename=str(resolved_model_file), output=GENRE_EMBEDDING_OUTPUT_NODE)
+            if enrich_genre else None
+        )
+        genre_model = (
+            TensorflowPredict(
+                graphFilename=str(resolved_genre_model_file), inputs=["embeddings"],
+                outputs=["PartitionedCall/Identity_1"],
+            ) if enrich_genre else None
+        )
         total = len(tracks)
         for index, track in enumerate(tracks, start=1):
             print(f"[{index}/{total}] Extracting MAEST {section} embedding: {track.title}", flush=True)
+            audio = MonoLoader(filename=str(track.audio_path), sampleRate=16000, resampleQuality=4)()
             if section == "peak30":
-                vector, raw_shape, reduction, start_sec, end_sec, rms_db = extract_peak_rms_embedding(
-                    track.audio_path,
+                vector, raw_shape, reduction, start_sec, end_sec, rms_db = extract_peak_rms_embedding_from_audio(
+                    audio,
                     resolved_model_file,
                     output_node,
                     model=model,
@@ -202,8 +261,8 @@ def create_maest_playlist_embeddings_npz(
                 peak_end_sec.append(float(end_sec))
                 peak_window_rms_db.append(float(rms_db))
             else:
-                vector, raw_shape, reduction = extract_embedding(
-                    track.audio_path,
+                vector, raw_shape, reduction = extract_embedding_from_audio(
+                    audio,
                     resolved_model_file,
                     output_node,
                     model=model,
@@ -211,10 +270,17 @@ def create_maest_playlist_embeddings_npz(
                 peak_start_sec.append(np.nan)
                 peak_end_sec.append(np.nan)
                 peak_window_rms_db.append(np.nan)
+            if enrich_genre:
+                assert genre_embedding_model is not None and genre_model is not None
+                genre_scores.append(predict_discogs519_genres_from_audio(
+                    audio, embedding_model=genre_embedding_model, genre_model=genre_model,
+                ))
             vectors.append(np.asarray(vector, dtype=np.float32).reshape(-1))
             reductions.append(reduction)
             raw_shapes.append("x".join(str(dim) for dim in raw_shape))
         del model
+        del genre_embedding_model
+        del genre_model
 
     embeddings = np.vstack(vectors).astype(np.float32)
 
@@ -255,6 +321,200 @@ def create_maest_playlist_embeddings_npz(
     print(f"Embedding dimension: {embeddings.shape[1]}")
     print(f"Section: {section}")
     print(f"Model: {_to_project_relpath(resolved_model_file)}")
+    if enrich_genre:
+        scores = np.vstack(genre_scores).astype(np.float32)
+        label_names = _genre_label_names(resolved_genre_model_file.with_suffix(".json"), scores.shape[1])
+        top_k = min(max(1, int(genre_top_k)), scores.shape[1])
+        top_indices = np.argsort(scores, axis=1)[:, -top_k:][:, ::-1].astype(np.int16)
+        annotation_path = Path(genre_annotation_file).expanduser().resolve() if genre_annotation_file else _annotation_output_file(
+            csv_path, "genre", "discogs519_maest30pw519l_v1",
+        )
+        annotation_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = _annotation_common(
+            tracks=tracks, playlist_csv=csv_path, annotation_type="genre", input_artifact_type="maest",
+            model_id="genre_discogs519-discogs-maest-30s-pw-519l-1", metadata=metadata,
+        )
+        payload.update({
+            "model_file": np.array(_to_project_relpath(resolved_genre_model_file), dtype=np.str_),
+            "embedding_output_node": np.array(GENRE_EMBEDDING_OUTPUT_NODE, dtype=np.str_),
+            "label_names": _string_array(label_names), "scores": scores,
+            "top_label_indices": top_indices,
+            "top_label_scores": np.take_along_axis(scores, top_indices, axis=1).astype(np.float32),
+        })
+        np.savez_compressed(annotation_path, **payload)
+        print(f"Saved genre annotations: {_to_project_relpath(annotation_path)}")
+    return saved_path
+
+
+def create_maest_genre_annotations_npz(
+    tracklist_csv: str | Path,
+    *,
+    music_dir: str | Path | None = None,
+    model_file: str | Path = DEFAULT_MODEL_FILE,
+    genre_model_file: str | Path = DEFAULT_GENRE_MODEL_FILE,
+    output_file: str | Path | None = None,
+    skip_missing_audio: bool = False,
+    suppress_essentia_warnings: bool = True,
+    genre_top_k: int = 5,
+) -> Path:
+    """Create only the Discogs-519 annotation sidecar from audio.
+
+    This is used when a generic MAEST collection already exists, avoiding an
+    unnecessary second ``Identity_7`` extraction merely to fill annotations.
+    """
+    from essentia.standard import MonoLoader, TensorflowPredict, TensorflowPredictMAEST
+    from djprojectexploration.maest_embedding_extractor import predict_discogs519_genres_from_audio
+
+    csv_path = Path(tracklist_csv).expanduser().resolve()
+    tracks = load_playlist_tracks(csv_path, music_dir=music_dir, skip_missing_audio=skip_missing_audio)
+    resolved_model_file = Path(model_file).expanduser().resolve()
+    resolved_genre_model_file = Path(genre_model_file).expanduser().resolve()
+    for path, description in ((resolved_model_file, "MAEST model"), (resolved_genre_model_file, "Discogs-519 genre head")):
+        if not path.exists():
+            raise FileNotFoundError(f"{description} file not found: {path}")
+
+    scores_rows: list[np.ndarray] = []
+    with suppress_native_stderr(suppress_essentia_warnings):
+        embedding_model = TensorflowPredictMAEST(
+            graphFilename=str(resolved_model_file), output=GENRE_EMBEDDING_OUTPUT_NODE,
+        )
+        genre_model = TensorflowPredict(
+            graphFilename=str(resolved_genre_model_file), inputs=["embeddings"],
+            outputs=["PartitionedCall/Identity_1"],
+        )
+        for index, track in enumerate(tracks, start=1):
+            print(f"[{index}/{len(tracks)}] Extracting MAEST genre annotations: {track.title}", flush=True)
+            audio = MonoLoader(filename=str(track.audio_path), sampleRate=16000, resampleQuality=4)()
+            scores_rows.append(predict_discogs519_genres_from_audio(
+                audio, embedding_model=embedding_model, genre_model=genre_model,
+            ))
+
+    scores = np.vstack(scores_rows).astype(np.float32)
+    label_names = _genre_label_names(resolved_genre_model_file.with_suffix(".json"), scores.shape[1])
+    top_k = min(max(1, int(genre_top_k)), scores.shape[1])
+    top_indices = np.argsort(scores, axis=1)[:, -top_k:][:, ::-1].astype(np.int16)
+    metadata = _metadata_arrays(tracks)
+    annotation_path = Path(output_file).expanduser().resolve() if output_file else _annotation_output_file(
+        csv_path, "genre", "discogs519_maest30pw519l_v1",
+    )
+    annotation_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _annotation_common(
+        tracks=tracks, playlist_csv=csv_path, annotation_type="genre", input_artifact_type="maest",
+        model_id="genre_discogs519-discogs-maest-30s-pw-519l-1", metadata=metadata,
+    )
+    payload.update({
+        "model_file": np.array(_to_project_relpath(resolved_genre_model_file), dtype=np.str_),
+        "embedding_output_node": np.array(GENRE_EMBEDDING_OUTPUT_NODE, dtype=np.str_),
+        "label_names": _string_array(label_names), "scores": scores,
+        "top_label_indices": top_indices,
+        "top_label_scores": np.take_along_axis(scores, top_indices, axis=1).astype(np.float32),
+    })
+    np.savez_compressed(annotation_path, **payload)
+    print(f"Saved genre annotations: {_to_project_relpath(annotation_path)}")
+    return annotation_path
+
+
+def create_maest_segment_series_npz(
+    tracklist_csv: str | Path,
+    *,
+    music_dir: str | Path | None = None,
+    model_file: str | Path = DEFAULT_MODEL_FILE,
+    output_node: str = DEFAULT_OUTPUT_NODE,
+    output_file: str | Path | None = None,
+    output_dir: str | Path = DEFAULT_MAEST_OUTPUT_DIR,
+    window_sec: float = 30.0,
+    hop_sec: float = 15.0,
+    include_partial: bool = False,
+    skip_missing_audio: bool = False,
+    suppress_essentia_warnings: bool = True,
+) -> Path:
+    """Export time-stamped MAEST CLS segment embeddings for every playlist track.
+
+    Segment rows are stored contiguously in ``segment_embeddings``. Use
+    ``segment_track_index`` to join a row back to the track-level metadata.
+    """
+    from essentia.standard import TensorflowPredictMAEST
+
+    from djprojectexploration.maest_embedding_extractor import (
+        MAEST_MEL_HOP_SAMPLES,
+        MAEST_SAMPLE_RATE,
+        extract_segment_embeddings,
+    )
+
+    csv_path = Path(tracklist_csv).expanduser().resolve()
+    tracks = load_playlist_tracks(csv_path, music_dir=music_dir, skip_missing_audio=skip_missing_audio)
+    resolved_model_file = Path(model_file).expanduser().resolve()
+    if not resolved_model_file.exists():
+        raise FileNotFoundError(f"MAEST model file not found: {resolved_model_file}")
+
+    all_embeddings: list[np.ndarray] = []
+    track_indices: list[np.ndarray] = []
+    start_sec: list[np.ndarray] = []
+    end_sec: list[np.ndarray] = []
+    center_sec: list[np.ndarray] = []
+    raw_shapes: list[np.ndarray] = []
+    segment_counts: list[int] = []
+
+    patch_hop_frames = max(1, int(round(float(hop_sec) * MAEST_SAMPLE_RATE / MAEST_MEL_HOP_SAMPLES)))
+    effective_hop_sec = patch_hop_frames * MAEST_MEL_HOP_SAMPLES / MAEST_SAMPLE_RATE
+    with suppress_native_stderr(suppress_essentia_warnings):
+        model = TensorflowPredictMAEST(
+            graphFilename=str(resolved_model_file),
+            output=output_node,
+            patchHopSize=patch_hop_frames,
+            lastPatchMode="repeat" if include_partial else "discard",
+        )
+        for index, track in enumerate(tracks):
+            print(f"[{index + 1}/{len(tracks)}] Extracting MAEST segment series: {track.title}", flush=True)
+            series = extract_segment_embeddings(
+                track.audio_path, resolved_model_file, output_node, model=model,
+                window_sec=window_sec, hop_sec=hop_sec, include_partial=include_partial,
+            )
+            vectors = np.asarray(series["embeddings"], dtype=np.float32)
+            count = int(vectors.shape[0])
+            segment_counts.append(count)
+            if count:
+                all_embeddings.append(vectors)
+                track_indices.append(np.full(count, index, dtype=np.int32))
+                start_sec.append(np.asarray(series["start_sec"], dtype=np.float32))
+                end_sec.append(np.asarray(series["end_sec"], dtype=np.float32))
+                center_sec.append(np.asarray(series["center_sec"], dtype=np.float32))
+                raw_shapes.append(np.asarray(series["raw_prediction_shape"], dtype=np.int32))
+
+    if not all_embeddings:
+        raise ValueError("No MAEST segment embeddings were produced for the playlist.")
+
+    if output_file is None:
+        output_file = Path(output_dir).expanduser().resolve() / _default_npz_name(
+            csv_path, variant=f"maest_segments_w{window_sec:g}_h{hop_sec:g}"
+        )
+    saved_path = Path(output_file).expanduser().resolve()
+    saved_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        saved_path,
+        embedding_type=np.array("maest_segment_series", dtype=np.str_),
+        created_utc=np.array(datetime.now(tz=timezone.utc).isoformat(), dtype=np.str_),
+        playlist_csv=np.array(_to_project_relpath(csv_path), dtype=np.str_),
+        maest_model_file=np.array(_to_project_relpath(resolved_model_file), dtype=np.str_),
+        maest_output_node=np.array(output_node, dtype=np.str_),
+        sample_rate=np.array(16000, dtype=np.int32),
+        window_sec=np.array(window_sec, dtype=np.float32),
+        hop_sec=np.array(hop_sec, dtype=np.float32),
+        effective_hop_sec=np.array(effective_hop_sec, dtype=np.float32),
+        last_window_mode=np.array("repeat" if include_partial else "discard", dtype=np.str_),
+        num_tracks=np.array(len(tracks), dtype=np.int32),
+        num_segments=np.array(sum(segment_counts), dtype=np.int32),
+        embedding_dimension=np.array(all_embeddings[0].shape[1], dtype=np.int32),
+        segment_embeddings=np.vstack(all_embeddings).astype(np.float32),
+        segment_track_index=np.concatenate(track_indices),
+        segment_start_sec=np.concatenate(start_sec),
+        segment_end_sec=np.concatenate(end_sec),
+        segment_center_sec=np.concatenate(center_sec),
+        segment_raw_prediction_shape=np.vstack(raw_shapes),
+        track_segment_counts=np.asarray(segment_counts, dtype=np.int32),
+        **_metadata_arrays(tracks),
+    )
+    print(f"Saved MAEST segment series: {_to_project_relpath(saved_path)}")
     return saved_path
 
 
@@ -272,6 +532,8 @@ def create_chroma_playlist_embeddings_npz(
     include_key_features: bool = True,
     center_baseline: float | None = 1.0 / 12.0,
     suppress_essentia_warnings: bool = True,
+    enrich_key: bool = True,
+    key_annotation_file: str | Path | None = None,
 ) -> Path:
     """Build chroma embeddings for playlist tracks and save one NPZ collection."""
     from djprojectexploration.chroma_embedding import generate_chroma_embedding
@@ -299,7 +561,7 @@ def create_chroma_playlist_embeddings_npz(
     beat_phase_anchors: list[float] = []
 
     for track in tracks:
-        with _suppress_native_stderr(suppress_essentia_warnings):
+        with suppress_native_stderr(suppress_essentia_warnings):
             payload = generate_chroma_embedding(
                 audio_file=track.audio_path,
                 sample_rate=sample_rate,
@@ -384,6 +646,27 @@ def create_chroma_playlist_embeddings_npz(
     print(f"Center baseline: {center_baseline}")
     if suppress_essentia_warnings:
         print("Suppressed repeated native Essentia warnings during chroma extraction.")
+    if enrich_key:
+        annotation_path = Path(key_annotation_file).expanduser().resolve() if key_annotation_file else _annotation_output_file(
+            csv_path, "key", "chroma_hpcp_v1",
+        )
+        annotation_path.parent.mkdir(parents=True, exist_ok=True)
+        tonic_indices = np.asarray([_tonic_index(key) for key in detected_keys], dtype=np.int8)
+        annotation_payload = _annotation_common(
+            tracks=tracks, playlist_csv=csv_path, annotation_type="key", input_artifact_type="chroma",
+            model_id="essentia_hpcp_key_estimator_v1", metadata=metadata,
+        )
+        annotation_payload.update({
+            "key_label": _string_array(detected_keys), "tonic_index": tonic_indices,
+            "mode": _string_array(detected_scales),
+            "confidence": np.asarray(detected_strengths, dtype=np.float32),
+            "detector_config": np.array(json.dumps({
+                "sample_rate": sample_rate, "frame_size": frame_size, "hop_size": hop_size,
+                "chroma_bins": chroma_bins,
+            }, sort_keys=True), dtype=np.str_),
+        })
+        np.savez_compressed(annotation_path, **annotation_payload)
+        print(f"Saved key annotations: {_to_project_relpath(annotation_path)}")
     return saved_path
 
 
@@ -402,6 +685,7 @@ def create_tempo_playlist_embeddings_npz(
     window_sec: float = 12.0,
     hop_sec: float = 6.0,
     rms_percentile: float = 20.0,
+    suppress_essentia_warnings: bool = True,
 ) -> Path:
     """Build TempoCNN embeddings for playlist tracks and save one NPZ collection."""
     from essentia.standard import TempoCNN
@@ -423,7 +707,6 @@ def create_tempo_playlist_embeddings_npz(
         model_file=model_file,
         auto_download=bool(auto_download_model),
     )
-    model = TempoCNN(graphFilename=str(resolved_model_file))
 
     vectors: list[np.ndarray] = []
     tempo_bpms: list[float] = []
@@ -442,49 +725,51 @@ def create_tempo_playlist_embeddings_npz(
     local_active_chunks: list[np.ndarray] = []
 
     cursor = 0
-    for track in tracks:
-        payload = generate_tempo_embedding(
-            audio_file=track.audio_path,
-            model_file=resolved_model_file,
-            auto_download_model=False,
-            model=model,
-            sample_rate=int(sample_rate),
-            resample_quality=int(resample_quality),
-            snippet_length_sec=snippet_length_sec,
-            window_sec=float(window_sec),
-            hop_sec=float(hop_sec),
-            rms_percentile=float(rms_percentile),
-        )
+    with suppress_native_stderr(suppress_essentia_warnings):
+        model = TempoCNN(graphFilename=str(resolved_model_file))
+        for track in tracks:
+            payload = generate_tempo_embedding(
+                audio_file=track.audio_path,
+                model_file=resolved_model_file,
+                auto_download_model=False,
+                model=model,
+                sample_rate=int(sample_rate),
+                resample_quality=int(resample_quality),
+                snippet_length_sec=snippet_length_sec,
+                window_sec=float(window_sec),
+                hop_sec=float(hop_sec),
+                rms_percentile=float(rms_percentile),
+            )
 
-        vector = np.asarray(payload["embedding"], dtype=np.float32).reshape(-1)
-        vectors.append(vector)
-        tempo_bpms.append(float(payload.get("tempo_bpm", np.nan)))
-        confidences.append(float(payload.get("confidence", 0.0)))
-        active_agreements.append(float(payload.get("confidence_active_agreement", 0.0)))
-        active_probabilities.append(float(payload.get("mean_prob_active", 0.0)))
-        active_fractions.append(float(payload.get("active_fraction", 0.0)))
-        active_windows.append(int(payload.get("active_windows", 0)))
-        total_windows.append(int(payload.get("total_windows", 0)))
+            vector = np.asarray(payload["embedding"], dtype=np.float32).reshape(-1)
+            vectors.append(vector)
+            tempo_bpms.append(float(payload.get("tempo_bpm", np.nan)))
+            confidences.append(float(payload.get("confidence", 0.0)))
+            active_agreements.append(float(payload.get("confidence_active_agreement", 0.0)))
+            active_probabilities.append(float(payload.get("mean_prob_active", 0.0)))
+            active_fractions.append(float(payload.get("active_fraction", 0.0)))
+            active_windows.append(int(payload.get("active_windows", 0)))
+            total_windows.append(int(payload.get("total_windows", 0)))
 
-        local_bpm = np.asarray(payload.get("local_bpm", []), dtype=np.float32).reshape(-1)
-        local_prob = np.asarray(payload.get("local_probability", []), dtype=np.float32).reshape(-1)
-        local_time = np.asarray(payload.get("local_times_sec", []), dtype=np.float32).reshape(-1)
-        local_active = np.asarray(payload.get("local_active_mask", []), dtype=np.int8).reshape(-1)
+            local_bpm = np.asarray(payload.get("local_bpm", []), dtype=np.float32).reshape(-1)
+            local_prob = np.asarray(payload.get("local_probability", []), dtype=np.float32).reshape(-1)
+            local_time = np.asarray(payload.get("local_times_sec", []), dtype=np.float32).reshape(-1)
+            local_active = np.asarray(payload.get("local_active_mask", []), dtype=np.int8).reshape(-1)
 
-        n_local = int(min(local_bpm.size, local_prob.size, local_time.size, local_active.size))
-        local_bpm = local_bpm[:n_local]
-        local_prob = local_prob[:n_local]
-        local_time = local_time[:n_local]
-        local_active = local_active[:n_local]
+            n_local = int(min(local_bpm.size, local_prob.size, local_time.size, local_active.size))
+            local_bpm = local_bpm[:n_local]
+            local_prob = local_prob[:n_local]
+            local_time = local_time[:n_local]
+            local_active = local_active[:n_local]
 
-        local_start_index.append(cursor)
-        local_counts.append(n_local)
-        cursor += n_local
+            local_start_index.append(cursor)
+            local_counts.append(n_local)
+            cursor += n_local
 
-        local_bpm_chunks.append(local_bpm)
-        local_prob_chunks.append(local_prob)
-        local_time_chunks.append(local_time)
-        local_active_chunks.append(local_active)
+            local_bpm_chunks.append(local_bpm)
+            local_prob_chunks.append(local_prob)
+            local_time_chunks.append(local_time)
+            local_active_chunks.append(local_active)
 
     embeddings = np.vstack(vectors).astype(np.float32)
 
@@ -578,6 +863,7 @@ def create_groove_playlist_embeddings_npz(
     pooling_mode: str = "mean",
     pooling_topk: int = 3,
     normalize_per_beat: bool = True,
+    suppress_essentia_warnings: bool = True,
 ) -> Path:
     """Build groove embeddings for playlist tracks and save one NPZ collection."""
     from djprojectexploration.groove_embedding import generate_groove_embedding
@@ -618,74 +904,75 @@ def create_groove_playlist_embeddings_npz(
     local_prob_chunks: list[np.ndarray] = []
     cursor = 0
 
-    for track in tracks:
-        manual_bpm = None
-        if use_csv_bpm and track.bpm is not None and np.isfinite(float(track.bpm)) and float(track.bpm) > 0:
-            manual_bpm = float(track.bpm)
-        elif tempo_bpm_lookup:
-            manual_bpm = tempo_bpm_lookup.get(int(track.track_number))
-        onset_time_sec = track.onset_time
-        payload = generate_groove_embedding(
-            audio_file=track.audio_path,
-            sample_rate=int(sample_rate),
-            tempocnn_sample_rate=int(tempocnn_sample_rate),
-            model_file=model_file,
-            auto_download_model=bool(auto_download_model),
-            snippet_length_sec=snippet_length_sec,
-            hop_length=int(hop_length),
-            n_fft=int(n_fft),
-            manual_bpm=manual_bpm,
-            onset_time_sec=onset_time_sec,
-            auto_phase_align=bool(auto_phase_align),
-            phase_align_mode=phase_align_mode,
-            phase_align_max_shift_sec=float(phase_align_max_shift_sec),
-            phase_align_step_sec=float(phase_align_step_sec),
-            auto_prepend_start_beats=bool(auto_prepend_start_beats),
-            subdivisions_per_beat=int(subdivisions_per_beat),
-            beats_per_bar=int(beats_per_bar),
-            phrase_bars=int(phrase_bars),
-            pooling_mode=pooling_mode,
-            pooling_topk=int(pooling_topk),
-            profile_mode=profile_mode,
-            normalize_per_beat=bool(normalize_per_beat),
-        )
+    with suppress_native_stderr(suppress_essentia_warnings):
+        for track in tracks:
+            manual_bpm = None
+            if use_csv_bpm and track.bpm is not None and np.isfinite(float(track.bpm)) and float(track.bpm) > 0:
+                manual_bpm = float(track.bpm)
+            elif tempo_bpm_lookup:
+                manual_bpm = tempo_bpm_lookup.get(int(track.track_number))
+            onset_time_sec = track.onset_time
+            payload = generate_groove_embedding(
+                audio_file=track.audio_path,
+                sample_rate=int(sample_rate),
+                tempocnn_sample_rate=int(tempocnn_sample_rate),
+                model_file=model_file,
+                auto_download_model=bool(auto_download_model),
+                snippet_length_sec=snippet_length_sec,
+                hop_length=int(hop_length),
+                n_fft=int(n_fft),
+                manual_bpm=manual_bpm,
+                onset_time_sec=onset_time_sec,
+                auto_phase_align=bool(auto_phase_align),
+                phase_align_mode=phase_align_mode,
+                phase_align_max_shift_sec=float(phase_align_max_shift_sec),
+                phase_align_step_sec=float(phase_align_step_sec),
+                auto_prepend_start_beats=bool(auto_prepend_start_beats),
+                subdivisions_per_beat=int(subdivisions_per_beat),
+                beats_per_bar=int(beats_per_bar),
+                phrase_bars=int(phrase_bars),
+                pooling_mode=pooling_mode,
+                pooling_topk=int(pooling_topk),
+                profile_mode=profile_mode,
+                normalize_per_beat=bool(normalize_per_beat),
+            )
 
-        vectors.append(np.asarray(payload["embedding"], dtype=np.float32).reshape(-1))
-        embedding_subtypes.append(str(payload.get("embedding_subtype", "unknown")))
-        beat_profiles.append(np.asarray(payload.get("beat_profile", []), dtype=np.float32))
-        phrase_profiles.append(np.asarray(payload.get("phrase_profile", []), dtype=np.float32))
-        if band_names is None:
-            band_names = [str(name) for name in payload.get("band_names", [])]
+            vectors.append(np.asarray(payload["embedding"], dtype=np.float32).reshape(-1))
+            embedding_subtypes.append(str(payload.get("embedding_subtype", "unknown")))
+            beat_profiles.append(np.asarray(payload.get("beat_profile", []), dtype=np.float32))
+            phrase_profiles.append(np.asarray(payload.get("phrase_profile", []), dtype=np.float32))
+            if band_names is None:
+                band_names = [str(name) for name in payload.get("band_names", [])]
 
-        beat_pooling = payload.get("beat_pooling", {})
-        beat_bpms.append(float(beat_pooling.get("bpm", np.nan)))
-        beat_bpm_seeds.append(float(beat_pooling.get("bpm_seed", np.nan)))
-        tempocnn_value = beat_pooling.get("tempocnn_bpm")
-        tempocnn_bpms.append(np.nan if tempocnn_value is None else float(tempocnn_value))
-        beat_counts.append(int(beat_pooling.get("beat_count", 0)))
-        beat_sources.append(str(beat_pooling.get("beat_source", "")))
-        phase_anchors.append(float(beat_pooling.get("phase_anchor_seconds", np.nan)))
-        phase_shifts.append(float(beat_pooling.get("phase_shift_seconds", 0.0)))
-        phase_modes.append(str(beat_pooling.get("phase_align_mode", "")))
-        phase_search_modes.append(str(beat_pooling.get("phase_align_search_mode", "")))
-        phase_search_max_shifts.append(float(beat_pooling.get("phase_align_search_max_shift_seconds", np.nan)))
-        prepended_counts.append(int(beat_pooling.get("prepended_start_beats", 0)))
-        complete_phrases.append(int(beat_pooling.get("complete_phrases", 0)))
-        manual_bpm_used.append(np.nan if manual_bpm is None else float(manual_bpm))
+            beat_pooling = payload.get("beat_pooling", {})
+            beat_bpms.append(float(beat_pooling.get("bpm", np.nan)))
+            beat_bpm_seeds.append(float(beat_pooling.get("bpm_seed", np.nan)))
+            tempocnn_value = beat_pooling.get("tempocnn_bpm")
+            tempocnn_bpms.append(np.nan if tempocnn_value is None else float(tempocnn_value))
+            beat_counts.append(int(beat_pooling.get("beat_count", 0)))
+            beat_sources.append(str(beat_pooling.get("beat_source", "")))
+            phase_anchors.append(float(beat_pooling.get("phase_anchor_seconds", np.nan)))
+            phase_shifts.append(float(beat_pooling.get("phase_shift_seconds", 0.0)))
+            phase_modes.append(str(beat_pooling.get("phase_align_mode", "")))
+            phase_search_modes.append(str(beat_pooling.get("phase_align_search_mode", "")))
+            phase_search_max_shifts.append(float(beat_pooling.get("phase_align_search_max_shift_seconds", np.nan)))
+            prepended_counts.append(int(beat_pooling.get("prepended_start_beats", 0)))
+            complete_phrases.append(int(beat_pooling.get("complete_phrases", 0)))
+            manual_bpm_used.append(np.nan if manual_bpm is None else float(manual_bpm))
 
-        config = payload.get("config", {})
-        model_files.append(str(config.get("tempocnn_model_file") or ""))
+            config = payload.get("config", {})
+            model_files.append(str(config.get("tempocnn_model_file") or ""))
 
-        local_bpm = np.asarray(payload.get("local_bpm", []), dtype=np.float32).reshape(-1)
-        local_prob = np.asarray(payload.get("local_probability", []), dtype=np.float32).reshape(-1)
-        n_local = int(min(local_bpm.size, local_prob.size))
-        local_bpm = local_bpm[:n_local]
-        local_prob = local_prob[:n_local]
-        local_start_index.append(cursor)
-        local_counts.append(n_local)
-        cursor += n_local
-        local_bpm_chunks.append(local_bpm)
-        local_prob_chunks.append(local_prob)
+            local_bpm = np.asarray(payload.get("local_bpm", []), dtype=np.float32).reshape(-1)
+            local_prob = np.asarray(payload.get("local_probability", []), dtype=np.float32).reshape(-1)
+            n_local = int(min(local_bpm.size, local_prob.size))
+            local_bpm = local_bpm[:n_local]
+            local_prob = local_prob[:n_local]
+            local_start_index.append(cursor)
+            local_counts.append(n_local)
+            cursor += n_local
+            local_bpm_chunks.append(local_bpm)
+            local_prob_chunks.append(local_prob)
 
     embeddings = np.vstack(vectors).astype(np.float32)
     beat_profile_tensor = np.stack(beat_profiles).astype(np.float32)
@@ -989,6 +1276,13 @@ def _maest_cli_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show native Essentia/TensorFlow stderr warnings. Hidden by default.",
     )
+    parser.add_argument(
+        "--enrich-genre",
+        action="store_true",
+        help="Write a Discogs-519 genre annotation sidecar (requires the genre-head model).",
+    )
+    parser.add_argument("--genre-model-file", type=Path, default=DEFAULT_GENRE_MODEL_FILE)
+    parser.add_argument("--genre-annotation-file", type=Path, default=None)
     return parser
 
 
@@ -1044,6 +1338,12 @@ def _chroma_cli_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show repeated native Essentia warnings during chroma extraction.",
     )
+    parser.add_argument(
+        "--skip-key-annotations",
+        action="store_true",
+        help="Do not write the key-detection annotation sidecar; legacy chroma fields are unchanged.",
+    )
+    parser.add_argument("--key-annotation-file", type=Path, default=None)
     return parser
 
 
@@ -1101,6 +1401,11 @@ def _tempo_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--window-sec", type=float, default=12.0)
     parser.add_argument("--hop-sec", type=float, default=6.0)
     parser.add_argument("--rms-percentile", type=float, default=20.0)
+    parser.add_argument(
+        "--show-essentia-warnings",
+        action="store_true",
+        help="Show native Essentia/TensorFlow stderr warnings. Hidden by default.",
+    )
     return parser
 
 
@@ -1205,6 +1510,11 @@ def _groove_cli_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable per-beat activity normalization before averaging.",
     )
+    parser.add_argument(
+        "--show-essentia-warnings",
+        action="store_true",
+        help="Show native Essentia/TensorFlow stderr warnings. Hidden by default.",
+    )
     return parser
 
 
@@ -1286,6 +1596,9 @@ def maest_main() -> None:
         section=str(args.section),
         peak_window_sec=float(args.peak_window_sec),
         peak_hop_sec=float(args.peak_hop_sec),
+        enrich_genre=bool(args.enrich_genre),
+        genre_model_file=args.genre_model_file,
+        genre_annotation_file=args.genre_annotation_file,
     )
 
 
@@ -1304,6 +1617,8 @@ def chroma_main() -> None:
         center_baseline=float(args.center_baseline),
         include_key_features=not bool(args.exclude_key_features),
         suppress_essentia_warnings=not bool(args.show_essentia_warnings),
+        enrich_key=not bool(args.skip_key_annotations),
+        key_annotation_file=args.key_annotation_file,
     )
 
 
@@ -1323,6 +1638,7 @@ def tempo_main() -> None:
         window_sec=float(args.window_sec),
         hop_sec=float(args.hop_sec),
         rms_percentile=float(args.rms_percentile),
+        suppress_essentia_warnings=not bool(args.show_essentia_warnings),
     )
 
 
@@ -1355,6 +1671,7 @@ def groove_main() -> None:
         pooling_mode=str(args.pooling_mode),
         pooling_topk=int(args.pooling_topk),
         normalize_per_beat=not bool(args.disable_normalize_per_beat),
+        suppress_essentia_warnings=not bool(args.show_essentia_warnings),
     )
 
 

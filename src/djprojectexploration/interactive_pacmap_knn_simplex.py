@@ -33,12 +33,25 @@ from djprojectexploration.pacmap_settings import (
     LAYOUT_INIT_CHOICES,
     PACMAP_PAIR_SOURCE_CHOICES,
     PacmapSettings,
+    TransitionScoringSettings,
     add_pacmap_args,
     ensure_numba_cache_dir,
     pacmap_settings_from_args,
+    transition_scoring_settings_from_args,
+)
+from djprojectexploration.transition_scoring import (
+    DEFAULT_RHYTHM_TEMPO_WEIGHT,
+    blend_component_distances,
+    rhythm_component_score,
 )
 
-CONTROL_MODE_CHOICES = ("genre-mixability", "legacy-simplex", "legacy-discrete-simplex")
+CANONICAL_CONTROL_MODE = "style-rhythm-harmony"
+CONTROL_MODE_CHOICES = (
+    CANONICAL_CONTROL_MODE,
+    "genre-mixability",
+    "legacy-simplex",
+    "legacy-discrete-simplex",
+)
 REDUCER_CHOICES = ("pacmap", "umap")
 
 
@@ -84,23 +97,7 @@ def _simplex_grid(step: float) -> list[tuple[float, float, float]]:
     ]
 
 
-def _simplex_grid_4way(step: float) -> list[tuple[float, float, float, float]]:
-    scale = int(round(1.0 / float(step)))
-    if scale <= 0:
-        raise ValueError("step must be > 0.")
-    return [
-        (i / scale, j / scale, k / scale, (scale - i - j - k) / scale)
-        for i in range(scale + 1)
-        for j in range(scale + 1 - i)
-        for k in range(scale + 1 - i - j)
-    ]
-
-
 def _simplex_key(weights: tuple[float, float, float]) -> str:
-    return ",".join(f"{w:.1f}" for w in weights)
-
-
-def _simplex_key_4way(weights: tuple[float, float, float, float]) -> str:
     return ",".join(f"{w:.1f}" for w in weights)
 
 
@@ -189,7 +186,7 @@ def _load_combined_groove_embeddings(
     return np.vstack(chunks).astype(np.float32)
 
 
-def _component_matrices_4way(
+def _component_matrices_style_rhythm_harmony(
     features,
     *,
     groove_embeddings: np.ndarray,
@@ -205,6 +202,7 @@ def _component_matrices_4way(
     harmonic_second_fifth_weight: float,
     harmonic_other_weight: float,
     harmonic_self_normalize: bool,
+    rhythm_tempo_weight: float = DEFAULT_RHYTHM_TEMPO_WEIGHT,
 ) -> dict[str, np.ndarray]:
     matrices = _component_matrices_3way(
         features,
@@ -231,6 +229,21 @@ def _component_matrices_4way(
     groove_similarity = np.clip(0.5 * (groove_cos + 1.0), 0.0, 1.0).astype(np.float32)
     matrices["groove_similarity"] = groove_similarity
     matrices["groove_distance"] = _normalize_distance_matrix(1.0 - groove_similarity)
+    tempo_score = 1.0 - matrices["tempo_distance"]
+    groove_score = 1.0 - matrices["groove_distance"]
+    rhythm_score = rhythm_component_score(
+        tempo_score,
+        groove_score,
+        rhythm_tempo_weight=rhythm_tempo_weight,
+    ).astype(np.float32)
+    matrices["rhythm_similarity"] = rhythm_component_score(
+        matrices["tempo_similarity"],
+        groove_similarity,
+        rhythm_tempo_weight=rhythm_tempo_weight,
+    ).astype(np.float32)
+    matrices["rhythm_score"] = rhythm_score
+    matrices["rhythm_distance"] = (1.0 - rhythm_score).astype(np.float32)
+    np.fill_diagonal(matrices["rhythm_distance"], 0.0)
     return matrices
 
 
@@ -249,35 +262,16 @@ def _combined_distance_3way(
     total = max(wm + wt + wc, 1e-12)
     wm, wt, wc = wm / total, wt / total, wc / total
     if combine_mode == "l1":
-        D = ((wm * D_maest) + (wt * D_tempo) + (wc * D_chroma)).astype(np.float32)
+        return blend_component_distances(
+            D_maest,
+            D_tempo,
+            D_chroma,
+            style_weight=wm,
+            rhythm_weight=wt,
+            harmony_weight=wc,
+        )
     else:
         D = np.sqrt((wm * D_maest**2) + (wt * D_tempo**2) + (wc * D_chroma**2)).astype(np.float32)
-    D = 0.5 * (D + D.T)
-    np.fill_diagonal(D, 0.0)
-    return D
-
-
-def _combined_distance_4way(
-    D_maest: np.ndarray,
-    D_tempo: np.ndarray,
-    D_groove: np.ndarray,
-    D_chroma: np.ndarray,
-    weights: tuple[float, float, float, float],
-    *,
-    combine_mode: str = "l2",
-) -> np.ndarray:
-    if combine_mode not in DISTANCE_COMBINE_CHOICES:
-        raise ValueError(f"combine_mode must be one of {DISTANCE_COMBINE_CHOICES}, got {combine_mode!r}.")
-
-    wm, wt, wg, wc = [float(np.clip(v, 0.0, 1.0)) for v in weights]
-    total = max(wm + wt + wg + wc, 1e-12)
-    wm, wt, wg, wc = wm / total, wt / total, wg / total, wc / total
-    if combine_mode == "l1":
-        D = ((wm * D_maest) + (wt * D_tempo) + (wg * D_groove) + (wc * D_chroma)).astype(np.float32)
-    else:
-        D = np.sqrt(
-            (wm * D_maest**2) + (wt * D_tempo**2) + (wg * D_groove**2) + (wc * D_chroma**2)
-        ).astype(np.float32)
     D = 0.5 * (D + D.T)
     np.fill_diagonal(D, 0.0)
     return D
@@ -484,7 +478,11 @@ def _compute_pacmap_knn_simplex_layouts(
     aligned_arrays: dict[tuple[int, int, int], np.ndarray] = {}
     n = D_maest.shape[0]
     effective_neighbors = min(max(1, int(n_neighbors)), n - 1)
-    scale = int(round(1.0 / min(w for weights in grid for w in weights if w > 0.0)))
+    scale = (
+        100
+        if len(grid) == 1
+        else int(round(1.0 / min(w for weights in grid for w in weights if w > 0.0)))
+    )
     traversal = _neighbor_aware_simplex_order(grid, scale=scale)
 
     for int_weights, parent_weights in traversal:
@@ -534,108 +532,6 @@ def _compute_pacmap_knn_simplex_layouts(
             )
         aligned_arrays[int_weights] = coords
         layouts[_simplex_key(weights)] = [[float(x), float(y)] for x, y in coords]
-    return layouts
-
-
-def _compute_pacmap_knn_4way_layouts(
-    *,
-    X_reference: np.ndarray,
-    D_maest: np.ndarray,
-    D_tempo: np.ndarray,
-    D_groove: np.ndarray,
-    D_chroma: np.ndarray,
-    grid: list[tuple[float, float, float, float]],
-    n_neighbors: int,
-    mn_ratio: float,
-    fp_ratio: float,
-    distance: str,
-    random_state: int,
-    align: bool,
-    pair_source: str,
-    distance_combine: str,
-    layout_init: str,
-) -> dict[str, list[list[float]]]:
-    try:
-        ensure_numba_cache_dir()
-        import pacmap
-    except ImportError as exc:
-        raise ImportError("PaCMAP is not installed. Install with: uv add pacmap") from exc
-
-    if pair_source not in PACMAP_PAIR_SOURCE_CHOICES:
-        raise ValueError(f"pair_source must be one of {PACMAP_PAIR_SOURCE_CHOICES}, got {pair_source!r}.")
-    if distance_combine not in DISTANCE_COMBINE_CHOICES:
-        raise ValueError(
-            f"distance_combine must be one of {DISTANCE_COMBINE_CHOICES}, got {distance_combine!r}."
-        )
-    if layout_init not in LAYOUT_INIT_CHOICES:
-        raise ValueError(f"layout_init must be one of {LAYOUT_INIT_CHOICES}, got {layout_init!r}.")
-
-    X = np.asarray(X_reference, dtype=np.float32)
-    layouts: dict[str, list[list[float]]] = {}
-    n = D_maest.shape[0]
-    effective_neighbors = min(max(1, int(n_neighbors)), n - 1)
-
-    # Start from the balanced point, then move outward. This gives alignment and
-    # neighbor initialization a stable path without needing full tetrahedral graph traversal.
-    ordered_grid = sorted(
-        grid,
-        key=lambda w: (
-            float(np.sum((np.asarray(w, dtype=np.float64) - 0.25) ** 2)),
-            -w[0],
-            -w[1],
-            -w[2],
-            -w[3],
-        ),
-    )
-    reference_coords: np.ndarray | None = None
-    previous_coords: np.ndarray | None = None
-
-    for weights in ordered_grid:
-        D = _combined_distance_4way(
-            D_maest,
-            D_tempo,
-            D_groove,
-            D_chroma,
-            weights,
-            combine_mode=distance_combine,
-        )
-        pair_mn = None
-        pair_fp = None
-        if pair_source == "combined-all":
-            pair_neighbors, pair_mn, pair_fp = _custom_pacmap_pairs_from_distance(
-                D,
-                n_neighbors=effective_neighbors,
-                mn_ratio=mn_ratio,
-                fp_ratio=fp_ratio,
-            )
-        else:
-            pair_neighbors = _neighbor_pairs_from_distance(D, n_neighbors=effective_neighbors)
-
-        init: np.ndarray | str = layout_init if layout_init != "neighbor" else "pca"
-        if layout_init == "neighbor" and previous_coords is not None:
-            init = previous_coords
-
-        reducer = pacmap.PaCMAP(
-            n_components=2,
-            n_neighbors=effective_neighbors,
-            MN_ratio=float(mn_ratio),
-            FP_ratio=float(fp_ratio),
-            pair_neighbors=pair_neighbors,
-            pair_MN=pair_mn,
-            pair_FP=pair_fp,
-            distance=str(distance),
-            random_state=int(random_state),
-        )
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="Warning: random state is set to.*")
-            logging.getLogger("pacmap").setLevel(logging.ERROR)
-            coords = np.asarray(reducer.fit_transform(X, init=init), dtype=np.float32)
-        if align and reference_coords is not None:
-            coords = _align_to_reference(reference_coords, coords)
-        if reference_coords is None:
-            reference_coords = coords
-        previous_coords = coords
-        layouts[_simplex_key_4way(weights)] = [[float(x), float(y)] for x, y in coords]
     return layouts
 
 
@@ -692,69 +588,6 @@ def _compute_umap_simplex_layouts(
     return layouts
 
 
-def _compute_umap_4way_layouts(
-    *,
-    D_maest: np.ndarray,
-    D_tempo: np.ndarray,
-    D_groove: np.ndarray,
-    D_chroma: np.ndarray,
-    grid: list[tuple[float, float, float, float]],
-    n_neighbors: int,
-    min_dist: float,
-    random_state: int,
-    align: bool,
-    distance_combine: str,
-) -> dict[str, list[list[float]]]:
-    try:
-        from umap import UMAP
-    except ImportError as exc:
-        raise ImportError("UMAP is not installed. Install with: uv add umap-learn") from exc
-
-    if distance_combine not in DISTANCE_COMBINE_CHOICES:
-        raise ValueError(
-            f"distance_combine must be one of {DISTANCE_COMBINE_CHOICES}, got {distance_combine!r}."
-        )
-
-    layouts: dict[str, list[list[float]]] = {}
-    reference: np.ndarray | None = None
-    n = D_maest.shape[0]
-    effective_neighbors = min(max(2, int(n_neighbors)), max(2, n - 1))
-
-    ordered_grid = sorted(
-        grid,
-        key=lambda w: (
-            float(np.sum((np.asarray(w, dtype=np.float64) - 0.25) ** 2)),
-            -w[0],
-            -w[1],
-            -w[2],
-            -w[3],
-        ),
-    )
-    for weights in ordered_grid:
-        D = _combined_distance_4way(
-            D_maest,
-            D_tempo,
-            D_groove,
-            D_chroma,
-            weights,
-            combine_mode=distance_combine,
-        )
-        reducer = UMAP(
-            n_components=2,
-            n_neighbors=effective_neighbors,
-            min_dist=float(min_dist),
-            metric="precomputed",
-            random_state=int(random_state),
-        )
-        coords = np.asarray(reducer.fit_transform(D), dtype=np.float32)
-        if align and reference is not None:
-            coords = _align_to_reference(reference, coords)
-        if reference is None:
-            reference = coords
-        layouts[_simplex_key_4way(weights)] = [[float(x), float(y)] for x, y in coords]
-    return layouts
-
-
 def _build_similarity_payload_3way(
     *,
     records: list[dict[str, Any]],
@@ -804,7 +637,7 @@ def _build_similarity_payload_3way(
     return payload
 
 
-def _build_similarity_payload_4way(
+def _build_similarity_payload_style_rhythm_harmony(
     *,
     records: list[dict[str, Any]],
     maest_similarity: np.ndarray,
@@ -816,6 +649,9 @@ def _build_similarity_payload_4way(
     groove_distance: np.ndarray,
     chroma_distance: np.ndarray,
     temperature: float,
+    rhythm_tempo_weight: float = DEFAULT_RHYTHM_TEMPO_WEIGHT,
+    rhythm_similarity: np.ndarray | None = None,
+    rhythm_distance: np.ndarray | None = None,
 ) -> dict[str, dict[str, Any]]:
     payload = _build_similarity_payload_3way(
         records=records,
@@ -833,6 +669,26 @@ def _build_similarity_payload_4way(
             cand_idx = int(row["idx"])
             row["groove_similarity"] = float(groove_similarity[src_idx, cand_idx])
             row["groove_score_norm"] = float(1.0 - groove_distance[src_idx, cand_idx])
+            tempo_score = float(row["tempo_score_norm"])
+            groove_score = float(row["groove_score_norm"])
+            row["rhythm_similarity"] = float(
+                rhythm_similarity[src_idx, cand_idx]
+                if rhythm_similarity is not None
+                else (
+                    rhythm_tempo_weight * float(row["tempo_similarity"])
+                    + (1.0 - rhythm_tempo_weight) * float(row["groove_similarity"])
+                )
+            )
+            row["rhythm_score_norm"] = float(
+                1.0 - rhythm_distance[src_idx, cand_idx]
+                if rhythm_distance is not None
+                else (
+                    rhythm_tempo_weight * tempo_score
+                    + (1.0 - rhythm_tempo_weight) * groove_score
+                )
+            )
+            row["style_score_norm"] = float(row["maest_score_norm"])
+            row["harmony_score_norm"] = float(row["chroma_score_norm"])
     return payload
 
 
@@ -924,6 +780,7 @@ def _build_genre_mixability_html(
     bpm_color_scale_pct: float,
     generation_settings: dict[str, Any],
     layout_selection_mode: str,
+    scoring_settings: TransitionScoringSettings,
 ) -> str:
     record_payload = [
         {
@@ -956,7 +813,7 @@ def _build_genre_mixability_html(
             f'<script id="simplex-layouts-json" type="application/json">{_json_script_payload(layouts)}</script>',
             f'<script id="simplex-layout-entries-json" type="application/json">{_json_script_payload(layout_entries)}</script>',
             f'<script id="simplex-sim-json" type="application/json">{_json_script_payload(similarity_payload)}</script>',
-            f'<script id="simplex-config-json" type="application/json">{_json_script_payload({"step": step, "top_k_rows": top_k_rows, "temperature": temperature, "background_links_per_song": background_links_per_song, "click_links_per_song": click_links_per_song, "bpm_color_scale_pct": bpm_color_scale_pct, "control_mode": "genre-mixability", "layout_selection_mode": layout_selection_mode})}</script>',
+            f'<script id="simplex-config-json" type="application/json">{_json_script_payload({"step": step, "top_k_rows": top_k_rows, "temperature": temperature, "background_links_per_song": background_links_per_song, "click_links_per_song": click_links_per_song, "bpm_color_scale_pct": bpm_color_scale_pct, "control_mode": CANONICAL_CONTROL_MODE, "layout_selection_mode": layout_selection_mode, "rhythm_tempo_weight": scoring_settings.rhythm_tempo_weight, "default_weights": scoring_settings.to_dict()})}</script>',
         ]
     )
 
@@ -965,7 +822,8 @@ def _build_genre_mixability_html(
         "{{SETTINGS_PANEL}}", settings_panel
     )
     detail_panel = frontend_asset_text("templates/interactive_pacmap_detail_panel.html").replace(
-        "{{TRACK_META_TEXT}}", "Click a point to play its snippet and show genre/mixability recommendations."
+        "{{TRACK_META_TEXT}}",
+        "Click a point to play its snippet and show Style/Rhythm/Harmony recommendations.",
     )
     body_html = (
         frontend_asset_text("templates/interactive_pacmap_body.html")
@@ -1004,17 +862,21 @@ def export_dj_pacmap(
     click_links_per_song: int = 8,
     bpm_color_scale_pct: float = 0.10,
     pair_source: str = "neighbors-only",
-    distance_combine: str = "l2",
+    distance_combine: str = "l1",
     layout_init: str = "neighbor",
-    control_mode: str = "genre-mixability",
+    control_mode: str = CANONICAL_CONTROL_MODE,
     reducer: str = "pacmap",
     umap_min_dist: float = 0.1,
     pacmap_settings: PacmapSettings | None = None,
+    scoring_settings: TransitionScoringSettings | None = None,
 ) -> Path:
     if control_mode not in CONTROL_MODE_CHOICES:
         raise ValueError(f"control_mode must be one of {CONTROL_MODE_CHOICES}, got {control_mode!r}.")
     if reducer not in REDUCER_CHOICES:
         raise ValueError(f"reducer must be one of {REDUCER_CHOICES}, got {reducer!r}.")
+    scoring_settings = (scoring_settings or TransitionScoringSettings()).validate()
+    if control_mode == "genre-mixability":
+        control_mode = CANONICAL_CONTROL_MODE
 
     if pacmap_settings is not None:
         n_neighbors = pacmap_settings.n_neighbors
@@ -1063,6 +925,11 @@ def export_dj_pacmap(
         snippet_cache_overwrite=False,
     )
     is_legacy_simplex = control_mode in ("legacy-simplex", "legacy-discrete-simplex")
+    if not is_legacy_simplex and distance_combine != "l1":
+        raise ValueError(
+            "Style/Rhythm/Harmony layouts require distance_combine='l1' so "
+            "D = w_style*D_style + w_rhythm*D_rhythm + w_harmony*D_harmony."
+        )
     if is_legacy_simplex:
         matrices = _component_matrices_3way(
             features,
@@ -1129,7 +996,7 @@ def export_dj_pacmap(
             tracklist_paths=[path for _, path in sources],
             groove_dir=(project_root / "data" / "groove_embeddings"),
         )
-        matrices = _component_matrices_4way(
+        matrices = _component_matrices_style_rhythm_harmony(
             features,
             groove_embeddings=groove_embeddings,
             tempo_bandwidth=0.06,
@@ -1144,16 +1011,21 @@ def export_dj_pacmap(
             harmonic_second_fifth_weight=0.0,
             harmonic_other_weight=0.0,
             harmonic_self_normalize=True,
+            rhythm_tempo_weight=scoring_settings.rhythm_tempo_weight,
         )
-        grid4 = [(0.5, 0.2, 0.2, 0.1)] if static_layout else _simplex_grid_4way(step)
+        default_grid_weight = (
+            scoring_settings.style_weight,
+            scoring_settings.rhythm_weight,
+            scoring_settings.harmony_weight,
+        )
+        grid = [default_grid_weight] if static_layout else _simplex_grid(step)
         if reducer == "pacmap":
-            layouts = _compute_pacmap_knn_4way_layouts(
+            layouts = _compute_pacmap_knn_simplex_layouts(
                 X_reference=features.maest,
                 D_maest=matrices["maest_distance"],
-                D_tempo=matrices["tempo_distance"],
-                D_groove=matrices["groove_distance"],
+                D_tempo=matrices["rhythm_distance"],
                 D_chroma=matrices["chroma_distance"],
-                grid=grid4,
+                grid=grid,
                 n_neighbors=n_neighbors,
                 mn_ratio=mn_ratio,
                 fp_ratio=fp_ratio,
@@ -1165,21 +1037,20 @@ def export_dj_pacmap(
                 layout_init=layout_init,
             )
         else:
-            layouts = _compute_umap_4way_layouts(
+            layouts = _compute_umap_simplex_layouts(
                 D_maest=matrices["maest_distance"],
-                D_tempo=matrices["tempo_distance"],
-                D_groove=matrices["groove_distance"],
+                D_tempo=matrices["rhythm_distance"],
                 D_chroma=matrices["chroma_distance"],
-                grid=grid4,
+                grid=grid,
                 n_neighbors=n_neighbors,
                 min_dist=umap_min_dist,
                 random_state=random_state,
                 align=align_layouts,
                 distance_combine=distance_combine,
             )
-        initial_key = _simplex_key_4way((0.5, 0.2, 0.2, 0.1))
+        initial_key = _simplex_key(default_grid_weight)
         initial_coords = np.asarray(layouts.get(initial_key) or next(iter(layouts.values())), dtype=np.float32)
-        similarity_payload = _build_similarity_payload_4way(
+        similarity_payload = _build_similarity_payload_style_rhythm_harmony(
             records=records,
             maest_similarity=matrices["maest_similarity"],
             tempo_similarity=matrices["tempo_similarity"],
@@ -1189,11 +1060,14 @@ def export_dj_pacmap(
             tempo_distance=matrices["tempo_distance"],
             groove_distance=matrices["groove_distance"],
             chroma_distance=matrices["chroma_distance"],
+            rhythm_similarity=matrices["rhythm_similarity"],
+            rhythm_distance=matrices["rhythm_distance"],
+            rhythm_tempo_weight=scoring_settings.rhythm_tempo_weight,
             temperature=temperature,
         )
-        title = f"Interactive DJ {reducer_label}: Genre vs Mixability"
+        title = f"Interactive DJ {reducer_label}: Style / Rhythm / Harmony"
 
-    plot_div_id = f"{dataset_tag}_{reducer}_simplex_maest_tempo_chroma".replace("-", "_")
+    plot_div_id = f"{dataset_tag}_{reducer}_simplex_style_rhythm_harmony".replace("-", "_")
     plot_html = _build_plot(
         records,
         initial_coords,
@@ -1231,6 +1105,15 @@ def export_dj_pacmap(
         "bpm-color-scale-pct": bpm_color_scale_pct,
         "track-count": len(records),
         "layout-count": len(layouts),
+        "weights": (
+            f"{scoring_settings.style_weight:.2f}S/"
+            f"{scoring_settings.rhythm_weight:.2f}R/"
+            f"{scoring_settings.harmony_weight:.2f}H"
+        ),
+        "rhythm": (
+            f"{scoring_settings.rhythm_tempo_weight:.2f} tempo + "
+            f"{1.0 - scoring_settings.rhythm_tempo_weight:.2f} groove"
+        ),
         "neighbor-pairs-per-layout": (
             len(records) * min(max(1, int(n_neighbors)), len(records) - 1)
             if reducer == "pacmap"
@@ -1270,6 +1153,7 @@ def export_dj_pacmap(
             bpm_color_scale_pct=bpm_color_scale_pct,
             generation_settings=generation_settings,
             layout_selection_mode="discrete" if layout_selection_mode == "discrete" else "interpolated",
+            scoring_settings=scoring_settings,
         )
     output_file.write_text(html, encoding="utf-8")
     print(f"Loaded aligned tracks: {len(records)}")
@@ -1312,9 +1196,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--control-mode",
         choices=CONTROL_MODE_CHOICES,
-        default="genre-mixability",
+        default=CANONICAL_CONTROL_MODE,
         help=(
-            "`genre-mixability` uses a Genre/style slider plus Tempo/Groove/Key simplex. "
+            "`style-rhythm-harmony` uses the canonical three-component simplex. "
+            "`genre-mixability` is accepted as a compatibility alias. "
             "`legacy-simplex` keeps the older Genre/Tempo/Key simplex with interpolated layouts. "
             "`legacy-discrete-simplex` keeps the older simplex but snaps to exact precomputed layouts."
         ),
@@ -1325,12 +1210,14 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     pacmap_settings = pacmap_settings_from_args(args)
+    scoring_settings = transition_scoring_settings_from_args(args)
     export_dj_pacmap(
         mix_slugs=args.mix_slugs,
         tracklist_paths=args.tracklist,
         dataset_name=args.dataset_name,
         output_file=args.output_file,
         pacmap_settings=pacmap_settings,
+        scoring_settings=scoring_settings,
         background_links_per_song=args.background_links_per_song,
         click_links_per_song=args.click_links_per_song,
         bpm_color_scale_pct=args.bpm_color_scale_pct,

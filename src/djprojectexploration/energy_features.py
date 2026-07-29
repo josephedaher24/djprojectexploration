@@ -18,6 +18,7 @@ from typing import Any
 import librosa
 import numpy as np
 
+from djprojectexploration.native_warnings import suppress_native_stderr
 from djprojectexploration.tracklists import PROJECT_ROOT, optional_float, to_project_relpath
 
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "energy_features"
@@ -358,14 +359,16 @@ def _compute_tempo_embedding_features(
     *,
     model_file: str | Path | None,
     auto_download_model: bool,
+    suppress_essentia_warnings: bool,
 ) -> dict[str, float]:
     from djprojectexploration.tempo_embedding import generate_tempo_embedding
 
-    payload = generate_tempo_embedding(
-        audio_file=audio_path,
-        model_file=model_file,
-        auto_download_model=auto_download_model,
-    )
+    with suppress_native_stderr(suppress_essentia_warnings):
+        payload = generate_tempo_embedding(
+            audio_file=audio_path,
+            model_file=model_file,
+            auto_download_model=auto_download_model,
+        )
     return {
         "tempo_embedding_bpm": _safe_feature(payload.get("tempo_bpm")),
         "tempo_embedding_confidence": _safe_feature(payload.get("confidence")),
@@ -730,6 +733,7 @@ def extract_energy_feature_rows(
     compute_missing_tempo: bool = False,
     tempo_model_file: str | Path | None = None,
     auto_download_tempo_model: bool = False,
+    suppress_essentia_warnings: bool = True,
     sample_rate: int = 22050,
     analysis_seconds: float | None = None,
     peak_window_sec: float = 30.0,
@@ -764,6 +768,7 @@ def extract_energy_feature_rows(
                 track.audio_path,
                 model_file=tempo_model_file,
                 auto_download_model=auto_download_tempo_model,
+                suppress_essentia_warnings=suppress_essentia_warnings,
             )
         output_row.update(tempo_features)
         if not str(output_row.get("bpm") or "").strip():
@@ -1480,6 +1485,20 @@ def default_energy_npz_path(output_dir: str | Path = DEFAULT_ENERGY_EMBEDDING_DI
     return Path(output_dir).expanduser().resolve() / f"{name}.npz"
 
 
+def default_energy_npz_name_from_feature_csvs(feature_csvs: list[str | Path]) -> str:
+    bases: list[str] = []
+    for feature_csv in feature_csvs:
+        stem = Path(feature_csv).stem
+        if stem.endswith("_tracks_energy_features"):
+            stem = stem[: -len("_tracks_energy_features")]
+        elif stem.endswith("_energy_features"):
+            stem = stem[: -len("_energy_features")]
+        bases.append(stem)
+    if len(bases) > 1:
+        bases = [base[: -len("_mix")] if base.endswith("_mix") else base for base in bases]
+    return "_".join(bases or ["energy"]) + "_energy_features"
+
+
 def create_energy_embedding_npz(
     feature_csvs: list[str | Path],
     *,
@@ -1615,6 +1634,7 @@ def create_energy_feature_csv(
     compute_missing_tempo: bool = False,
     tempo_model_file: str | Path | None = None,
     auto_download_tempo_model: bool = False,
+    suppress_essentia_warnings: bool = True,
     skip_missing_audio: bool = False,
     sample_rate: int = 22050,
     analysis_seconds: float | None = None,
@@ -1642,6 +1662,7 @@ def create_energy_feature_csv(
         compute_missing_tempo=compute_missing_tempo,
         tempo_model_file=tempo_model_file,
         auto_download_tempo_model=auto_download_tempo_model,
+        suppress_essentia_warnings=suppress_essentia_warnings,
         sample_rate=sample_rate,
         analysis_seconds=analysis_seconds,
         peak_window_sec=peak_window_sec,
@@ -1668,6 +1689,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--compute-missing-tempo", action="store_true")
     parser.add_argument("--tempo-model-file", type=Path, default=None)
     parser.add_argument("--auto-download-tempo-model", action="store_true")
+    parser.add_argument(
+        "--show-essentia-warnings",
+        action="store_true",
+        help="Show native Essentia/TensorFlow stderr warnings. Hidden by default.",
+    )
     parser.add_argument("--skip-missing-audio", action="store_true")
     parser.add_argument("--sample-rate", type=int, default=22050)
     parser.add_argument(
@@ -1703,7 +1729,11 @@ def parse_npz_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-file", type=Path, default=None)
     parser.add_argument("--manifest-file", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_ENERGY_EMBEDDING_DIR)
-    parser.add_argument("--name", default="energy_features", help="Default output stem when --output-file is omitted.")
+    parser.add_argument(
+        "--name",
+        default=None,
+        help="Default output stem when --output-file is omitted. Derived from input CSV name(s) by default.",
+    )
     parser.add_argument(
         "--model",
         default=FINAL_MAEST_FULL_PEAK30_MODEL_NAME,
@@ -1826,6 +1856,7 @@ def main() -> None:
         compute_missing_tempo=bool(args.compute_missing_tempo),
         tempo_model_file=args.tempo_model_file,
         auto_download_tempo_model=bool(args.auto_download_tempo_model),
+        suppress_essentia_warnings=not bool(args.show_essentia_warnings),
         skip_missing_audio=bool(args.skip_missing_audio),
         sample_rate=int(args.sample_rate),
         analysis_seconds=args.analysis_seconds,
@@ -1837,11 +1868,12 @@ def main() -> None:
 
 def energy_npz_main(argv: list[str] | None = None) -> int:
     args = parse_npz_args(argv)
+    feature_csvs = [Path(path) for path in args.feature_csv]
     create_energy_embedding_npz(
-        [Path(path) for path in args.feature_csv],
+        feature_csvs,
         output_file=args.output_file,
         manifest_file=args.manifest_file,
-        name=str(args.name),
+        name=str(args.name or default_energy_npz_name_from_feature_csvs(feature_csvs)),
         output_dir=args.output_dir,
         model=str(args.model),
         model_file=args.model_file,

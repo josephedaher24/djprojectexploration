@@ -1,9 +1,9 @@
 {
-  "mix_slugs": [
-    "energycurvedataset"
+  "tracklists": [
+    "music/anjunabeats-volume-16/anjunabeats_volume_16_tracks.csv"
   ],
-  "energy_npz": "data/energy_embeddings/energycurvedataset_energy_features.npz",
-  "output_file": "data/exports/energycurvedataset_sequence_builder.html",
+  "energy_npz": "data/energy_embeddings/anjunabeats_volume_16_energy_features.npz",
+  "output_dir": "data/exports",
   "sequence_length": 10,
   "control_mode": "style-rhythm-harmony",
   "transition_scoring": {
@@ -12,20 +12,20 @@
     "harmony_weight": 0.2,
     "rhythm_tempo_weight": 0.7
   },
-  "n_neighbors": 25,
-  "MN_ratio": 1.5,
+  "n_neighbors": 10,
+  "MN_ratio": 0.5,
   "FP_ratio": 0.5,
   "distance": "angular",
   "pair_source": "combined-all",
   "distance_combine": "l1",
-  "layout_init": "pca",
+  "layout_init": "neighbor",
   "layout_selection_mode": "interpolated",
   "step": 0.1,
   "static_layout": false,
   "random_state": 7777,
   "ui": {
     "latent_links_per_track": 3,
-    "recommended_links_highlight": 10,
+    "recommended_links_highlight": 25,
     "point_color": "genre",
     "map_renderer": "webgl",
     "map_fx": true

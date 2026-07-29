@@ -7,7 +7,13 @@
   "energy_npz": "data/energy_embeddings/aries_ara_bootes_energy_features.npz",
   "output_file": "data/exports/aries_ara_bootes_sequence_builder.html",
   "sequence_length": 10,
-  "control_mode": "genre-mixability",
+  "control_mode": "style-rhythm-harmony",
+  "transition_scoring": {
+    "style_weight": 0.5,
+    "rhythm_weight": 0.3,
+    "harmony_weight": 0.2,
+    "rhythm_tempo_weight": 0.7
+  },
   "n_neighbors": 20,
   "MN_ratio": 1.25,
   "FP_ratio": 0.5,

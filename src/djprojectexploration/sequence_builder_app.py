@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from djprojectexploration.energy_sequence_builder import CONTROL_MODE_CHOICES, PROJECT_ROOT, export_dj_sequence
+from djprojectexploration.energy_sequence_builder import (
+    CANONICAL_CONTROL_MODE,
+    CONTROL_MODE_CHOICES,
+    PROJECT_ROOT,
+    export_dj_sequence,
+)
 from djprojectexploration.local_http import (
     artifact_route_parts,
     error_response,
@@ -22,11 +27,15 @@ from djprojectexploration.local_http import (
 )
 from djprojectexploration.pacmap_settings import (
     PacmapSettings,
+    MetadataEnrichmentSettings,
     SequenceBuilderUiSettings,
+    TransitionScoringSettings,
     add_pacmap_args,
     pacmap_settings_from_args,
     sequence_builder_run_settings_from_args,
     sequence_builder_ui_settings_from_args,
+    metadata_enrichment_settings_from_args,
+    transition_scoring_settings_from_args,
 )
 from djprojectexploration.tracklists import load_playlist_tracks
 from djprojectexploration.transition_preview import DEFAULT_OUTPUT_DIR
@@ -71,6 +80,8 @@ class SequenceBuilderApp:
         control_mode: str,
         pacmap_settings: PacmapSettings,
         ui_settings: SequenceBuilderUiSettings | None,
+        scoring_settings: TransitionScoringSettings,
+        metadata_enrichment: MetadataEnrichmentSettings,
         settings_preset_source: Path | None,
     ) -> None:
         self.project_root = project_root.expanduser().resolve()
@@ -92,6 +103,8 @@ class SequenceBuilderApp:
             control_mode=control_mode,
             pacmap_settings=pacmap_settings,
             ui_settings=ui_settings,
+            scoring_settings=scoring_settings,
+            metadata_enrichment=metadata_enrichment,
             settings_preset_source=settings_preset_source,
             app_mode=True,
         )
@@ -217,6 +230,8 @@ def serve_sequence_builder_app(
     control_mode: str,
     pacmap_settings: PacmapSettings,
     ui_settings: SequenceBuilderUiSettings | None,
+    scoring_settings: TransitionScoringSettings,
+    metadata_enrichment: MetadataEnrichmentSettings,
     settings_preset_source: Path | None,
 ) -> None:
     app = SequenceBuilderApp(
@@ -228,6 +243,8 @@ def serve_sequence_builder_app(
         control_mode=control_mode,
         pacmap_settings=pacmap_settings,
         ui_settings=ui_settings,
+        scoring_settings=scoring_settings,
+        metadata_enrichment=metadata_enrichment,
         settings_preset_source=settings_preset_source,
     )
     server = ThreadingHTTPServer((host, port), make_handler(app))
@@ -271,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     pacmap_settings = pacmap_settings_from_args(args)
     ui_settings = sequence_builder_ui_settings_from_args(args)
+    metadata_enrichment = metadata_enrichment_settings_from_args(args)
+    scoring_settings = transition_scoring_settings_from_args(args)
     run_settings = sequence_builder_run_settings_from_args(args)
     use_dynamic_layout = not bool(args.static_layout)
     if bool(args.dynamic_layout) or bool(args.static_layout) or args.pacmap_preset is None:
@@ -295,9 +314,11 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=_resolve_project_path(project_root, args.output_dir or run_settings.output_dir) or DEFAULT_OUTPUT_DIR,
         energy_npz_path=_resolve_project_path(project_root, args.energy_npz or run_settings.energy_npz_path),
         sequence_length=args.sequence_length or run_settings.sequence_length or 10,
-        control_mode=args.control_mode or run_settings.control_mode or "genre-mixability",
+        control_mode=args.control_mode or run_settings.control_mode or CANONICAL_CONTROL_MODE,
         pacmap_settings=pacmap_settings,
         ui_settings=ui_settings,
+        scoring_settings=scoring_settings,
+        metadata_enrichment=metadata_enrichment,
         settings_preset_source=args.pacmap_preset,
     )
     return 0

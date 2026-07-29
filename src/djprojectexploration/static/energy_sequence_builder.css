@@ -1,5 +1,84 @@
   :root { color-scheme: dark; --bg:#0b1020; --panel:#111827; --panel2:#151f32; --line:#2d374c; --ink:#e5e7eb; --muted:#9ca3af; --accent:#14b8a6; --accent2:#f59e0b; --warn:#fb923c; --track1:#38bdf8; --track2:#c084fc; --recommendation:#34d399; --sequence:#fb923c; --pin:#fbbf24; --slot:#94a3b8; }
   body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 18px; padding-bottom: 88px; color: var(--ink); background: var(--bg); }
+  body.figure-light { color-scheme: light; --bg:#f8fafc; --panel:#ffffff; --panel2:#f1f5f9; --line:#cbd5e1; --ink:#0f172a; --muted:#475569; }
+  body.figure-light .tab-button { background:#ffffff; }
+  body.figure-light .tab-button.active,
+  body.figure-light .settings-toggle[aria-expanded="true"] { background:#0f766e; border-color:#0f766e; color:#f8fafc; }
+  body.figure-light .plot-pane,
+  body.figure-light .energy-curve,
+  body.figure-light .sequence-list,
+  body.figure-light .recommendation-panel,
+  body.figure-light .current-transition-score,
+  body.figure-light .library-panel { background:#ffffff; }
+  body.figure-light .modebar-btn svg path { fill:#334155 !important; }
+  body.figure-light .webgl-map-canvas { background:#f8fafc; }
+  body.figure-light .map-effects-canvas { mix-blend-mode:normal; }
+  body.figure-light .map-zoom-controls,
+  body.figure-light .map-mini-map { border-color:rgba(148,163,184,.7); background:rgba(255,255,255,.86); box-shadow:0 12px 28px rgba(15,23,42,.12); }
+  body.figure-light .map-zoom-controls button { background:#ffffff; color:#0f172a; }
+  body.figure-light .map-zoom-controls button[data-map-action="zoom-in"],
+  body.figure-light .map-zoom-controls button[data-map-action="zoom-out"],
+  body.figure-light .map-zoom-controls button[data-map-action="reset"] { color:#0f172a; }
+  body.figure-light .map-color-legend,
+  body.figure-light .map-color-legend-title,
+  body.figure-light .map-genre-chip,
+  body.figure-light .transition-mini-meter-row > span,
+  body.figure-light .recommendation-filterbar label { color:#334155; }
+  body.figure-light .map-genre-chip i { border-color:rgba(15,23,42,.24); box-shadow:0 0 0 1px rgba(148,163,184,.3); }
+  body.figure-light .settings-popover,
+  body.figure-light .settings-section,
+  body.figure-light .help-card,
+  body.figure-light .transition-badge,
+  body.figure-light .transition-mini-score,
+  body.figure-light .control-grid,
+  body.figure-light .misc-control-grid,
+  body.figure-light .side-actions,
+  body.figure-light .diagnostic-card,
+  body.figure-light .preview-card,
+  body.figure-light .preview-render-section,
+  body.figure-light .preview-result,
+  body.figure-light .automation-summary { background:#ffffff; box-shadow:none; }
+  body.figure-light .settings-popover-head,
+  body.figure-light .settings-section h3,
+  body.figure-light .transition-topbar { background:#f1f5f9; }
+  body.figure-light .settings-section h3,
+  body.figure-light .help-card h3,
+  body.figure-light .diagnostic-card h3,
+  body.figure-light .focused-transition-waveforms h3,
+  body.figure-light .preview-render-section h3 { color:#0f172a; }
+  body.figure-light .song-hover-card,
+  body.figure-light .song-panel,
+  body.figure-light .global-player { border-color:#cbd5e1; background:rgba(255,255,255,.95); box-shadow:0 18px 42px rgba(15,23,42,.14); }
+  body.figure-light .help-list li,
+  body.figure-light .diagnostic-feature-bar,
+  body.figure-light .diagnostic-waveform-head,
+  body.figure-light .transition-transport-title,
+  body.figure-light .transition-editor-tools label,
+  body.figure-light .fx-legend { color:#334155; }
+  body.figure-light .help-key,
+  body.figure-light .sequence-drag-handle,
+  body.figure-light button,
+  body.figure-light input[type="number"],
+  body.figure-light input[type="search"],
+  body.figure-light select,
+  body.figure-light .recommendation-filterbar input[type="search"] { background:#ffffff; color:#0f172a; border-color:#cbd5e1; }
+  body.figure-light button.primary { background:var(--accent); color:#ffffff; border-color:var(--accent); }
+  body.figure-light .simplex-area { fill:#ffffff; stroke:#94a3b8; }
+  body.figure-light .simplex-grid-line { stroke:#cbd5e1; }
+  body.figure-light .simplex-label { fill:#334155; }
+  body.figure-light .simplex-handle { stroke:#ffffff; }
+  body.figure-light .score-meter-track,
+  body.figure-light .diagnostic-bar-track,
+  body.figure-light .transition-loading { background:#e2e8f0; border-color:#cbd5e1; }
+  body.figure-light th { background:#f1f5f9; color:#334155; }
+  body.figure-light th,
+  body.figure-light td { border-bottom-color:#e2e8f0; }
+  body.figure-light tr.selected-slot { background:rgba(148,163,184,.16); }
+  body.figure-light .art-thumb,
+  body.figure-light .global-art,
+  body.figure-light .art-placeholder { background:#f1f5f9; }
+  body.figure-light .volume-icon { color:#334155; }
+  body.figure-light .volume-icon:hover { color:#0f172a; }
   .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   .app-header { position:relative; display:flex; align-items:center; justify-content:space-between; gap:14px; margin:0 0 14px; }
   h1 { font-size: 24px; margin: 0; }
@@ -176,8 +255,7 @@
   .score-meter.penalty .score-meter-track i { background:linear-gradient(90deg, #f97316, #ef4444); }
   .score-meter.rank .score-meter-track i { background:#c084fc; }
   .score-meter.style .score-meter-track i { background:#a78bfa; }
-  .score-meter.tempo .score-meter-track i { background:#f97316; }
-  .score-meter.groove .score-meter-track i { background:#2dd4bf; }
+  .score-meter.rhythm .score-meter-track i { background:#f97316; }
   .score-meter.harmonic .score-meter-track i { background:#fbbf24; }
   .score-meter.empty .score-meter-value { color:#64748b; }
   .score-meter.empty .score-meter-track { opacity:.34; }
@@ -200,8 +278,7 @@
   .diagnostic-feature-bar.mix .diagnostic-bar-track i { background:#67e8f9; }
   .diagnostic-feature-bar.penalty .diagnostic-bar-track i { background:linear-gradient(90deg, #f97316, #ef4444); }
   .diagnostic-feature-bar.style .diagnostic-bar-track i { background:#a78bfa; }
-  .diagnostic-feature-bar.tempo .diagnostic-bar-track i { background:#f97316; }
-  .diagnostic-feature-bar.groove .diagnostic-bar-track i { background:#2dd4bf; }
+  .diagnostic-feature-bar.rhythm .diagnostic-bar-track i { background:#f97316; }
   .diagnostic-feature-bar.harmonic .diagnostic-bar-track i { background:#fbbf24; }
   .diagnostic-feature-bar.energy .diagnostic-bar-track i { background:#38bdf8; }
   .focused-score-bars .diagnostic-feature-bar { grid-template-columns:130px minmax(110px,1fr) 52px 42px; }

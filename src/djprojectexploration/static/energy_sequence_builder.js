@@ -13,6 +13,7 @@
     map_renderer: 'plotly',
     map_fx: true,
     show_score_values: true,
+    figure_light_mode: false,
   }, appSettings.defaults || {});
   appSettings.current = Object.assign({}, appSettings.defaults, appSettings.current || {});
   appSettings.behavior = Object.assign({
@@ -37,6 +38,10 @@
     selectedSlot: '#94a3b8',
   };
   const DEFAULT_TARGET_ENERGY = 5;
+  const configuredRhythmTempoWeight = Number(config.weights && config.weights.rhythm_tempo_weight);
+  const RHYTHM_TEMPO_WEIGHT = Number.isFinite(configuredRhythmTempoWeight)
+    ? clamp(configuredRhythmTempoWeight, 0, 1)
+    : 0.70;
   const ENERGY_AXIS_TICKS = [1, 3, 5, 7, 9];
   const MAP_MIN_ZOOM_FRACTION = 0.045;
   const MAP_MAX_ZOOM_FRACTION = 1.35;
@@ -44,6 +49,40 @@
   const MAP_WHEEL_ZOOM_OUT_FACTOR = 1.06;
   const MAP_BUTTON_ZOOM_IN_FACTOR = 0.92;
   const MAP_BUTTON_ZOOM_OUT_FACTOR = 1.09;
+  const MAP_DARK_THEME = {
+    bg: '#0b1020',
+    panel: '#111827',
+    panel2: '#151f32',
+    ink: '#e5e7eb',
+    muted: '#9ca3af',
+    grid: '#263244',
+    hoverBg: '#0f172a',
+    hoverBorder: '#475569',
+    mapClear: [0.066, 0.094, 0.145, 1],
+    mapLineRgb: [0.9725, 0.9804, 0.9882],
+    miniBg: 'rgba(15, 23, 42, .92)',
+    miniViewStroke: 'rgba(248, 250, 252, .88)',
+    staticBadgeFill: 'rgba(15, 23, 42, .82)',
+    staticBadgeLabel: '#f8fafc',
+    selected: '#f8fafc',
+  };
+  const MAP_LIGHT_THEME = {
+    bg: '#f8fafc',
+    panel: '#ffffff',
+    panel2: '#f1f5f9',
+    ink: '#0f172a',
+    muted: '#475569',
+    grid: '#cbd5e1',
+    hoverBg: '#ffffff',
+    hoverBorder: '#94a3b8',
+    mapClear: [0.9725, 0.9804, 0.9882, 1],
+    mapLineRgb: [0.0588, 0.0902, 0.1647],
+    miniBg: 'rgba(255, 255, 255, .92)',
+    miniViewStroke: 'rgba(15, 23, 42, .74)',
+    staticBadgeFill: 'rgba(255, 255, 255, .88)',
+    staticBadgeLabel: '#0f172a',
+    selected: '#0f172a',
+  };
   const DIAGNOSTIC_CHROMA_HEATMAP_STOPS = [
     [0, '#000004'],
     [0.18, '#3b0f70'],
@@ -141,6 +180,7 @@
     mapRenderer: document.getElementById('map-renderer'),
     mapEffectsEnabled: document.getElementById('map-effects-enabled'),
     showScoreValues: document.getElementById('show-score-values'),
+    figureLightMode: document.getElementById('figure-light-mode'),
     latentLinksPerTrack: document.getElementById('latent-links-per-track'),
     latentLinksPerTrackVal: document.getElementById('latent-links-per-track-val'),
     recommendedLinksHighlight: document.getElementById('recommended-links-highlight'),
@@ -148,15 +188,11 @@
     penaltyScale: document.getElementById('energy-penalty-scale'),
     penaltyScaleVal: document.getElementById('energy-penalty-scale-val'),
     weightStyle: document.getElementById('weight-style'),
-    weightMaest: document.getElementById('weight-maest'),
-    weightChroma: document.getElementById('weight-chroma'),
-    weightTempo: document.getElementById('weight-tempo'),
-    weightGroove: document.getElementById('weight-groove'),
+    weightRhythm: document.getElementById('weight-rhythm'),
+    weightHarmony: document.getElementById('weight-harmony'),
     weightStyleVal: document.getElementById('weight-style-val'),
-    weightMaestVal: document.getElementById('weight-maest-val'),
-    weightChromaVal: document.getElementById('weight-chroma-val'),
-    weightTempoVal: document.getElementById('weight-tempo-val'),
-    weightGrooveVal: document.getElementById('weight-groove-val'),
+    weightRhythmVal: document.getElementById('weight-rhythm-val'),
+    weightHarmonyVal: document.getElementById('weight-harmony-val'),
     simplex: document.getElementById('simplex-control'),
     simplexHandle: document.getElementById('simplex-handle'),
     helpToggle: document.getElementById('help-toggle'),
@@ -302,6 +338,7 @@
       row('Point color', appSetting('point_color', 'genre')),
       row('Map renderer', selectedMapRenderer()),
       row('Map effects', Boolean(appSetting('map_fx', true))),
+      row('Figure light mode', figureLightMode()),
       row('Latent links per track', appSetting('latent_links_per_track', 3)),
       row('Recommended links highlighted', appSetting('recommended_links_highlight', 25)),
       row('Show recommendation scores', Boolean(appSetting('show_score_values', true))),
@@ -436,6 +473,36 @@
       reportUiError(scope, err);
       return fallback;
     }
+  }
+  function figureLightMode() {
+    return Boolean(appSetting('figure_light_mode', els.figureLightMode ? els.figureLightMode.checked : false));
+  }
+  function mapTheme() {
+    return figureLightMode() ? MAP_LIGHT_THEME : MAP_DARK_THEME;
+  }
+  function applyFigureTheme({ renderEnergy=false } = {}) {
+    const theme = mapTheme();
+    document.body.classList.toggle('figure-light', figureLightMode());
+    if (window.Plotly && plot) {
+      Plotly.relayout(plot, {
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        'font.color': theme.ink,
+        'hoverlabel.bgcolor': theme.hoverBg,
+        'hoverlabel.bordercolor': theme.hoverBorder,
+        'hoverlabel.font.color': theme.ink,
+      });
+      restyleTrace('Hovered', {
+        marker: [{ size: 18, color: figureLightMode() ? 'rgba(15,23,42,0.03)' : 'rgba(255,255,255,0.02)', line: { color: theme.selected, width: 2 } }],
+      });
+      restyleTrace('Selected', {
+        marker: [{ size: 24, color: figureLightMode() ? 'rgba(15,23,42,0.08)' : 'rgba(255,255,255,0.16)', line: { color: theme.selected, width: 3 } }],
+      });
+    }
+    if (webglMap) webglMap.render();
+    safeUi('mini map theme redraw', drawMiniMap);
+    safeUi('map effects theme redraw', ensureMapEffectsLoop);
+    if (renderEnergy && activePane === 'explore') safeUi('energy curve render', renderEnergyCurve);
   }
   function selectedMapRenderer() {
     const raw = String(appSetting('map_renderer', els.mapRenderer ? els.mapRenderer.value : 'plotly')).toLowerCase();
@@ -678,7 +745,8 @@
         linePositions[offset + 2] = Number(b[0]);
         linePositions[offset + 3] = Number(b[1]);
         const colorOffset = lineCount * 8;
-        const rgba = [0.9725, 0.9804, 0.9882, alpha];
+        const lineRgb = mapTheme().mapLineRgb;
+        const rgba = [lineRgb[0], lineRgb[1], lineRgb[2], alpha];
         lineColors.set(rgba, colorOffset);
         lineColors.set(rgba, colorOffset + 4);
         lineCount += 1;
@@ -686,7 +754,8 @@
       gl.useProgram(program);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      gl.clearColor(0.066, 0.094, 0.145, 1);
+      const clear = mapTheme().mapClear;
+      gl.clearColor(clear[0], clear[1], clear[2], clear[3]);
       gl.clear(gl.COLOR_BUFFER_BIT);
       if (lineCount > 0) {
         gl.useProgram(lineProgram);
@@ -2365,46 +2434,46 @@
       rangeHtml;
   }
   const simplexVertices = {
-    tempo: { x: 180, y: 34 },
-    groove: { x: 44, y: 270 },
-    chroma: { x: 316, y: 270 },
+    style: { x: 180, y: 34 },
+    rhythm: { x: 44, y: 270 },
+    harmony: { x: 316, y: 270 },
   };
-  function mixWeightsRaw() {
-    const te = Math.max(0, Number(els.weightTempo ? els.weightTempo.value : 0));
-    const gr = Math.max(0, Number(els.weightGroove ? els.weightGroove.value : 0));
-    const ch = Math.max(0, Number(els.weightChroma ? els.weightChroma.value : 0));
-    const s = te + gr + ch;
-    if (s <= 1e-12) return { tempo: 1/3, groove: 1/3, chroma: 1/3 };
-    return { tempo: te / s, groove: gr / s, chroma: ch / s };
+  function componentWeightsRaw() {
+    const style = Math.max(0, Number(els.weightStyle ? els.weightStyle.value : 0));
+    const rhythm = Math.max(0, Number(els.weightRhythm ? els.weightRhythm.value : 0));
+    const harmony = Math.max(0, Number(els.weightHarmony ? els.weightHarmony.value : 0));
+    const total = style + rhythm + harmony;
+    if (total <= 1e-12) return { style: 0.5, rhythm: 0.3, harmony: 0.2 };
+    return { style: style / total, rhythm: rhythm / total, harmony: harmony / total };
   }
-  function setMixSliders(mix) {
-    if (els.weightTempo) els.weightTempo.value = String(clamp(mix.tempo, 0, 1));
-    if (els.weightGroove) els.weightGroove.value = String(clamp(mix.groove, 0, 1));
-    if (els.weightChroma) els.weightChroma.value = String(clamp(mix.chroma, 0, 1));
+  function setComponentSliders(weights) {
+    if (els.weightStyle) els.weightStyle.value = String(clamp(weights.style, 0, 1));
+    if (els.weightRhythm) els.weightRhythm.value = String(clamp(weights.rhythm, 0, 1));
+    if (els.weightHarmony) els.weightHarmony.value = String(clamp(weights.harmony, 0, 1));
   }
-  function simplexPoint(mix) {
+  function simplexPoint(weights) {
     return {
-      x: mix.tempo * simplexVertices.tempo.x + mix.groove * simplexVertices.groove.x + mix.chroma * simplexVertices.chroma.x,
-      y: mix.tempo * simplexVertices.tempo.y + mix.groove * simplexVertices.groove.y + mix.chroma * simplexVertices.chroma.y,
+      x: weights.style * simplexVertices.style.x + weights.rhythm * simplexVertices.rhythm.x + weights.harmony * simplexVertices.harmony.x,
+      y: weights.style * simplexVertices.style.y + weights.rhythm * simplexVertices.rhythm.y + weights.harmony * simplexVertices.harmony.y,
     };
   }
-  function updateSimplexHandle(mix) {
+  function updateSimplexHandle(weights) {
     if (!els.simplexHandle) return;
-    const p = simplexPoint(mix);
+    const p = simplexPoint(weights);
     els.simplexHandle.setAttribute('cx', String(p.x));
     els.simplexHandle.setAttribute('cy', String(p.y));
   }
   function simplexWeightsFromPoint(px, py) {
-    const a = simplexVertices.tempo;
-    const b = simplexVertices.groove;
-    const c = simplexVertices.chroma;
+    const a = simplexVertices.style;
+    const b = simplexVertices.rhythm;
+    const c = simplexVertices.harmony;
     const denom = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
-    let te = ((b.y - c.y) * (px - c.x) + (c.x - b.x) * (py - c.y)) / denom;
-    let gr = ((c.y - a.y) * (px - c.x) + (a.x - c.x) * (py - c.y)) / denom;
-    let ch = 1 - te - gr;
-    te = clamp(te, 0, 1); gr = clamp(gr, 0, 1); ch = clamp(ch, 0, 1);
-    const s = Math.max(1e-12, te + gr + ch);
-    return { tempo: te / s, groove: gr / s, chroma: ch / s };
+    let style = ((b.y - c.y) * (px - c.x) + (c.x - b.x) * (py - c.y)) / denom;
+    let rhythm = ((c.y - a.y) * (px - c.x) + (a.x - c.x) * (py - c.y)) / denom;
+    let harmony = 1 - style - rhythm;
+    style = clamp(style, 0, 1); rhythm = clamp(rhythm, 0, 1); harmony = clamp(harmony, 0, 1);
+    const total = Math.max(1e-12, style + rhythm + harmony);
+    return { style: style / total, rhythm: rhythm / total, harmony: harmony / total };
   }
   function eventToSvgPoint(ev) {
     const rect = els.simplex.getBoundingClientRect();
@@ -2412,7 +2481,7 @@
   }
   function setWeightsFromSimplexEvent(ev) {
     const p = eventToSvgPoint(ev);
-    setMixSliders(simplexWeightsFromPoint(p.x, p.y));
+    setComponentSliders(simplexWeightsFromPoint(p.x, p.y));
     renderAll();
   }
   function applyPointColorMode() {
@@ -2469,18 +2538,16 @@
     safeUi('mini map draw', drawMiniMap);
   }
   function weights() {
-    if (config.control_mode === 'genre-mixability') {
-      const style = clamp(Number(els.weightStyle ? els.weightStyle.value : 0.45), 0, 1);
-      const mix = mixWeightsRaw();
-      const m = 1 - style;
-      return { maest: style, tempo: m * mix.tempo, groove: m * mix.groove, chroma: m * mix.chroma, mix };
-    }
-    const ma = Math.max(0, Number(els.weightMaest ? els.weightMaest.value : 0));
-    const ch = Math.max(0, Number(els.weightChroma ? els.weightChroma.value : 0));
-    const te = Math.max(0, Number(els.weightTempo ? els.weightTempo.value : 0));
-    const s = ma + ch + te;
-    if (s <= 1e-12) return { maest: 1/3, chroma: 1/3, tempo: 1/3, groove: 0 };
-    return { maest: ma/s, chroma: ch/s, tempo: te/s, groove: 0 };
+    return componentWeightsRaw();
+  }
+  function componentScores(c) {
+    const styleScore = clamp(Number(c.style_score_norm ?? c.maest_score_norm ?? c.maest_similarity ?? 0), 0, 1);
+    const tempoScore = clamp(Number(c.tempo_score_norm ?? c.tempo_similarity ?? 0), 0, 1);
+    const grooveScore = clamp(Number(c.groove_score_norm ?? c.groove_similarity ?? 0), 0, 1);
+    const computedRhythm = RHYTHM_TEMPO_WEIGHT * tempoScore + (1 - RHYTHM_TEMPO_WEIGHT) * grooveScore;
+    const rhythmScore = clamp(Number(c.rhythm_score_norm ?? computedRhythm), 0, 1);
+    const harmonyScore = clamp(Number(c.harmony_score_norm ?? c.chroma_score_norm ?? c.chroma_similarity ?? 0), 0, 1);
+    return { styleScore, rhythmScore, harmonyScore, tempoScore, grooveScore };
   }
   function latentLinksPerTrack() {
     return clamp(Math.round(Number(appSetting('latent_links_per_track', els.latentLinksPerTrack ? els.latentLinksPerTrack.value : 3))), 0, 8);
@@ -2503,25 +2570,23 @@
     if (els.mapRenderer) els.mapRenderer.value = selectedMapRenderer();
     if (els.mapEffectsEnabled) els.mapEffectsEnabled.checked = Boolean(appSetting('map_fx', true));
     if (els.showScoreValues) els.showScoreValues.checked = showScoreValues();
+    if (els.figureLightMode) els.figureLightMode.checked = figureLightMode();
     if (els.latentLinksPerTrack) els.latentLinksPerTrack.value = String(latentLinksPerTrack());
     if (els.recommendedLinksHighlight) els.recommendedLinksHighlight.value = String(recommendedLinksHighlight());
+    applyFigureTheme();
     updateMapLinkSettingLabels();
   }
   function weightedCandidateScore(c) {
     const w = weights();
-    const useNorm = config.control_mode === 'genre-mixability';
-    const styleScore = useNorm ? Number(c.maest_score_norm ?? c.maest_similarity ?? 0) : Number(c.maest_similarity || 0);
-    const tempoScore = useNorm ? Number(c.tempo_score_norm ?? c.tempo_similarity ?? 0) : Number(c.tempo_similarity || 0);
-    const grooveScore = useNorm ? Number(c.groove_score_norm ?? c.groove_similarity ?? 0) : 0;
-    const keyScore = useNorm ? Number(c.chroma_score_norm ?? c.chroma_similarity ?? 0) : Number(c.chroma_similarity || 0);
-    const score = w.maest * styleScore + w.tempo * tempoScore + w.groove * grooveScore + w.chroma * keyScore;
+    const scores = componentScores(c);
+    const score = w.style * scores.styleScore + w.rhythm * scores.rhythmScore + w.harmony * scores.harmonyScore;
     return Number.isFinite(score) ? score : 0;
   }
   function layoutInterpolatedPoints(w) {
     if (!Array.isArray(layoutEntries) || !layoutEntries.length) {
       return records.map(r => idxToPoint[String(r.idx)] || [0, 0]);
     }
-    const target = [w.maest, w.tempo, w.groove, w.chroma];
+    const target = [w.style, w.rhythm, w.harmony];
     const ranked = layoutEntries.map(entry => {
       const d2 = entry.weights.reduce((acc, val, idx) => acc + Math.pow(Number(val) - target[idx], 2), 0);
       return { entry, d2 };
@@ -2753,7 +2818,8 @@
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, widthCss, heightCss);
-    ctx.fillStyle = 'rgba(15, 23, 42, .92)';
+    const theme = mapTheme();
+    ctx.fillStyle = theme.miniBg;
     ctx.fillRect(0, 0, widthCss, heightCss);
     const bounds = mapDataBounds();
     if (!bounds) return;
@@ -2781,7 +2847,7 @@
       ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
       ctx.stroke();
     };
-    drawRing(selectedIdx, roleColors.selected, 4.5);
+    drawRing(selectedIdx, theme.selected, 4.5);
     drawRing(transitionFromIdx, roleColors.track1, 5.5);
     drawRing(transitionToIdx, roleColors.track2, 5.5);
     const view = mapViewRanges();
@@ -2792,7 +2858,7 @@
       const y = Math.min(a.y, b.y);
       const w = Math.max(4, Math.abs(b.x - a.x));
       const h = Math.max(4, Math.abs(b.y - a.y));
-      ctx.strokeStyle = 'rgba(248, 250, 252, .88)';
+      ctx.strokeStyle = theme.miniViewStroke;
       ctx.lineWidth = 1.2;
       ctx.setLineDash([4, 3]);
       ctx.strokeRect(x, y, w, h);
@@ -2945,8 +3011,9 @@
       const alpha = usingWebglMap()
         ? 0.07 + (1 - i / Math.max(1, pairs.length)) * 0.105
         : 0.035 + (1 - i / Math.max(1, pairs.length)) * 0.055;
+      const rgb = figureLightMode() ? '15, 23, 42' : '248, 250, 252';
       ctx.save();
-      ctx.strokeStyle = 'rgba(248, 250, 252, ' + alpha.toFixed(3) + ')';
+      ctx.strokeStyle = 'rgba(' + rgb + ', ' + alpha.toFixed(3) + ')';
       ctx.lineWidth = usingWebglMap() ? 0.9 : 0.65;
       ctx.lineCap = 'round';
       ctx.beginPath();
@@ -2984,8 +3051,9 @@
   }
   function drawStaticMapBadge(ctx, p, label, color, radius=12, shape='circle') {
     if (!p) return;
+    const theme = mapTheme();
     ctx.save();
-    ctx.fillStyle = 'rgba(15, 23, 42, .82)';
+    ctx.fillStyle = theme.staticBadgeFill;
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.8;
     ctx.shadowColor = color;
@@ -3001,7 +3069,7 @@
     ctx.stroke();
     if (label) {
       ctx.shadowBlur = 0;
-      ctx.fillStyle = '#f8fafc';
+      ctx.fillStyle = theme.staticBadgeLabel;
       ctx.font = '800 10px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -3017,9 +3085,9 @@
       hoveredIdx === transitionToIdx
     );
     if (hoveredIdx !== null && !hoverMatchesSelection) {
-      drawStaticMapBadge(ctx, plotPointPx(currentPoint(hoveredIdx)), '', '#f8fafc', 13);
+      drawStaticMapBadge(ctx, plotPointPx(currentPoint(hoveredIdx)), '', mapTheme().selected, 13);
     }
-    if (selectedIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(selectedIdx)), '', roleColors.selected, 13);
+    if (selectedIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(selectedIdx)), '', mapTheme().selected, 13);
     if (transitionFromIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(transitionFromIdx)), '1', roleColors.track1, 15);
     if (transitionToIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(transitionToIdx)), '2', roleColors.track2, 15);
 
@@ -3145,12 +3213,10 @@
   }
   function updateWeightLabels() {
     const w = weights();
-    if (els.weightStyleVal) els.weightStyleVal.textContent = fmt(w.maest, 2);
-    if (els.weightMaestVal) els.weightMaestVal.textContent = fmt(w.maest, 2);
-    if (els.weightChromaVal) els.weightChromaVal.textContent = fmt(w.chroma, 2);
-    if (els.weightTempoVal) els.weightTempoVal.textContent = fmt(w.tempo, 2);
-    if (els.weightGrooveVal) els.weightGrooveVal.textContent = fmt(w.groove, 2);
-    if (w.mix) updateSimplexHandle(w.mix);
+    if (els.weightStyleVal) els.weightStyleVal.textContent = fmt(w.style, 2);
+    if (els.weightRhythmVal) els.weightRhythmVal.textContent = fmt(w.rhythm, 2);
+    if (els.weightHarmonyVal) els.weightHarmonyVal.textContent = fmt(w.harmony, 2);
+    updateSimplexHandle(w);
     els.penaltyScaleVal.textContent = fmt(Number(els.penaltyScale.value || 0), 2);
   }
   function energyPenaltyScale() {
@@ -3451,18 +3517,18 @@
   }
   function scoreCandidate(c, slot) {
     const w = weights();
-    const useNorm = config.control_mode === 'genre-mixability';
-    const styleScore = useNorm ? Number(c.maest_score_norm ?? c.maest_similarity ?? 0) : Number(c.maest_similarity || 0);
-    const tempoScore = useNorm ? Number(c.tempo_score_norm ?? c.tempo_similarity ?? 0) : Number(c.tempo_similarity || 0);
-    const grooveScore = useNorm ? Number(c.groove_score_norm ?? c.groove_similarity ?? 0) : 0;
-    const keyScore = useNorm ? Number(c.chroma_score_norm ?? c.chroma_similarity ?? 0) : Number(c.chroma_similarity || 0);
-    const baseline = w.maest * styleScore + w.tempo * tempoScore + w.groove * grooveScore + w.chroma * keyScore;
+    const scores = componentScores(c);
+    const baseline = clamp(
+      w.style * scores.styleScore + w.rhythm * scores.rhythmScore + w.harmony * scores.harmonyScore,
+      0,
+      1
+    );
     const record = byIdx.get(Number(c.idx));
     const e = energyOf(record);
     const target = targetCurve()[slot] ?? 5;
     const rawError = Number.isFinite(e) ? e - target : 0;
     const adjustment = energyAdjustment(rawError, baseline);
-    return { baseline, styleScore, tempoScore, grooveScore, keyScore, energy: e, target, rawError, ...adjustment };
+    return { baseline, ...scores, energy: e, target, rawError, ...adjustment };
   }
   function scoreInitialCandidate(idx, slot) {
     const record = byIdx.get(Number(idx));
@@ -3483,9 +3549,10 @@
       groove_score_norm: NaN,
       baseline: NaN,
       styleScore: NaN,
+      rhythmScore: NaN,
+      harmonyScore: NaN,
       tempoScore: NaN,
       grooveScore: NaN,
-      keyScore: NaN,
       energy: e,
       target,
       rawError,
@@ -3521,9 +3588,10 @@
       groove_score_norm: NaN,
       baseline: NaN,
       styleScore: NaN,
+      rhythmScore: NaN,
+      harmonyScore: NaN,
       tempoScore: NaN,
       grooveScore: NaN,
-      keyScore: NaN,
       energy: e,
       target,
       rawError,
@@ -3857,10 +3925,9 @@
   }
   function scoreFeatureRows(score) {
     return [
-      { key: 'style', label: 'Style / MAEST', value: Number(score && score.styleScore), weight: weights().maest },
-      { key: 'tempo', label: 'Tempo', value: Number(score && score.tempoScore), weight: weights().tempo },
-      { key: 'groove', label: 'Groove', value: Number(score && score.grooveScore), weight: weights().groove },
-      { key: 'harmonic', label: 'Harmonic / chroma', value: Number(score && score.keyScore), weight: weights().chroma },
+      { key: 'style', label: 'Style', value: Number(score && score.styleScore), weight: weights().style },
+      { key: 'rhythm', label: 'Rhythm', value: Number(score && score.rhythmScore), weight: weights().rhythm },
+      { key: 'harmonic', label: 'Harmony', value: Number(score && score.harmonyScore), weight: weights().harmony },
       { key: 'energy', label: 'Energy fit', value: Number(score && score.energyScore), weight: energyPenaltyScale() },
     ];
   }
@@ -4042,13 +4109,13 @@
       groove: heatmapExtent(from && from.diagnostic_groove, to && to.diagnostic_groove),
     };
     return '<div class="diagnostic-embedding-compare">' +
-      '<div class="diagnostic-embedding-section"><h4>Chroma</h4>' +
+      '<div class="diagnostic-embedding-section"><h4>Harmony / chroma detail</h4>' +
       diagnosticHeatmapLegendHtml(extents.chroma, DIAGNOSTIC_CHROMA_HEATMAP_STOPS) +
       '<div class="diagnostic-embedding-stack">' +
       diagnosticChromaHtml(from, extents.chroma, 'Track 1') +
       diagnosticChromaHtml(to, extents.chroma, 'Track 2') +
       '</div></div>' +
-      '<div class="diagnostic-embedding-section"><h4>Groove</h4>' +
+      '<div class="diagnostic-embedding-section"><h4>Groove detail <span class="muted">(part of Rhythm)</span></h4>' +
       diagnosticHeatmapLegendHtml(extents.groove) +
       '<div class="diagnostic-embedding-stack">' +
       diagnosticGrooveHtml(from, extents.groove, 'Track 1') +
@@ -4101,8 +4168,8 @@
       '<td class="num recommendation-score-cell">' + (rankInfo ? rankMeterHtml(rankInfo) : '<span class="muted">—</span>') + '</td>';
 
     let html = '<section class="diagnostic-card wide sequence-score-card"><div class="diagnostic-table-wrap"><table><thead><tr>' +
-      '<th class="num">Slot</th><th class="num">Actions</th><th>Waveform</th><th>Track</th><th class="num">Rank</th><th class="num">Final</th><th class="num">Mix</th><th class="num">Fit</th><th class="num">Loss</th>' +
-      '<th class="num">Style</th><th class="num">Tempo</th><th class="num">Groove</th><th class="num">Key</th>' +
+      '<th class="num">Slot</th><th class="num">Actions</th><th>Waveform</th><th>Track</th><th class="num">Rank</th><th class="num">Final</th><th class="num">Mix</th><th class="num">Loss</th>' +
+      '<th class="num">Style</th><th class="num">Rhythm</th><th class="num">Harmony</th><th class="num">Energy fit</th>' +
       '</tr></thead><tbody>';
 
     filled.forEach((current, i) => {
@@ -4119,12 +4186,11 @@
         rankCell(rankInfo) +
         (previous ? metricCell(score.finalScore, 'final', score.finalScore, 'Final score') : emptyMetricCell()) +
         (previous ? metricCell(score.baseline, 'mix', score.baseline, 'Weighted mix score') : emptyMetricCell()) +
-        (previous ? metricCell(score.energyScore, 'energy', score.energyScore, 'Energy fit score') : emptyMetricCell()) +
         metricCell(score.penalty, 'penalty', score.penalty, previous ? 'Energy score loss' : 'Initial target loss') +
         (previous ? metricCell(score.styleScore, 'style', score.styleScore, 'Style score') : emptyMetricCell()) +
-        (previous ? metricCell(score.tempoScore, 'tempo', score.tempoScore, 'Tempo score') : emptyMetricCell()) +
-        (previous ? metricCell(score.grooveScore, 'groove', score.grooveScore, 'Groove score') : emptyMetricCell()) +
-        (previous ? metricCell(score.keyScore, 'harmonic', score.keyScore, 'Harmonic score') : emptyMetricCell()) +
+        (previous ? metricCell(score.rhythmScore, 'rhythm', score.rhythmScore, 'Rhythm score') : emptyMetricCell()) +
+        (previous ? metricCell(score.harmonyScore, 'harmonic', score.harmonyScore, 'Harmony score') : emptyMetricCell()) +
+        (previous ? metricCell(score.energyScore, 'energy', score.energyScore, 'Energy fit score') : emptyMetricCell()) +
         '</tr>';
     });
     html += '</tbody></table></div></section>';
@@ -4226,7 +4292,7 @@
           (prepared.pinnedOutsideQueryCount ? ', plus <b>' + prepared.pinnedOutsideQueryCount + '</b> pinned outside the search.' : '.')
         : 'Showing top <b>' + Math.min(25, prepared.matchedCount) + '</b> of <b>' + prepared.allRows.length + '</b> scored candidates.') +
       '</div>' +
-      '<table><thead><tr><th class="num">#</th><th>Actions</th><th>Waveform</th><th>Track</th><th class="num">Final</th><th class="num">Mix</th><th class="num">Fit</th><th class="num">Loss</th><th class="num">Style</th><th class="num">Tempo</th><th class="num">Groove</th><th class="num">Key</th></tr></thead><tbody>';
+      '<table><thead><tr><th class="num">#</th><th>Actions</th><th>Waveform</th><th>Track</th><th class="num">Final</th><th class="num">Mix</th><th class="num">Loss</th><th class="num">Style</th><th class="num">Rhythm</th><th class="num">Harmony</th><th class="num">Energy fit</th></tr></thead><tbody>';
     rows.forEach((r, i) => {
       const isPinned = pinnedRecommendationIdxs.has(Number(r.idx));
       html += '<tr' + (isPinned ? ' class="pinned-row"' : '') + '><td class="num">' + (isPinned ? '★ ' : '') + (r.globalRank || (i + 1)) + '</td>' +
@@ -4241,16 +4307,15 @@
         '<td>' + trackSummaryHtml(r, { size: 'compact', showArt: true, slot: r.slot ?? slot }) + '</td>' +
         recommendationMetricCell(r.finalScore, 'final', r.finalScore, 2, 'Final score') +
         recommendationMetricCell(r.baseline, 'mix', r.baseline, 2, 'Weighted mix score') +
-        recommendationMetricCell(r.energyScore, 'energy', r.energyScore, 2, 'Energy fit score') +
         recommendationMetricCell(r.penalty, 'penalty', r.penalty, 2, 'Energy score loss') +
         recommendationMetricCell(r.styleScore, 'style', r.styleScore, 2, 'Style score') +
-        recommendationMetricCell(r.tempoScore, 'tempo', r.tempoScore, 2, 'Tempo score') +
-        recommendationMetricCell(r.grooveScore, 'groove', r.grooveScore, 2, 'Groove score') +
-        recommendationMetricCell(r.keyScore, 'harmonic', r.keyScore, 2, 'Harmonic score') +
+        recommendationMetricCell(r.rhythmScore, 'rhythm', r.rhythmScore, 2, 'Rhythm score') +
+        recommendationMetricCell(r.harmonyScore, 'harmonic', r.harmonyScore, 2, 'Harmony score') +
+        recommendationMetricCell(r.energyScore, 'energy', r.energyScore, 2, 'Energy fit score') +
         '</tr>';
     });
     if (!rows.length) {
-      html += '<tr><td colspan="12" class="muted" style="padding:10px;">No recommendations match the current filters.</td></tr>';
+      html += '<tr><td colspan="11" class="muted" style="padding:10px;">No recommendations match the current filters.</td></tr>';
     }
     html += '</tbody></table>';
     els.recommendationPanel.innerHTML = html;
@@ -4269,22 +4334,23 @@
     const targets = targetCurve();
     const x = Array.from({ length: sequence.length }, (_, i) => i + 1);
     const actual = sequence.map(idx => idx === null ? null : energyOf(byIdx.get(idx)));
+    const theme = mapTheme();
     const traces = [
-      { x, y: targets, type: 'scatter', mode: 'lines+markers', name: 'Target energy', line: { color: '#e5e7eb', width: 2 }, marker: { size: 10 } },
+      { x, y: targets, type: 'scatter', mode: 'lines+markers', name: 'Target energy', line: { color: theme.ink, width: 2 }, marker: { size: 10 } },
       { x, y: actual, type: 'scatter', mode: 'lines+markers', name: 'Selected energy', line: { color: '#14b8a6', width: 2 }, marker: { size: 9 } }
     ];
     const slot = targetSlot();
     if (slot >= 0) traces.push({ x: [slot + 1], y: [targets[slot]], type: 'scatter', mode: 'markers', name: 'Next slot', marker: { size: 14, color: '#f59e0b', symbol: 'x' } });
     Plotly.react('energy-curve', traces, {
-      title: { text: 'Drag target points to edit the energy curve', font: { size: 13, color: '#e5e7eb' } },
+      title: { text: 'Drag target points to edit the energy curve', font: { size: 13, color: theme.ink } },
       margin: { t: 48, r: 20, b: 46, l: 48 },
-      template: 'plotly_dark',
-      paper_bgcolor: '#111827',
-      plot_bgcolor: '#111827',
-      font: { color: '#e5e7eb' },
+      template: figureLightMode() ? 'plotly_white' : 'plotly_dark',
+      paper_bgcolor: theme.panel,
+      plot_bgcolor: theme.panel,
+      font: { color: theme.ink },
       dragmode: false,
-      xaxis: { title: 'Sequence slot', dtick: 1, range: [0.5, sequence.length + 0.5], fixedrange: true, gridcolor: '#263244', zerolinecolor: '#263244' },
-      yaxis: { title: 'Energy', range: [0.5, 9.5], fixedrange: true, tickmode: 'array', tickvals: ENERGY_AXIS_TICKS, ticktext: ENERGY_AXIS_TICKS.map(String), gridcolor: '#263244', zerolinecolor: '#263244' },
+      xaxis: { title: 'Sequence slot', dtick: 1, range: [0.5, sequence.length + 0.5], fixedrange: true, gridcolor: theme.grid, zerolinecolor: theme.grid },
+      yaxis: { title: 'Energy', range: [0.5, 9.5], fixedrange: true, tickmode: 'array', tickvals: ENERGY_AXIS_TICKS, ticktext: ENERGY_AXIS_TICKS.map(String), gridcolor: theme.grid, zerolinecolor: theme.grid },
       legend: { orientation: 'h', x: 0, y: -0.24, xanchor: 'left', yanchor: 'top' }
     }, { displayModeBar: false, scrollZoom: false, doubleClick: false, responsive: true });
   }
@@ -4300,12 +4366,12 @@
       const meterRows = [
         ['Final', score.finalScore, 'final', score.finalScore, 'Final score'],
         ['Mix', score.baseline, 'mix', score.baseline, 'Weighted mix score'],
+        ['Rank', rankInfo, 'rank', NaN, 'Recommendation rank'],
+        ['Energy Fit', score.energyScore, 'energy', score.energyScore, 'Energy fit score'],
         ['Style', score.styleScore, 'style', score.styleScore, 'Style score'],
-        ['Tempo', score.tempoScore, 'tempo', score.tempoScore, 'Tempo score'],
-        ['Groove', score.grooveScore, 'groove', score.grooveScore, 'Groove score'],
-        ['Key', score.keyScore, 'harmonic', score.keyScore, 'Harmonic score'],
+        ['Rhythm', score.rhythmScore, 'rhythm', score.rhythmScore, 'Rhythm score'],
+        ['Harmony', score.harmonyScore, 'harmonic', score.harmonyScore, 'Harmony score'],
         ['Loss', score.penalty, 'penalty', score.penalty, 'Energy score loss'],
-        ['Rank #', rankInfo, 'rank', NaN, 'Recommendation rank'],
       ];
       scoreHtml =
         '<div class="transition-mini-score">' +
@@ -4836,6 +4902,16 @@
     if (!els.transitionPreview) return;
     const from = transitionFromIdx === null ? null : byIdx.get(transitionFromIdx);
     const to = transitionToIdx === null ? null : byIdx.get(transitionToIdx);
+    let scoreHtml = '';
+    if (from && to) {
+      const slot = Math.max(0, targetSlot());
+      const score = scoreTransition(transitionFromIdx, transitionToIdx, slot);
+      scoreHtml =
+        '<section class="transition-preview-score"><h3>Transition score</h3>' +
+        scoreSummaryBarsHtml(score) +
+        featureBarsHtml(score) +
+        '</section>';
+    }
     let controlsHtml = '';
     if (config.app_mode) {
       if (!appLoadStarted) loadAppRuntime();
@@ -4902,6 +4978,7 @@
     els.transitionPreview.innerHTML =
       '<div class="transition-workbench">' +
       '<section class="transition-main">' +
+      scoreHtml +
       '<section class="transition-controls">' + controlsHtml + '</section>' +
       editorHtml +
       '<div class="transition-topbar"><div class="transition-meta">' + esc(metaText) + '</div><div class="transition-links">' + linksHtml + '</div></div>' +
@@ -5284,12 +5361,27 @@
   }
   function downloadCsv() {
     const targets = targetCurve();
-    const header = ['slot','target_energy','actual_energy','mix','track_number','title','artists','genre','key','bpm','filename'];
+    const w = weights();
+    const header = [
+      'slot','target_energy','actual_energy','final_score','baseline_score','energy_fit',
+      'style_score','rhythm_score','harmony_score','style_weight','rhythm_weight',
+      'harmony_weight','rhythm_tempo_weight','mix','track_number','title','artists',
+      'genre','key','bpm','filename'
+    ];
     const lines = [header.join(',')];
     for (let i = 0; i < sequence.length; i += 1) {
       const r = sequence[i] === null ? null : byIdx.get(sequence[i]);
+      let score = null;
+      if (r && i > 0 && sequence[i - 1] !== null) {
+        score = scoreTransition(Number(sequence[i - 1]), Number(sequence[i]), i);
+      }
       const vals = [
-        i + 1, fmt(targets[i], 3), r ? fmt(energyOf(r), 3) : '', r ? r.mix_slug : '', r ? r.track_number : '',
+        i + 1, fmt(targets[i], 3), r ? fmt(energyOf(r), 3) : '',
+        score ? fmt(score.finalScore, 4) : '', score ? fmt(score.baseline, 4) : '',
+        score ? fmt(score.energyScore, 4) : '', score ? fmt(score.styleScore, 4) : '',
+        score ? fmt(score.rhythmScore, 4) : '', score ? fmt(score.harmonyScore, 4) : '',
+        fmt(w.style, 4), fmt(w.rhythm, 4), fmt(w.harmony, 4), fmt(RHYTHM_TEMPO_WEIGHT, 4),
+        r ? r.mix_slug : '', r ? r.track_number : '',
         r ? r.title : '', r ? r.artists : '', r ? r.genre : '', r ? r.key : '', r ? fmt(r.est_bpm, 3) : '', r ? r.filename : ''
       ];
       lines.push(vals.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(','));
@@ -5305,18 +5397,11 @@
 
   els.sequenceLength.value = String(sequenceLength);
   applyAppSettingsToControls();
-  if (config.control_mode === 'genre-mixability') {
-    if (els.weightStyle) els.weightStyle.value = String((config.weights && config.weights.maest) || 0.45);
-    setMixSliders({
-      tempo: (config.weights && config.weights.mix_tempo) || 0.34,
-      groove: (config.weights && config.weights.mix_groove) || 0.33,
-      chroma: (config.weights && config.weights.mix_chroma) || 0.33,
-    });
-  } else {
-    if (els.weightMaest) els.weightMaest.value = String((config.weights && config.weights.maest) || 0.6);
-    if (els.weightChroma) els.weightChroma.value = String((config.weights && config.weights.chroma) || 0.25);
-    if (els.weightTempo) els.weightTempo.value = String((config.weights && config.weights.tempo) || 0.15);
-  }
+  setComponentSliders({
+    style: (config.weights && config.weights.style_weight) ?? 0.50,
+    rhythm: (config.weights && config.weights.rhythm_weight) ?? 0.30,
+    harmony: (config.weights && config.weights.harmony_weight) ?? 0.20,
+  });
   setActionButton(els.setOutgoing, '1', 'Set selected track as Track 1', 'track-one');
   setActionButton(els.setIncoming, '2', 'Set selected track as Track 2', 'track-two');
   setActionButton(els.clearTransition, '×', 'Clear transition pair', 'danger');
@@ -5425,6 +5510,13 @@
       safeUi('settings render', renderSettingsPanel);
     }
   });
+  if (els.figureLightMode) els.figureLightMode.addEventListener('change', () => {
+    setAppSetting('figure_light_mode', Boolean(els.figureLightMode.checked));
+    applyFigureTheme({ renderEnergy: true });
+    if (els.settingsPopover && !els.settingsPopover.classList.contains('hidden')) {
+      safeUi('settings render', renderSettingsPanel);
+    }
+  });
   if (els.latentLinksPerTrack) els.latentLinksPerTrack.addEventListener('input', () => {
     setAppSetting('latent_links_per_track', clamp(Math.round(Number(els.latentLinksPerTrack.value)), 0, 8));
     updateMapLinkSettingLabels();
@@ -5436,12 +5528,10 @@
     renderAll();
   });
   els.penaltyScale.addEventListener('input', renderAll);
-  if (els.weightStyle) els.weightStyle.addEventListener('input', renderAll);
-  if (els.weightMaest) els.weightMaest.addEventListener('input', renderAll);
-  [els.weightChroma, els.weightTempo, els.weightGroove].forEach(el => {
+  [els.weightStyle, els.weightRhythm, els.weightHarmony].forEach(el => {
     if (!el) return;
     el.addEventListener('input', () => {
-      if (config.control_mode === 'genre-mixability') setMixSliders(mixWeightsRaw());
+      setComponentSliders(componentWeightsRaw());
       renderAll();
     });
   });

@@ -7,13 +7,11 @@
   const plot = document.getElementById('__PLOT_ID__');
   const els = {
     style: document.getElementById('weight-style'),
-    te: document.getElementById('weight-tempo'),
-    gr: document.getElementById('weight-groove'),
-    ch: document.getElementById('weight-chroma'),
+    rhythm: document.getElementById('weight-rhythm'),
+    harmony: document.getElementById('weight-harmony'),
     styleVal: document.getElementById('weight-style-val'),
-    teVal: document.getElementById('weight-tempo-val'),
-    grVal: document.getElementById('weight-groove-val'),
-    chVal: document.getElementById('weight-chroma-val'),
+    rhythmVal: document.getElementById('weight-rhythm-val'),
+    harmonyVal: document.getElementById('weight-harmony-val'),
     simplex: document.getElementById('simplex-control'),
     simplexHandle: document.getElementById('simplex-handle'),
     summary: document.getElementById('weight-summary'),
@@ -34,52 +32,50 @@
   function pct(v) { return (Number(v || 0) * 100).toFixed(1) + '%'; }
   function signedPct(v) { const n = Number(v || 0) * 100; return (n >= 0 ? '+' : '') + n.toFixed(1) + '%'; }
   function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+  const configuredRhythmTempoWeight = Number(config.rhythm_tempo_weight);
+  const rhythmTempoWeight = Number.isFinite(configuredRhythmTempoWeight)
+    ? clamp(configuredRhythmTempoWeight, 0, 1)
+    : 0.70;
   const simplexVertices = {
-    tempo: {x: 180, y: 34},
-    groove: {x: 44, y: 270},
-    chroma: {x: 316, y: 270},
+    style: {x: 180, y: 34},
+    rhythm: {x: 44, y: 270},
+    harmony: {x: 316, y: 270},
   };
-  function mixWeightsRaw() {
-    const te = Math.max(0, Number(els.te.value || 0));
-    const gr = Math.max(0, Number(els.gr.value || 0));
-    const ch = Math.max(0, Number(els.ch.value || 0));
-    const s = te + gr + ch;
-    if (s <= 1e-12) return {tempo: 1/3, groove: 1/3, chroma: 1/3};
-    return {tempo: te/s, groove: gr/s, chroma: ch/s};
-  }
   function weights() {
-    const style = clamp(Number(els.style.value || 0), 0, 1);
-    const mix = mixWeightsRaw();
-    const m = 1 - style;
-    return {maest: style, tempo: m * mix.tempo, groove: m * mix.groove, chroma: m * mix.chroma, mix};
+    const style = Math.max(0, Number(els.style.value || 0));
+    const rhythm = Math.max(0, Number(els.rhythm.value || 0));
+    const harmony = Math.max(0, Number(els.harmony.value || 0));
+    const total = style + rhythm + harmony;
+    if (total <= 1e-12) return {style: 0.5, rhythm: 0.3, harmony: 0.2};
+    return {style: style / total, rhythm: rhythm / total, harmony: harmony / total};
   }
-  function setMixSliders(mix) {
-    els.te.value = String(clamp(mix.tempo, 0, 1));
-    els.gr.value = String(clamp(mix.groove, 0, 1));
-    els.ch.value = String(clamp(mix.chroma, 0, 1));
+  function setWeightSliders(w) {
+    els.style.value = String(clamp(w.style, 0, 1));
+    els.rhythm.value = String(clamp(w.rhythm, 0, 1));
+    els.harmony.value = String(clamp(w.harmony, 0, 1));
   }
-  function simplexPoint(mix) {
+  function simplexPoint(w) {
     return {
-      x: mix.tempo * simplexVertices.tempo.x + mix.groove * simplexVertices.groove.x + mix.chroma * simplexVertices.chroma.x,
-      y: mix.tempo * simplexVertices.tempo.y + mix.groove * simplexVertices.groove.y + mix.chroma * simplexVertices.chroma.y,
+      x: w.style * simplexVertices.style.x + w.rhythm * simplexVertices.rhythm.x + w.harmony * simplexVertices.harmony.x,
+      y: w.style * simplexVertices.style.y + w.rhythm * simplexVertices.rhythm.y + w.harmony * simplexVertices.harmony.y,
     };
   }
-  function updateSimplexHandle(mix) {
-    const p = simplexPoint(mix);
+  function updateSimplexHandle(w) {
+    const p = simplexPoint(w);
     els.simplexHandle.setAttribute('cx', String(p.x));
     els.simplexHandle.setAttribute('cy', String(p.y));
   }
   function simplexWeightsFromPoint(px, py) {
-    const a = simplexVertices.tempo;
-    const b = simplexVertices.groove;
-    const c = simplexVertices.chroma;
+    const a = simplexVertices.style;
+    const b = simplexVertices.rhythm;
+    const c = simplexVertices.harmony;
     const denom = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
-    let te = ((b.y - c.y) * (px - c.x) + (c.x - b.x) * (py - c.y)) / denom;
-    let gr = ((c.y - a.y) * (px - c.x) + (a.x - c.x) * (py - c.y)) / denom;
-    let ch = 1 - te - gr;
-    te = clamp(te, 0, 1); gr = clamp(gr, 0, 1); ch = clamp(ch, 0, 1);
-    const s = Math.max(1e-12, te + gr + ch);
-    return {tempo: te / s, groove: gr / s, chroma: ch / s};
+    let style = ((b.y - c.y) * (px - c.x) + (c.x - b.x) * (py - c.y)) / denom;
+    let rhythm = ((c.y - a.y) * (px - c.x) + (a.x - c.x) * (py - c.y)) / denom;
+    let harmony = 1 - style - rhythm;
+    style = clamp(style, 0, 1); rhythm = clamp(rhythm, 0, 1); harmony = clamp(harmony, 0, 1);
+    const total = Math.max(1e-12, style + rhythm + harmony);
+    return {style: style / total, rhythm: rhythm / total, harmony: harmony / total};
   }
   function eventToSvgPoint(ev) {
     const rect = els.simplex.getBoundingClientRect();
@@ -87,16 +83,16 @@
   }
   function setWeightsFromSimplexEvent(ev) {
     const p = eventToSvgPoint(ev);
-    setMixSliders(simplexWeightsFromPoint(p.x, p.y));
+    setWeightSliders(simplexWeightsFromPoint(p.x, p.y));
     renderAll();
   }
   function layoutInterpolatedPoints(w) {
-    const target = [w.maest, w.tempo, w.groove, w.chroma];
+    const target = [w.style, w.rhythm, w.harmony];
     const ranked = layoutEntries.map(entry => {
       const d2 = entry.weights.reduce((acc, val, idx) => acc + Math.pow(Number(val) - target[idx], 2), 0);
       return {entry, d2};
     }).sort((a,b) => a.d2 - b.d2).slice(0, 12);
-    if (!ranked.length) return layouts['1.0,0.0,0.0,0.0'] || [];
+    if (!ranked.length) return layouts['1.0,0.0,0.0'] || [];
     if ((config.layout_selection_mode || 'interpolated') === 'discrete' || ranked[0].d2 <= 1e-12) return ranked[0].entry.points;
     const weightsLocal = ranked.map(r => 1 / Math.max(1e-9, r.d2));
     const sum = weightsLocal.reduce((a,b) => a + b, 0);
@@ -135,8 +131,13 @@
   function rankedRows(sourceIdx, w) {
     const candidates = ((simMap[String(sourceIdx)] || {}).candidates || []);
     const rows = candidates.map(c => {
-      const score = w.maest*Number(c.maest_score_norm||0) + w.tempo*Number(c.tempo_score_norm||0) + w.groove*Number(c.groove_score_norm||0) + w.chroma*Number(c.chroma_score_norm||0);
-      return {...c, score};
+      const tempoScore = Number(c.tempo_score_norm || 0);
+      const grooveScore = Number(c.groove_score_norm || 0);
+      const rhythmScore = Number(c.rhythm_score_norm ?? (rhythmTempoWeight * tempoScore + (1 - rhythmTempoWeight) * grooveScore));
+      const styleScore = Number(c.style_score_norm ?? c.maest_score_norm ?? 0);
+      const harmonyScore = Number(c.harmony_score_norm ?? c.chroma_score_norm ?? 0);
+      const score = w.style * styleScore + w.rhythm * rhythmScore + w.harmony * harmonyScore;
+      return {...c, styleScore, rhythmScore, harmonyScore, score};
     }).sort((a,b) => b.score - a.score);
     const temp = Math.max(1e-6, Number(config.temperature || 0.08));
     const maxScore = rows.length ? Number(rows[0].score || 0) : 0;
@@ -217,34 +218,33 @@
       '<td class="num">' + row.rank + '</td><td class="num">' + esc(row.track_number) + '</td><td>' + esc(row.mix_slug) + '</td>' +
       '<td>' + esc(row.title) + '</td><td>' + esc(row.artists) + '</td><td>' + esc(row.genre) + '</td><td>' + esc(row.key) + '</td>' +
       '<td class="num">' + signedPct(row.bpm_delta_frac) + '</td><td class="num">' + fmt(row.score,4) + '</td>' +
-      '<td class="num">' + fmt(row.maest_score_norm,4) + '</td><td class="num">' + fmt(row.tempo_score_norm,4) + '</td><td class="num">' + fmt(row.groove_score_norm,4) + '</td><td class="num">' + fmt(row.chroma_score_norm,4) + '</td>' +
+      '<td class="num">' + fmt(row.styleScore,4) + '</td><td class="num">' + fmt(row.rhythmScore,4) + '</td><td class="num">' + fmt(row.harmonyScore,4) + '</td>' +
       '<td class="num">' + fmt(row.maest_similarity,4) + '</td><td class="num">' + fmt(row.tempo_similarity,4) + '</td><td class="num">' + fmt(row.groove_similarity,4) + '</td><td class="num">' + fmt(row.chroma_similarity,4) + '</td>' +
       '<td class="num">' + pct(row.probability) + '</td></tr>').join('');
-    els.panel.innerHTML = '<b>Top ' + Number(config.top_k_rows || 25) + ' genre/mixability matches</b>' +
-      '<div class="muted">Score = style slider + mixability triangle split across tempo, groove, and key.</div>' +
+    els.panel.innerHTML = '<b>Top ' + Number(config.top_k_rows || 25) + ' transition matches</b>' +
+      '<div class="muted">Score = Style + Rhythm + Harmony; Rhythm = ' + fmt(rhythmTempoWeight, 2) + ' tempo + ' + fmt(1 - rhythmTempoWeight, 2) + ' groove.</div>' +
       '<div class="table-wrap"><table><thead><tr><th class="num">#</th><th class="num">Track</th><th>Mix</th><th>Title</th><th>Artists</th><th>Genre</th><th>Key</th>' +
-      '<th class="num">dBPM%</th><th class="num">Score</th><th class="num">Style</th><th class="num">Tempo</th><th class="num">Groove</th><th class="num">Key</th>' +
-      '<th class="num">Style raw</th><th class="num">Tempo raw</th><th class="num">Groove raw</th><th class="num">Key raw</th><th class="num">Prob</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+      '<th class="num">dBPM%</th><th class="num">Score</th><th class="num">Style</th><th class="num">Rhythm</th><th class="num">Harmony</th>' +
+      '<th class="num">Style raw</th><th class="num">Tempo detail</th><th class="num">Groove detail</th><th class="num">Harmony raw</th><th class="num">Prob</th></tr></thead><tbody>' + body + '</tbody></table></div>';
   }
   function renderAll() {
     const w = weights();
     selectedTraceIndices = clearTraceSet(selectedTraceIndices);
     backgroundTraceIndices = clearTraceSet(backgroundTraceIndices);
-    els.styleVal.textContent = fmt(w.maest, 3);
-    els.teVal.textContent = fmt(w.mix.tempo, 3);
-    els.grVal.textContent = fmt(w.mix.groove, 3);
-    els.chVal.textContent = fmt(w.mix.chroma, 3);
+    els.styleVal.textContent = fmt(w.style, 3);
+    els.rhythmVal.textContent = fmt(w.rhythm, 3);
+    els.harmonyVal.textContent = fmt(w.harmony, 3);
     if (els.highlightLinkLimitVal) els.highlightLinkLimitVal.textContent = String(Math.max(0, Number(highlightedLinkLimit || 0)));
-    updateSimplexHandle(w.mix);
-    els.summary.innerHTML = 'Global weights: Style <b>' + pct(w.maest) + '</b>, tempo <b>' + pct(w.tempo) + '</b>, groove <b>' + pct(w.groove) + '</b>, key <b>' + pct(w.chroma) + '</b>.';
+    updateSimplexHandle(w);
+    els.summary.innerHTML = 'Weights: <b>' + fmt(w.style, 2) + 'S/' + fmt(w.rhythm, 2) + 'R/' + fmt(w.harmony, 2) + 'H</b>; rhythm=' + fmt(rhythmTempoWeight, 2) + 'T+' + fmt(1 - rhythmTempoWeight, 2) + 'G.';
     currentPoints = layoutInterpolatedPoints(w);
     updatePointCoordinates();
     renderBackgroundLinks(w);
     renderSelectedLinks(w);
     renderPanel(w);
   }
-  [els.style, els.te, els.gr, els.ch].forEach(el => el.addEventListener('input', () => {
-    if (el !== els.style) setMixSliders(mixWeightsRaw());
+  [els.style, els.rhythm, els.harmony].forEach(el => el.addEventListener('input', () => {
+    setWeightSliders(weights());
     renderAll();
   }));
   if (els.highlightLinkLimit) {
@@ -285,6 +285,10 @@
       renderPanel(weights());
     });
   }
-  setMixSliders(mixWeightsRaw());
+  setWeightSliders({
+    style: Number(config.default_weights && config.default_weights.style_weight) || 0.50,
+    rhythm: Number(config.default_weights && config.default_weights.rhythm_weight) || 0.30,
+    harmony: Number(config.default_weights && config.default_weights.harmony_weight) || 0.20,
+  });
   renderAll();
 })();

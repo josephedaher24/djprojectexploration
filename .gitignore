@@ -56,3 +56,15 @@ pacmap/*.zip
 
 # Notebook export scratch scripts
 .tmp_*.py
+
+# Local datasets, audio libraries, and generated analysis results.
+# These stay available in each developer's workspace but are not versioned.
+data/
+music/
+docs/primarymixmetrics.csv
+docs/raveformmixmetrics.csv
+docs/ridgefitpredictions*.png
+mix_table.tex
+notebooks/maest_pooling_analysis*.ipynb
+notebooks/mix_analysis*.ipynb
+notebooks/mix_evaluation_summary.ipynb

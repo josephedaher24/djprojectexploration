@@ -46,6 +46,8 @@ Essentia model files are expected under `models/` when needed:
 
 ```text
 models/discogs-maest-30s-pw-519l-2.pb
+models/genre_discogs519-discogs-maest-30s-pw-519l-1.pb
+models/genre_discogs519-discogs-maest-30s-pw-519l-1.json
 models/deeptemp-k16-3.pb
 models/msd-musicnn-1.pb
 models/deam-msd-musicnn-2.pb
@@ -67,6 +69,8 @@ data/maest_embeddings/<csv-stem>_peak30.npz
 data/chroma_embeddings/<csv-stem>.npz
 data/tempo_embeddings/<csv-stem>.npz
 data/groove_embeddings/<csv-stem>.npz
+data/annotations/<csv-stem>__genre_discogs519_maest30pw519l_v1.npz
+data/annotations/<csv-stem>__key_chroma_hpcp_v1.npz
 data/waveform_features/<csv-stem>.npz
 data/energy_features/<csv-stem>_energy_features.csv
 data/energy_embeddings/<dataset>_energy_features.npz
@@ -77,6 +81,56 @@ data/artwork/
 data/transitions/
 data/exports/
 ```
+
+## Rendered Set Embeddings
+
+To embed the individual tracks in one rendered set without creating duplicate
+audio files, provide a cue CSV whose rows are in playback order:
+
+```csv
+track_number,track_name,artist,start_seconds
+1,Opening Track,Artist A,0.0
+2,Second Track,Artist B,342.5
+3,Third Track,Artist C,701.2
+```
+
+Each track ends where the next one starts; the final track ends at the audio
+duration. To end the last real track before the rendered audio ends, add a final
+terminator cue named `OUTRO`; by default it is used only as an end marker and is
+not included as a track:
+
+```csv
+40,OUTRO,Unknown,7200
+```
+
+The set is decoded once and sliced in memory:
+
+```bash
+uv run djprojectexploration-rendered-set path/to/rendered-set.mp3
+```
+
+When the cue CSV has the same stem as the audio file, for example
+`rendered-set.mp3` and `rendered-set.csv`, the CSV is resolved automatically.
+Pass the CSV path as a second argument when the names differ.
+
+The command generates the complete dataset feature suite: waveforms, full and
+peak-30 MAEST, genre annotations, chroma/key annotations, tempo, groove, DEAM
+valence/arousal, deterministic energy features, and energy predictions from the
+default frozen model. Temporary lossless track sections are removed after
+extraction. Every saved NPZ is annotated with the original audio path plus
+`playback_start_seconds` and `playback_end_seconds` for cue-limited playback.
+Embeddings and audio-derived features use full cue-to-cue sections by default.
+Guarded analysis windows are available with `--analysis-guards` (`+20s` from cue
+start and `-30s` from cue end by default, scaled down for short sections);
+waveforms always use the full playback section so they line up with the rendered
+mix. Saved artifacts include `analysis_start_seconds` and `analysis_end_seconds`.
+Tune guards with `--analysis-head-guard-sec`, `--analysis-tail-guard-sec`, and
+`--min-analysis-duration-sec`; use `--keep-final-outro` to include a final
+`OUTRO` cue as a real track.
+
+The build manifest is written to
+`data/exports/<rendered-set-stem>_rendered_set_manifest.json`. Use `--maest-only`
+only for the earlier single-bundle MAEST behavior.
 
 The default demo still centers on `aries-mix` and `ara-mix`, but most playlist commands accept either a tracklist path or
 repeatable `--mix` arguments.
@@ -113,6 +167,31 @@ uv run djprojectexploration-build-dataset path/to/music-folder \
   --name my-set \
   --tracklist path/to/my_tracks.csv
 ```
+
+For numbered Raveform downloads, the batch adapter normalizes the Raveform CSV
+schema, resolves every downloaded track, preserves mix timestamps and layered
+cue groups, and invokes the same full dataset builder for each mix:
+
+```bash
+uv run djprojectexploration-build-raveform \
+  "/path/to/raveform_mixes" \
+  --start 1 \
+  --end 20 \
+  --dry-run
+
+uv run djprojectexploration-build-raveform \
+  "/path/to/raveform_mixes" \
+  --start 1 \
+  --end 20
+```
+
+The batch is resumable: completed manifests are skipped by default. Use
+`--no-skip-existing` to revisit completed datasets while retaining per-artifact
+resume behavior, or `--force` to regenerate every artifact.
+
+When the optional Discogs-519 MAEST genre-head model is present, the builder also writes a genre annotation sidecar.
+Key annotations are written from the existing chroma extraction. Both preserve the source `genre`/`key` CSV fields and
+store model predictions separately, keyed by `track_uid`. Pass `--skip-metadata-enrichment` to omit both sidecars.
 
 The build writes:
 
@@ -388,7 +467,7 @@ Useful options:
 ```bash
 uv run djprojectexploration-dj-pacmap \
   --reducer pacmap \
-  --control-mode genre-mixability \
+  --control-mode style-rhythm-harmony \
   --n-neighbors 10 \
   --mn-ratio 0.5 \
   --fp-ratio 1.5 \
@@ -399,6 +478,9 @@ uv run djprojectexploration-dj-pacmap \
   --step 0.1
 ```
 
+The app uses one normalized Style/Rhythm/Harmony simplex. Rhythm is formed before top-level weighting as
+`0.70 * tempo_score + 0.30 * groove_score` by default; the tempo share is preset/config-only.
+
 The same PaCMAP knobs are shared by the standalone PaCMAP exporter, the sequence-builder exporter, the served sequence
 builder app, and the dataset builder:
 
@@ -407,7 +489,7 @@ builder app, and the dataset builder:
 - `--mn-ratio`
 - `--fp-ratio`
 - `--pair-source {neighbors-only,combined-all}`
-- `--distance-combine {l2,l1}`
+- `--distance-combine l1` for the canonical Style/Rhythm/Harmony distance blend
 - `--layout-init {neighbor,pca,random}`
 - `--layout-selection-mode {interpolated,discrete}`
 - `--step`
@@ -419,7 +501,7 @@ The standalone PaCMAP exporter also accepts existing tracklists directly:
 uv run djprojectexploration-dj-pacmap \
   --tracklist path/to/my_tracks.csv \
   --dataset-name my-set \
-  --control-mode genre-mixability
+  --control-mode style-rhythm-harmony
 ```
 
 Generate the same interactive HTML shell with UMAP layouts instead of PaCMAP:

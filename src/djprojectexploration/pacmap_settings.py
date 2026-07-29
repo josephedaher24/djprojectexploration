@@ -11,12 +11,16 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from djprojectexploration.transition_scoring import canonical_scoring_config
+
 
 PACMAP_PAIR_SOURCE_CHOICES = ("neighbors-only", "combined-all")
 DISTANCE_COMBINE_CHOICES = ("l2", "l1")
 LAYOUT_INIT_CHOICES = ("neighbor", "pca", "random")
 LAYOUT_SELECTION_MODE_CHOICES = ("interpolated", "discrete")
 SEQUENCE_BUILDER_PRESET_SECTION_KEYS = {"sequence_builder"}
+METADATA_ENRICHMENT_PRESET_KEY = "metadata_enrichment"
+TRANSITION_SCORING_PRESET_KEY = "transition_scoring"
 SEQUENCE_BUILDER_PRESET_KEYS = {
     "mix_slugs",
     "tracklists",
@@ -139,7 +143,10 @@ class PacmapSettings:
         allowed = set(cls.__dataclass_fields__)
         values: dict[str, Any] = {}
         for key, value in raw.items():
-            if key == "ui" or key in SEQUENCE_BUILDER_PRESET_SECTION_KEYS:
+            if (
+                key in {"ui", METADATA_ENRICHMENT_PRESET_KEY, TRANSITION_SCORING_PRESET_KEY}
+                or key in SEQUENCE_BUILDER_PRESET_SECTION_KEYS
+            ):
                 continue
             normalized = aliases.get(str(key), SEQUENCE_BUILDER_PRESET_ALIASES.get(str(key), str(key)))
             if normalized in SEQUENCE_BUILDER_PRESET_KEYS:
@@ -157,6 +164,7 @@ class SequenceBuilderUiSettings:
     point_color: str = "genre"
     map_renderer: str = "plotly"
     map_fx: bool = True
+    figure_light_mode: bool = False
 
     def validate(self) -> "SequenceBuilderUiSettings":
         if self.latent_links_per_track < 0:
@@ -189,6 +197,7 @@ class SequenceBuilderUiSettings:
             "pointColor": "point_color",
             "mapRenderer": "map_renderer",
             "mapFx": "map_fx",
+            "figureLightMode": "figure_light_mode",
         }
         allowed = set(cls.__dataclass_fields__)
         values: dict[str, Any] = {}
@@ -198,6 +207,72 @@ class SequenceBuilderUiSettings:
                 raise ValueError(f"Unknown PaCMAP preset ui key {key!r} in {preset_path}")
             values[normalized] = value
         return cls(**values).validate()
+
+
+@dataclass(frozen=True)
+class MetadataEnrichmentSettings:
+    """Optional policy for using model-derived genre/key annotations in the UI."""
+
+    enabled: bool = False
+    annotation_dir: Path = Path("data/annotations")
+    genre_policy: str = "prefer_source"
+    key_policy: str = "prefer_source"
+    genre_min_score: float = 0.25
+    key_min_confidence: float = 0.35
+
+    def validate(self) -> "MetadataEnrichmentSettings":
+        allowed = {"source", "enriched", "prefer_source", "prefer_enriched"}
+        if self.genre_policy not in allowed or self.key_policy not in allowed:
+            raise ValueError(f"Metadata policies must be one of {sorted(allowed)}.")
+        if not 0.0 <= self.genre_min_score <= 1.0 or not 0.0 <= self.key_min_confidence <= 1.0:
+            raise ValueError("Metadata confidence thresholds must be in [0, 1].")
+        return self
+
+    @classmethod
+    def from_json(cls, path: str | Path) -> "MetadataEnrichmentSettings":
+        raw = _load_json_object(path, label="PaCMAP")
+        values = raw.get(METADATA_ENRICHMENT_PRESET_KEY, {})
+        if values is None:
+            values = {}
+        if not isinstance(values, dict):
+            raise ValueError("metadata_enrichment must be a JSON object.")
+        allowed = set(cls.__dataclass_fields__)
+        unknown = set(values) - allowed
+        if unknown:
+            raise ValueError(f"Unknown metadata_enrichment preset keys: {sorted(unknown)}")
+        normalized = dict(values)
+        if "annotation_dir" in normalized:
+            normalized["annotation_dir"] = Path(str(normalized["annotation_dir"]))
+        return cls(**normalized).validate()
+
+
+@dataclass(frozen=True)
+class TransitionScoringSettings:
+    """Canonical Style/Rhythm/Harmony transition-scoring configuration."""
+
+    style_weight: float = 0.50
+    rhythm_weight: float = 0.30
+    harmony_weight: float = 0.20
+    rhythm_tempo_weight: float = 0.70
+
+    def validate(self) -> "TransitionScoringSettings":
+        return type(self)(**canonical_scoring_config(asdict(self)))
+
+    def to_dict(self) -> dict[str, float]:
+        return canonical_scoring_config(asdict(self))
+
+    @classmethod
+    def from_json(cls, path: str | Path) -> "TransitionScoringSettings":
+        raw = _load_json_object(path, label="PaCMAP")
+        section = raw.get(TRANSITION_SCORING_PRESET_KEY)
+        if section is None:
+            # Small compatibility path for legacy top-level preset/export weights.
+            section = raw.get("weights")
+        if section is None:
+            return cls()
+        if not isinstance(section, dict):
+            raise ValueError("transition_scoring must be a JSON object.")
+        return cls(**canonical_scoring_config(section))
 
 
 @dataclass(frozen=True)
@@ -303,3 +378,15 @@ def sequence_builder_run_settings_from_args(args: argparse.Namespace) -> Sequenc
     if getattr(args, "pacmap_preset", None) is None:
         return SequenceBuilderRunSettings()
     return SequenceBuilderRunSettings.from_json(args.pacmap_preset)
+
+
+def metadata_enrichment_settings_from_args(args: argparse.Namespace) -> MetadataEnrichmentSettings:
+    if getattr(args, "pacmap_preset", None) is None:
+        return MetadataEnrichmentSettings()
+    return MetadataEnrichmentSettings.from_json(args.pacmap_preset)
+
+
+def transition_scoring_settings_from_args(args: argparse.Namespace) -> TransitionScoringSettings:
+    if getattr(args, "pacmap_preset", None) is None:
+        return TransitionScoringSettings()
+    return TransitionScoringSettings.from_json(args.pacmap_preset)

@@ -41,6 +41,8 @@ djprojectexploration-tempo = "djprojectexploration.tempo_embedding_extractor:mai
 djprojectexploration-groove = "djprojectexploration.groove_embedding_extractor:main"
 djprojectexploration-deam = "djprojectexploration.deam_embedding_extractor:main"
 djprojectexploration-maest-playlist = "djprojectexploration.playlist_embedding_pipeline:maest_main"
+djprojectexploration-rendered-set = "djprojectexploration.rendered_set_embedding_pipeline:main"
+djprojectexploration-evaluate-mix-set = "djprojectexploration.mix_set_evaluation:main"
 djprojectexploration-chroma-playlist = "djprojectexploration.playlist_embedding_pipeline:chroma_main"
 djprojectexploration-tempo-playlist = "djprojectexploration.playlist_embedding_pipeline:tempo_main"
 djprojectexploration-groove-playlist = "djprojectexploration.playlist_embedding_pipeline:groove_main"
@@ -62,6 +64,7 @@ djprojectexploration-waveforms = "djprojectexploration.waveform_features:main"
 djprojectexploration-sequence-builder-app = "djprojectexploration.sequence_builder_app:main"
 djprojectexploration-dj-pacmap = "djprojectexploration.interactive_pacmap_knn_simplex:main"
 djprojectexploration-build-dataset = "djprojectexploration.dataset_builder:main"
+djprojectexploration-build-raveform = "djprojectexploration.raveform_dataset_builder:main"
 
 [build-system]
 requires = ["hatchling"]

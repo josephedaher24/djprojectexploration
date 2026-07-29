@@ -19,10 +19,18 @@ from djprojectexploration.energy_features import (
 from djprojectexploration.energy_sequence_builder import export_dj_sequence
 from djprojectexploration.interactive_pacmap_knn_simplex import export_dj_pacmap
 from djprojectexploration.music_folder_ingest import ingest_music_folder
-from djprojectexploration.pacmap_settings import PacmapSettings, add_pacmap_args, pacmap_settings_from_args
+from djprojectexploration.pacmap_settings import (
+    PacmapSettings,
+    TransitionScoringSettings,
+    add_pacmap_args,
+    pacmap_settings_from_args,
+    transition_scoring_settings_from_args,
+)
 from djprojectexploration.playlist_embedding_pipeline import (
+    DEFAULT_GENRE_MODEL_FILE,
     create_chroma_playlist_embeddings_npz,
     create_groove_playlist_embeddings_npz,
+    create_maest_genre_annotations_npz,
     create_maest_playlist_embeddings_npz,
     create_tempo_playlist_embeddings_npz,
 )
@@ -104,6 +112,7 @@ def build_dataset(
     skip_missing_audio: bool = False,
     skip_waveforms: bool = False,
     skip_embeddings: bool = False,
+    skip_metadata_enrichment: bool = False,
     skip_energy: bool = False,
     energy_model_file: str | Path | None = None,
     refit_energy_model: bool = False,
@@ -111,6 +120,7 @@ def build_dataset(
     skip_pacmap_export: bool = False,
     force: bool = False,
     pacmap_settings: PacmapSettings | None = None,
+    scoring_settings: TransitionScoringSettings | None = None,
 ) -> dict[str, Path]:
     """Build tracklist, waveform caches, feature bundles, energy NPZ, and app HTML."""
     project_root = project_root.expanduser().resolve()
@@ -142,6 +152,7 @@ def build_dataset(
             project_root / "data" / "exports" / f"{mix_slug}_validation.json",
         )
     pacmap_settings = (pacmap_settings or PacmapSettings()).validate()
+    scoring_settings = (scoring_settings or TransitionScoringSettings()).validate()
     resolved_energy_model_file = _resolve_energy_model_file(
         project_root,
         energy_model_file,
@@ -172,29 +183,50 @@ def build_dataset(
     maest_path = project_root / "data" / "maest_embeddings" / f"{tracklist_path.stem}.npz"
     maest_peak30_path = project_root / "data" / "maest_embeddings" / f"{tracklist_path.stem}_peak30.npz"
     chroma_path = project_root / "data" / "chroma_embeddings" / f"{tracklist_path.stem}.npz"
+    genre_annotation_path = project_root / "data" / "annotations" / f"{tracklist_path.stem}__genre_discogs519_maest30pw519l_v1.npz"
+    key_annotation_path = project_root / "data" / "annotations" / f"{tracklist_path.stem}__key_chroma_hpcp_v1.npz"
     tempo_path = project_root / "data" / "tempo_embeddings" / f"{tracklist_path.stem}.npz"
     groove_path = project_root / "data" / "groove_embeddings" / f"{tracklist_path.stem}.npz"
     if not skip_embeddings:
         with _stage("maest"):
-            outputs["maest"] = create_maest_playlist_embeddings_npz(
-                tracklist_path,
-                music_dir=music_dir,
-                skip_missing_audio=skip_missing_audio,
-            ) if should_build(maest_path) else maest_path
-        if energy_model_needs_peak30_maest:
-            with _stage("maest peak30"):
-                outputs["maest_peak30"] = create_maest_playlist_embeddings_npz(
+            enrich_genre = not skip_metadata_enrichment and DEFAULT_GENRE_MODEL_FILE.exists()
+            if not skip_metadata_enrichment and not enrich_genre:
+                print(f"[stage] maest: genre head unavailable; skipping genre annotations ({DEFAULT_GENRE_MODEL_FILE})", flush=True)
+            if should_build(maest_path):
+                outputs["maest"] = create_maest_playlist_embeddings_npz(
                     tracklist_path,
                     music_dir=music_dir,
                     skip_missing_audio=skip_missing_audio,
-                    section="peak30",
+                    enrich_genre=enrich_genre,
+                )
+            else:
+                outputs["maest"] = maest_path
+                if enrich_genre and should_build(genre_annotation_path):
+                    outputs["genre_annotations"] = create_maest_genre_annotations_npz(
+                        tracklist_path,
+                        music_dir=music_dir,
+                        skip_missing_audio=skip_missing_audio,
+                    )
+            if enrich_genre and genre_annotation_path.exists():
+                outputs["genre_annotations"] = genre_annotation_path
+        if energy_model_needs_peak30_maest:
+            with _stage("maest peak30"):
+                outputs["maest_peak30"] = create_maest_playlist_embeddings_npz(
+                tracklist_path,
+                music_dir=music_dir,
+                skip_missing_audio=skip_missing_audio,
+                enrich_genre=False,
+                section="peak30",
                 ) if should_build(maest_peak30_path) else maest_peak30_path
         with _stage("chroma"):
             outputs["chroma"] = create_chroma_playlist_embeddings_npz(
                 tracklist_path,
                 music_dir=music_dir,
                 skip_missing_audio=skip_missing_audio,
-            ) if should_build(chroma_path) else chroma_path
+                enrich_key=not skip_metadata_enrichment,
+            ) if (should_build(chroma_path) or ((not skip_metadata_enrichment) and should_build(key_annotation_path))) else chroma_path
+            if not skip_metadata_enrichment and key_annotation_path.exists():
+                outputs["key_annotations"] = key_annotation_path
         with _stage("tempo"):
             outputs["tempo"] = create_tempo_playlist_embeddings_npz(
                 tracklist_path,
@@ -238,6 +270,7 @@ def build_dataset(
                 energy_npz_path=energy_npz,
                 output_file=project_root / "data" / "exports" / f"{mix_slug}_sequence_builder.html",
                 pacmap_settings=pacmap_settings,
+                scoring_settings=scoring_settings,
             )
     if not skip_pacmap_export:
         with _stage("pacmap export"):
@@ -247,7 +280,8 @@ def build_dataset(
                 dataset_name=mix_slug,
                 output_file=project_root / "data" / "exports" / f"{mix_slug}_pacmap.html",
                 pacmap_settings=pacmap_settings,
-                control_mode="genre-mixability",
+                scoring_settings=scoring_settings,
+                control_mode="style-rhythm-harmony",
             )
 
     manifest = {
@@ -255,6 +289,7 @@ def build_dataset(
         "tracklist": str(tracklist_path),
         "validation": validation.to_dict(),
         "pacmap_settings": pacmap_settings.to_dict(),
+        "transition_scoring": scoring_settings.to_dict(),
         "energy_model_file": None if resolved_energy_model_file is None else str(resolved_energy_model_file),
         "refit_energy_model": bool(refit_energy_model),
         "outputs": {key: str(path) for key, path in outputs.items()},
@@ -277,6 +312,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-snippets", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--skip-waveforms", action="store_true")
     parser.add_argument("--skip-embeddings", action="store_true")
+    parser.add_argument(
+        "--skip-metadata-enrichment",
+        action="store_true",
+        help="Skip genre/key annotation sidecars while retaining all embedding extraction.",
+    )
     parser.add_argument("--skip-energy", action="store_true")
     parser.add_argument(
         "--energy-model-file",
@@ -303,6 +343,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     pacmap_settings = pacmap_settings_from_args(args)
+    scoring_settings = transition_scoring_settings_from_args(args)
     outputs = build_dataset(
         args.source,
         name=args.name,
@@ -311,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
         skip_missing_audio=bool(args.skip_missing_audio),
         skip_waveforms=bool(args.skip_waveforms),
         skip_embeddings=bool(args.skip_embeddings),
+        skip_metadata_enrichment=bool(args.skip_metadata_enrichment),
         skip_energy=bool(args.skip_energy),
         energy_model_file=args.energy_model_file,
         refit_energy_model=bool(args.refit_energy_model),
@@ -318,6 +360,7 @@ def main(argv: list[str] | None = None) -> int:
         skip_pacmap_export=bool(args.skip_pacmap_export),
         force=bool(args.force),
         pacmap_settings=pacmap_settings,
+        scoring_settings=scoring_settings,
     )
     print("Dataset build outputs:")
     for key, path in outputs.items():
