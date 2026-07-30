@@ -1,0 +1,356 @@
+/* ═══ The scope well ═══ */
+
+.well {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--void);
+}
+.well__c {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* the retrace: the new channel wipes down over the old one */
+.well__c--terr {
+  animation: ts-retrace 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.well__beam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--beam-white);
+  box-shadow: 0 0 14px 1px var(--hue);
+  pointer-events: none;
+  z-index: 9;
+  opacity: 0;
+  animation: beam-run 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@keyframes beam-run {
+  0% { top: 0; opacity: 0; }
+  8% { opacity: 1; }
+  92% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+.well__svg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* ── connection graphs ── */
+.ed line {
+  stroke: var(--hue);
+  stroke-width: 0.6;
+  fill: none;
+}
+.ed--style line {
+  stroke-dasharray: 2 4;
+  stroke-width: 0.8;
+}
+.ed--harm line { stroke-width: 0.7; }
+.ed__rail line { stroke: var(--hue); stroke-opacity: 0.26; stroke-width: 0.7; }
+
+/* ── scope cursors ── */
+.cur line {
+  stroke: var(--graticule-major);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+.cur__v {
+  fill: var(--txt-mid);
+  paint-order: stroke;
+  stroke: var(--void);
+  stroke-width: 3px;
+}
+
+/* ── trigger marker ── */
+.trig__tri { fill: var(--beam-white); }
+.trig__drop { stroke: var(--graticule-major); stroke-width: 1; }
+.trig__lbl { fill: var(--txt-lo); font-size: 10px; }
+
+/* ── nodes: strokes only ── */
+.nd { pointer-events: auto; cursor: pointer; }
+.nd:focus { outline: none; }
+.nd:focus-visible .g { opacity: 1; }
+.nd:focus-visible .g__dia { stroke: var(--beam-white); }
+.nd .g line,
+.nd .g path,
+.nd .g circle {
+  fill: none;
+  stroke: var(--hue);
+  stroke-width: 1;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.nd .g { opacity: 0.75; transition: opacity 150ms ease; }
+.nd:hover .g { opacity: 1; }
+.nd .g__dia { stroke-width: 1; opacity: 0.8; }
+.nd .g__tick { stroke-opacity: 0.3; }
+.nd .g__own { stroke-width: 1.2; }
+.nd .g__hoop { stroke-opacity: 0.5; }
+.nd .g__hoop--in { stroke-opacity: 0.3; }
+.nd .g__base { stroke-opacity: 0.28; stroke-width: 0.6; }
+.nd .g__step { stroke-width: 0.9; stroke-opacity: 0.7; }
+.nd .g__step--beat { stroke-opacity: 1; }
+
+/* camp: the trigger diamond, breathing on the beat */
+.nd.is-camp .g { opacity: 1; }
+.nd.is-camp .g__dia {
+  stroke: var(--beam-white);
+  stroke-width: 1.2;
+  transform: scale(calc(1 + var(--pulse) * 0.1));
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.nd.is-camp .g__core { fill: var(--beam-white); stroke: none; }
+
+/* target: always reads as "other" */
+.nd.is-target .g line,
+.nd.is-target .g path,
+.nd.is-target .g circle { stroke: var(--warn); }
+.nd.is-target .g { opacity: 1; }
+
+.nd__name {
+  fill: var(--txt-hi);
+  font-size: 11px;
+  paint-order: stroke;
+  stroke: var(--void);
+  stroke-width: 3.5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.nd.is-target .nd__name { fill: var(--warn); }
+.nd__no {
+  fill: var(--txt-lo);
+  font-size: 10px;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--void);
+  stroke-width: 2.5px;
+}
+
+/* ── route trace (the waveform) ── */
+.rt__knock { fill: none; stroke: var(--void); stroke-width: 3.5; }
+.rt__line {
+  fill: none;
+  stroke: var(--hue);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 5px var(--hue-a30));
+}
+.rt__wpt line { stroke: var(--txt-lo); stroke-width: 1; }
+.rt__wpt text { fill: var(--txt-lo); paint-order: stroke; stroke: var(--void); stroke-width: 2.5px; }
+.rt__dist {
+  fill: var(--txt-hi);
+  paint-order: stroke;
+  stroke: var(--void);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.rt__gain {
+  fill: var(--txt-lo);
+  paint-order: stroke;
+  stroke: var(--void);
+  stroke-width: 2.5px;
+  stroke-linejoin: round;
+}
+.rt__packet rect {
+  fill: var(--beam-white);
+}
+.rt__packet {
+  offset-rotate: 0deg;
+  animation: rt-run calc(var(--beat) * 4) linear infinite;
+}
+@keyframes rt-run {
+  from { offset-distance: 0%; }
+  to { offset-distance: 100%; }
+}
+.rt__packet--tail rect { fill: var(--hue); }
+
+/* ── channel rail ── */
+.chrail {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 7;
+}
+.chrail__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 132px;
+  height: 34px;
+  padding: 0 8px 0 10px;
+  text-align: left;
+  /* an open bracket: left, top, bottom only — never a closed box */
+  border-left: 1px solid var(--graticule-major);
+  border-top: 1px solid var(--graticule-major);
+  border-bottom: 1px solid var(--graticule-major);
+  color: var(--txt-lo);
+  transition: color 200ms ease, border-color 200ms ease;
+}
+.chrail__item[data-ch='style'].is-on { color: var(--ch1-style); }
+.chrail__item[data-ch='harm'].is-on { color: var(--ch2-harm); }
+.chrail__item[data-ch='groove'].is-on { color: var(--ch3-groove); }
+.chrail__item:hover { color: var(--txt-mid); }
+.chrail__item.is-on { border-color: currentColor; }
+/* keep the instrument look under keyboard focus — no default UA ring */
+.chrail__item:focus { outline: none; }
+.chrail__item:focus-visible {
+  outline: 1px dashed var(--txt-mid);
+  outline-offset: 2px;
+}
+
+.chrail__bar {
+  position: absolute;
+  left: -1px;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.chrail__item.is-on .chrail__bar { opacity: 1; box-shadow: 0 0 10px currentColor; }
+
+.chrail__body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.chrail__code { color: inherit; font-size: 9.5px; letter-spacing: 0.12em; }
+.chrail__code b { font-weight: 600; letter-spacing: 0.16em; }
+.chrail__prev { width: 60px; height: 14px; }
+.chrail__prev path {
+  stroke: currentColor;
+  stroke-width: 0.7;
+  fill: none;
+  stroke-opacity: 0.35;
+}
+.chrail__item.is-on .chrail__prev path { stroke-opacity: 0.95; }
+.chrail__key {
+  color: inherit;
+  opacity: 0.5;
+  border: 1px solid currentColor;
+  padding: 0 3px;
+  line-height: 1.4;
+}
+.chrail__item.is-on .chrail__key { opacity: 1; }
+
+/* the probe tip: the beam is patched to this channel */
+.chrail__probe {
+  position: absolute;
+  right: -7px;
+  top: 50%;
+  transform: translateY(-50%) scaleX(0);
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid currentColor;
+  transition: transform 200ms ease;
+  transform-origin: left center;
+}
+.chrail__item.is-on .chrail__probe { transform: translateY(-50%) scaleX(1); }
+
+/* ── well captions ── */
+.well__ch {
+  position: absolute;
+  top: 14px;
+  left: 162px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  pointer-events: none;
+  z-index: 6;
+  animation: ts-flash 240ms steps(2, end);
+}
+.well__camp {
+  position: absolute;
+  left: 14px;
+  bottom: 34px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  pointer-events: none;
+  z-index: 6;
+}
+.well__camp-d { color: var(--warn); margin-top: 2px; }
+.well__reveal {
+  position: absolute;
+  left: 14px;
+  bottom: 12px;
+  max-width: 62%;
+  line-height: 1.4;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  z-index: 6;
+}
+
+/* ── chrome ── */
+.well__scan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0 2px,
+    rgba(255, 255, 255, 0.012) 2px 3px
+  );
+}
+.well__vig {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+  background: radial-gradient(ellipse at 50% 50%, transparent 52%, rgba(0, 0, 0, 0.55) 100%);
+}
+.well__L {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--graticule-major);
+  pointer-events: none;
+  z-index: 6;
+}
+.well__L.tl { top: 10px; left: 10px; border-width: 1px 0 0 1px; }
+.well__L.tr { top: 10px; right: 10px; border-width: 1px 1px 0 0; }
+.well__L.bl { bottom: 10px; left: 10px; border-width: 0 0 1px 1px; }
+.well__L.br { bottom: 10px; right: 10px; border-width: 0 1px 1px 0; }
+
+@media (max-width: 900px) {
+  /* the rail goes horizontal so it can't collide with the captions */
+  .chrail {
+    flex-direction: row;
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    gap: 5px;
+  }
+  .chrail__item {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+    height: 28px;
+    padding: 0 5px 0 7px;
+    gap: 5px;
+  }
+  .chrail__code { font-size: 8.5px; letter-spacing: 0.06em; white-space: nowrap; }
+  .chrail__code b { letter-spacing: 0.08em; }
+  .chrail__prev,
+  .chrail__key,
+  .chrail__probe { display: none; }
+
+  /* the header already names the channel; drop the in-well duplicate + the essay */
+  .well__ch,
+  .well__reveal { display: none; }
+  .well__camp { bottom: 12px; }
+}

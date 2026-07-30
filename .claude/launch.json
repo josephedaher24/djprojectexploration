@@ -4,8 +4,8 @@
     {
       "name": "sequence-builder-app",
       "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "djprojectexploration-sequence-builder-app"],
-      "port": 8770
+      "runtimeArgs": ["run", "djprojectexploration-sequence-builder-app", "--pacmap-preset", "presets/pacmap/warren.json", "--port", "8771"],
+      "port": 8771
     }
   ]
 }

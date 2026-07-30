@@ -6,6 +6,20 @@ Minimal Python project scaffold using `uv`, with audio and signal-processing lib
 uv sync
 ```
 
+## DJ Sequence Builder app
+
+Start the whole app (map, library, diagnostics, and transition preview) with one command:
+
+```bash
+uv run djprojectexploration-sequence-builder-app --pacmap-preset presets/pacmap/warren.json --port 8771
+```
+
+Then open <http://127.0.0.1:8771/>. First launch precomputes PaCMAP layouts and can take ~30–60s (a loading screen is shown); reloads are instant.
+
+Notes:
+- `--pacmap-preset presets/pacmap/warren.json` is required locally — the default `ara-mix` tracklist is empty, and `warren` is the mix with track and energy data checked in.
+- `--port 8771` avoids the macOS `sharingd` daemon that squats on the default port `8770`; change it to any free port.
+
 ## Requirements
 
 - `numpy` and `scipy` for core numerical and DSP work

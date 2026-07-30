@@ -95,7 +95,7 @@ def detect_beats(audio: np.ndarray) -> tuple[float, np.ndarray]:
 
 
 def estimate_key(audio: np.ndarray, sample_rate: int, frame_size: int, hop_size: int) -> tuple[str, str, float]:
-    """Estimate key/scale/strength using the same Essentia setup as the plotter."""
+    """Estimate key/scale/strength using an Essentia HPCP+Key pipeline."""
     windowing = Windowing(type="blackmanharris62")
     spectrum = Spectrum(size=frame_size)
     spectral_peaks = SpectralPeaks(
@@ -219,10 +219,43 @@ def pool_chroma_over_beats(
     return np.vstack(pooled)
 
 
-def summarize_chroma_embedding(chroma_sequence: np.ndarray) -> np.ndarray:
+def _unit_sum_normalize_rows(values: np.ndarray) -> np.ndarray:
+    arr = np.asarray(values, dtype=np.float32)
+    if arr.ndim != 2:
+        raise ValueError(f"Expected 2D array [N, bins], got shape {arr.shape}.")
+    row_sums = arr.sum(axis=1, keepdims=True)
+    row_sums = np.where(np.abs(row_sums) <= 1e-12, 1.0, row_sums)
+    return arr / row_sums
+
+
+def summarize_pitch_class_sequence(
+    chroma_sequence: np.ndarray,
+    *,
+    center_baseline: float | None = 1.0 / 12.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return mean and std of unit-sum-normalized chroma with optional centering."""
+    seq = _unit_sum_normalize_rows(chroma_sequence)
+    if center_baseline is not None:
+        baseline = float(center_baseline)
+        if not np.isfinite(baseline):
+            raise ValueError("center_baseline must be finite when provided.")
+        seq = seq - baseline
+
+    chroma_mean = seq.mean(axis=0).astype(np.float32)
+    chroma_std = seq.std(axis=0).astype(np.float32)
+    return chroma_mean, chroma_std
+
+
+def summarize_chroma_embedding(
+    chroma_sequence: np.ndarray,
+    *,
+    center_baseline: float | None = 1.0 / 12.0,
+) -> np.ndarray:
     """Compute mean+std chroma embedding and L2-normalize it."""
-    chroma_mean = chroma_sequence.mean(axis=0)
-    chroma_std = chroma_sequence.std(axis=0)
+    chroma_mean, chroma_std = summarize_pitch_class_sequence(
+        chroma_sequence,
+        center_baseline=center_baseline,
+    )
     embedding = np.concatenate([chroma_mean, chroma_std]).astype(np.float32)
     norm = float(np.linalg.norm(embedding))
     if norm > 0:
@@ -239,6 +272,7 @@ def generate_chroma_embedding(
     bpm: float | None = None,
     onset_time_ms: float | None = None,
     include_key_features: bool = True,
+    center_baseline: float | None = 1.0 / 12.0,
 ) -> dict[str, Any]:
     """Generate a chroma embedding with optional manual beat-grid controls."""
     audio_path = Path(audio_file).expanduser().resolve()
@@ -252,6 +286,8 @@ def generate_chroma_embedding(
         raise ValueError("onset_time_ms must be >= 0.")
     if onset_time_ms is not None and bpm is None:
         raise ValueError("onset_time_ms requires bpm.")
+    if center_baseline is not None and not np.isfinite(float(center_baseline)):
+        raise ValueError("center_baseline must be finite when provided.")
 
     audio = MonoLoader(filename=str(audio_path), sampleRate=sample_rate, resampleQuality=4)()
     audio_duration = audio.size / sample_rate
@@ -284,7 +320,14 @@ def generate_chroma_embedding(
         beat_times=beat_times,
         audio_duration=audio_duration,
     )
-    base_embedding = summarize_chroma_embedding(beat_chroma)
+    pitch_class_mean, pitch_class_std = summarize_pitch_class_sequence(
+        beat_chroma,
+        center_baseline=center_baseline,
+    )
+    base_embedding = np.concatenate([pitch_class_mean, pitch_class_std]).astype(np.float32)
+    base_norm = float(np.linalg.norm(base_embedding))
+    if base_norm > 0:
+        base_embedding /= base_norm
     detected_key, detected_scale, key_strength = estimate_key(
         audio=audio,
         sample_rate=sample_rate,
@@ -320,6 +363,8 @@ def generate_chroma_embedding(
         "key_feature_dimension": int(key_features.shape[0]),
         "embedding_dimension": int(embedding.shape[0]),
         "embedding": embedding.tolist(),
+        "pitch_class_mean": pitch_class_mean.tolist(),
+        "pitch_class_std": pitch_class_std.tolist(),
         "key_estimate": {
             "key": detected_key,
             "scale": detected_scale,
@@ -338,6 +383,7 @@ def generate_chroma_embedding(
             "manual_bpm": None if bpm is None else float(bpm),
             "manual_onset_time_ms": None if onset_time_ms is None else float(onset_time_ms),
             "include_key_features": bool(include_key_features),
+            "center_baseline": None if center_baseline is None else float(center_baseline),
         },
     }
 

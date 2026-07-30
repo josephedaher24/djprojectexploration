@@ -1,0 +1,167 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   TRAILSCOPE — CH1 / CH2 / CH3
+   A vector-graphics field instrument, not a UI. Everything on screen is a beam
+   that has been somewhere: the terrain is a sweep, the route is a trace, a
+   number only exists because a probe measured it. Cold black, hairline strokes,
+   one hot beam and the ghost it leaves behind. Nothing filled, nothing glossy,
+   nothing has a bezel.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@import './layout.css';
+@import './map.css';
+@import './instruments.css';
+
+:root {
+  /* ── substrate ── */
+  --void: #000000;
+  --panel: #05080b;
+  --graticule: #0e1f26;
+  --graticule-major: #16323c;
+
+  /* ── the three channels ── */
+  --ch1-style: #2bf5ff;
+  --ch2-harm: #ff3da6;
+  --ch3-groove: #c6ff3d;
+
+  /* ── phosphor ── */
+  --trace-ghost: #1b3a44;
+  --beam-white: #eaffff;
+
+  /* ── type ── */
+  --txt-hi: #dff7f2;
+  --txt-mid: #86a6a2;
+  --txt-lo: #4c6a68;
+
+  /* ── alarms (strokes only) ── */
+  --warn: #ffc24a;
+  --alert: #ff4a2b;
+
+  /* active channel hue — rebound by [data-ch] */
+  --hue: var(--ch1-style);
+  --hue-a30: rgba(43, 245, 255, 0.3);
+  --hue-a16: rgba(43, 245, 255, 0.16);
+
+  --font: 'Chakra Petch', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+  /* shared beat clock (written every frame by ClockProvider) */
+  --beat: 0.5s;
+  --beat-phase: 0;
+  --pulse: 0;
+
+  color-scheme: dark;
+}
+
+:root[data-ch='style'] {
+  --hue: var(--ch1-style);
+  --hue-a30: rgba(43, 245, 255, 0.3);
+  --hue-a16: rgba(43, 245, 255, 0.16);
+}
+:root[data-ch='harm'] {
+  --hue: var(--ch2-harm);
+  --hue-a30: rgba(255, 61, 166, 0.3);
+  --hue-a16: rgba(255, 61, 166, 0.16);
+}
+:root[data-ch='groove'] {
+  --hue: var(--ch3-groove);
+  --hue-a30: rgba(198, 255, 61, 0.3);
+  --hue-a16: rgba(198, 255, 61, 0.16);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--void);
+  color: var(--txt-mid);
+  font-family: var(--font);
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* WORDS are Chakra Petch, uppercase, tracked. Never below 10px. */
+.w {
+  font-family: var(--font);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 10px;
+  color: var(--txt-mid);
+}
+.w--hi { color: var(--txt-hi); font-weight: 600; }
+.w--lo { color: var(--txt-lo); }
+.w--13 { font-size: 13px; }
+.w--11 { font-size: 11px; }
+
+/* NUMBERS are JetBrains Mono, tabular, slashed zero. */
+.n {
+  font-family: var(--mono);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: 'tnum' 1, 'zero' 1;
+  letter-spacing: -0.01em;
+  color: var(--txt-hi);
+}
+.n--hero { font-size: 28px; line-height: 1; }
+.n--16 { font-size: 16px; }
+.n--11 { font-size: 11px; font-weight: 300; }
+.n--10 { font-size: 10px; font-weight: 300; }
+.n--mid { color: var(--txt-mid); }
+.n--lo { color: var(--txt-lo); }
+
+button {
+  font-family: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+/* ── motion vocabulary ─────────────────────────────────────────────────────
+   90ms flash · 200-260ms value change · 380-420ms structural · 500ms decay   */
+@keyframes ts-retrace {
+  from { clip-path: inset(0 0 100% 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@keyframes ts-beam-down {
+  from { transform: translateY(0); opacity: 1; }
+  to { transform: translateY(var(--well-h, 600px)); opacity: 0.5; }
+}
+@keyframes ts-jitter {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(2px); }
+  60% { transform: translateX(-2px); }
+}
+@keyframes ts-scroll-left {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@keyframes ts-flash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.15; }
+}
+@keyframes ts-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes ts-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 140ms !important;
+  }
+}

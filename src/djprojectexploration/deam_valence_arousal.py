@@ -24,6 +24,10 @@ DEFAULT_VGGISH_OUTPUT = "model/vggish/embeddings"
 DEFAULT_DEAM_OUTPUT = "model/Identity"
 DEAM_VALUE_RANGE = (1.0, 9.0)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_MUSICNN_MODEL_FILENAME = "msd-musicnn-1.pb"
+DEFAULT_DEAM_MODEL_FILENAME = "deam-msd-musicnn-2.pb"
+DEFAULT_MUSICNN_MODEL_FILE = PROJECT_ROOT / "models" / DEFAULT_MUSICNN_MODEL_FILENAME
+DEFAULT_DEAM_MODEL_FILE = PROJECT_ROOT / "models" / DEFAULT_DEAM_MODEL_FILENAME
 
 
 def _to_project_relpath(path: Path, project_root: Path = PROJECT_ROOT) -> str:
@@ -90,6 +94,7 @@ def predict_deam_valence_arousal_musicnn(
 
     return _build_prediction_payload(
         title="DEAM Valence/Arousal Prediction (MusicNN embeddings)",
+        embedding_backend="musicnn",
         audio_path=audio_path,
         embedding_path=embedding_path,
         regression_path=regression_path,
@@ -144,6 +149,7 @@ def predict_deam_valence_arousal_vggish(
 
     return _build_prediction_payload(
         title="DEAM Valence/Arousal Prediction (VGGish embeddings)",
+        embedding_backend="vggish",
         audio_path=audio_path,
         embedding_path=embedding_path,
         regression_path=regression_path,
@@ -187,8 +193,60 @@ def save_deam_prediction_json(prediction: dict[str, Any], output_file: str | Pat
     return output_path
 
 
+def generate_deam_embedding(
+    audio_file: str | Path,
+    *,
+    embedding_model_file: str | Path,
+    regression_model_file: str | Path,
+    embedding_backend: str = "musicnn",
+    embedding_output: str | None = None,
+    regression_output: str = DEFAULT_DEAM_OUTPUT,
+    sample_rate: int = 16000,
+) -> dict[str, Any]:
+    """Generate one DEAM valence/arousal embedding payload for a track."""
+    backend = embedding_backend.strip().lower()
+    if backend == "musicnn":
+        resolved_embedding_output = embedding_output or DEFAULT_MUSICNN_OUTPUT
+        return predict_deam_valence_arousal_musicnn(
+            audio_file=audio_file,
+            embedding_model_file=embedding_model_file,
+            regression_model_file=regression_model_file,
+            embedding_output=resolved_embedding_output,
+            regression_output=regression_output,
+            sample_rate=sample_rate,
+        )
+    if backend == "vggish":
+        resolved_embedding_output = embedding_output or DEFAULT_VGGISH_OUTPUT
+        return predict_deam_valence_arousal_vggish(
+            audio_file=audio_file,
+            embedding_model_file=embedding_model_file,
+            regression_model_file=regression_model_file,
+            embedding_output=resolved_embedding_output,
+            regression_output=regression_output,
+            sample_rate=sample_rate,
+        )
+    raise ValueError(f"Unsupported embedding_backend '{embedding_backend}'. Use 'musicnn' or 'vggish'.")
+
+
+def _build_track_embedding(valence: np.ndarray, arousal: np.ndarray) -> np.ndarray:
+    return np.array(
+        [
+            float(valence.mean()),
+            float(valence.min()),
+            float(valence.max()),
+            float(valence.std()),
+            float(arousal.mean()),
+            float(arousal.min()),
+            float(arousal.max()),
+            float(arousal.std()),
+        ],
+        dtype=np.float32,
+    )
+
+
 def _build_prediction_payload(
     title: str,
+    embedding_backend: str,
     audio_path: Path,
     embedding_path: Path,
     regression_path: Path,
@@ -208,11 +266,35 @@ def _build_prediction_payload(
 
     valence = predictions[:, 0]
     arousal = predictions[:, 1]
+    embedding = _build_track_embedding(valence, arousal)
+    valence_mean = float(valence.mean())
+    valence_min = float(valence.min())
+    valence_max = float(valence.max())
+    valence_std = float(valence.std())
+    arousal_mean = float(arousal.mean())
+    arousal_min = float(arousal.min())
+    arousal_max = float(arousal.max())
+    arousal_std = float(arousal.std())
 
     return {
         "title": title,
         "filename": audio_path.name,
         "audio_file": _to_project_relpath(audio_path),
+        "embedding_type": "deam_valence_arousal",
+        "embedding_subtype": f"{embedding_backend}_segment_stats_plus_series",
+        "embedding_backend": embedding_backend,
+        "embedding_labels": [
+            "valence_mean",
+            "valence_min",
+            "valence_max",
+            "valence_std",
+            "arousal_mean",
+            "arousal_min",
+            "arousal_max",
+            "arousal_std",
+        ],
+        "embedding_dimension": int(embedding.size),
+        "embedding": embedding.tolist(),
         "task": "deam_valence_arousal_regression",
         "dimensions": ["valence", "arousal"],
         "value_range": [DEAM_VALUE_RANGE[0], DEAM_VALUE_RANGE[1]],
@@ -224,14 +306,20 @@ def _build_prediction_payload(
         },
         "embedding_shape": list(embeddings.shape),
         "prediction_shape": list(predictions.shape),
+        "valence_series": valence.astype(np.float32).tolist(),
+        "arousal_series": arousal.astype(np.float32).tolist(),
         "segment_predictions": [
             {"valence": float(v), "arousal": float(a)} for v, a in zip(valence, arousal, strict=False)
         ],
         "track_prediction": {
-            "valence": float(valence.mean()),
-            "arousal": float(arousal.mean()),
-            "valence_std": float(valence.std()),
-            "arousal_std": float(arousal.std()),
+            "valence": valence_mean,
+            "arousal": arousal_mean,
+            "valence_std": valence_std,
+            "arousal_std": arousal_std,
+            "valence_min": valence_min,
+            "valence_max": valence_max,
+            "arousal_min": arousal_min,
+            "arousal_max": arousal_max,
             "num_segments": int(predictions.shape[0]),
         },
     }
