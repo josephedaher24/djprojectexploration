@@ -12,21 +12,38 @@
   .analysis-column .pane { min-height:0; }
   .build-column { min-width:0; min-height:0; display:grid; grid-template-rows: auto minmax(0, 1fr); gap:10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); padding:10px; }
   .build-top { display:grid; gap:10px; }
-  .build-segments { display:grid; grid-template-columns:repeat(3, 1fr); gap:4px; padding:3px; border:1px solid var(--line); border-radius:8px; background:#0d1425; }
-  .build-seg { border:0; border-radius:6px; background:transparent; color:var(--muted); font-size:12px; font-weight:700; padding:7px 6px; }
-  .build-seg:hover { color:#ecfeff; }
-  .build-seg.active { background:#0f766e; color:#ecfeff; }
   .build-scroll { min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; padding-right:3px; }
-  .build-seg-panel { display:grid; gap:10px; align-content:start; }
-  .build-seg-panel.hidden { display:none; }
   .build-section { border:1px solid var(--line); border-radius:7px; background:var(--panel); overflow:hidden; }
   .build-section-title { font-size:12px; font-weight:700; color:#dbeafe; letter-spacing:.02em; }
   .build-section-head { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:8px 10px; border-bottom:1px solid var(--line); }
-  .build-section > #energy-curve, .build-section > .recommendation-panel, .build-section > .transition-preview-panel { border:0; border-radius:0; }
+  /* Shared card furniture: every panel gets the same header count chip, filter
+     toolbar, context note and empty state. */
+  .panel-count { color:var(--muted); font-size:11px; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  /* Flex, not grid: an auto-fit grid gave the wide search a column span that fought
+     the column count, orphaning controls onto a second row at some widths. Flex
+     items wrap cleanly and can never overlap. */
+  .panel-toolbar { display:flex; flex-wrap:wrap; gap:8px 10px; padding:8px 10px; border-bottom:1px solid var(--line); background:#0f172a; align-items:flex-end; }
+  .panel-toolbar:empty { display:none; }
+  .panel-toolbar label { gap:4px; min-width:0; color:#cbd5e1; font-size:11px; white-space:nowrap; }
+  /* line-height pins search/number inputs to the same 28px box a native select uses. */
+  .panel-toolbar input[type="search"], .panel-toolbar input[type="number"], .panel-toolbar select { width:100%; padding:5px 7px; border:1px solid var(--line); border-radius:5px; background:#0b1020; color:var(--ink); font-size:12px; line-height:16px; }
+  .panel-toolbar .toolbar-search { flex:1 1 220px; min-width:150px; }
+  .panel-toolbar .toolbar-num { flex:0 1 92px; }
+  .panel-toolbar .toolbar-select { flex:0 1 112px; }
+  .panel-toolbar .toolbar-check { flex:0 0 auto; }
+  .panel-toolbar .toolbar-check > span { display:flex; align-items:center; gap:6px; min-height:29px; }
+  .panel-toolbar .toolbar-check input[type="checkbox"] { flex:none; accent-color:var(--accent); }
+  .panel-note { padding:7px 10px; border-bottom:1px solid rgba(45,55,76,.6); color:var(--muted); font-size:11px; line-height:1.3; }
+  .panel-note b { color:#cbd5e1; font-weight:700; }
+  .panel-empty { padding:14px 10px; color:var(--muted); font-size:12px; text-align:center; }
+  .build-section > #energy-curve, .build-section > .recommendation-panel, .build-section > .library-table, .build-section > .transition-preview-panel { border:0; border-radius:0; }
   .sequence-head-controls { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-  .sequence-length-label { flex-direction:row; align-items:center; gap:6px; color:var(--muted); font-size:11px; }
-  .sequence-length-label input { width:52px; }
-  .sequence-head-controls button { padding:5px 8px; font-size:11px; }
+  /* The old rule set flex-direction without ever setting display, so it was inert
+     against `label { display:grid }` (line 222) and "Length" stacked above its input.
+     inline-flex is the actual fix; the buttons get the same 28px control box. */
+  .sequence-length-label { display:inline-flex; flex-direction:row; align-items:center; gap:6px; color:var(--muted); font-size:11px; }
+  .sequence-length-label input { width:56px; box-sizing:border-box; }
+  .sequence-head-controls button { min-height:28px; padding:5px 8px; border-radius:5px; font-size:11px; }
   .sequence-head-controls button.danger { color:#fecaca; border-color:#4b2630; }
   .sequence-head-controls button.danger:hover { border-color:#fb7185; }
   .sequence-section > .sequence-list { border:0; }
@@ -56,11 +73,20 @@
   .settings-session-actions { padding:9px 10px; border-top:1px solid rgba(45,55,76,.72); display:flex; justify-content:flex-start; }
   .pane { display: none; }
   .pane.active { display: grid; gap: 12px; align-content: start; }
-  .plot-column { min-width: 0; display:grid; gap:10px; align-content:start; }
-  .plot-pane { min-width: 0; border: 1px solid var(--line); background: var(--panel); position: relative; overflow: hidden; }
+  /* Map pane splits the left column vertically: the map flexes to fill whatever is
+     left after the always-visible scoring-weights panel below it. */
+  #pane-explore.active { height:100%; min-height:0; grid-template-rows: minmax(0, 1fr); align-content: stretch; }
+  .plot-column { min-width: 0; min-height:0; display:grid; gap:10px; align-content:start; }
+  #pane-explore.active .plot-column { height:100%; align-content:stretch; grid-template-rows: minmax(220px, 1fr) auto auto auto; }
+  #pane-explore.active .plot-pane { height:100%; min-height:180px; }
+  #pane-explore.active .plot-pane .js-plotly-plot,
+  #pane-explore.active .plot-pane .plot-container,
+  #pane-explore.active .plot-pane .svg-container { height:100% !important; }
+  .plot-pane { min-width: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); position: relative; overflow: hidden; }
   .map-effects-canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:1; mix-blend-mode:screen; }
-  .map-artwork-canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:3; }
-  .plot-pane.map-renderer-webgl .map-artwork-canvas { display:none; }
+  /* Above the FX/point layers so covers and their index badges stay readable, but
+     below the minimap/zoom controls (they come later in the DOM at the same z-index). */
+  .map-artwork-canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:4; }
   .webgl-map-canvas { position:absolute; inset:0; width:100%; height:100%; z-index:2; display:none; cursor:default; touch-action:none; background:#111827; }
   .plot-pane .js-plotly-plot, .plot-pane .plot-container { position:relative; z-index:2; }
   .plot-pane.map-renderer-webgl .js-plotly-plot { visibility:hidden; pointer-events:none; }
@@ -82,17 +108,20 @@
   .map-mini-map.collapsed { display:none; }
   .mini-map-toggle { position:absolute; right:10px; bottom:136px; z-index:4; width:26px; height:22px; display:grid; place-items:center; padding:0; line-height:1; font-size:11px; border:1px solid rgba(148,163,184,.52); border-radius:6px; background:rgba(15,23,42,.84); color:#cbd5e1; backdrop-filter:blur(8px); }
   .plot-pane.mini-map-collapsed .mini-map-toggle { bottom:10px; }
-  .map-color-legend { min-height:30px; display:grid; grid-template-columns:auto minmax(180px, 320px) auto auto; gap:8px; align-items:center; justify-content:start; color:#cbd5e1; font-size:11px; padding:0 4px; }
-  .map-color-legend.genre-legend { grid-template-columns:auto minmax(0, 1fr); }
+  /* Genre legend and highlight key share one row. */
+  .map-legend-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; padding:0 4px; }
+  .map-legend-row > * { padding-left:0; padding-right:0; }
+  .map-color-legend { min-height:0; display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:4px 8px; min-width:0; max-width:100%; color:#cbd5e1; font-size:11px; padding:0 4px; }
+  .map-color-legend > * { min-width:0; max-width:100%; }
+  .map-color-legend .map-genre-legend { flex:1 1 0%; }
   .map-color-legend.hidden { display:none; }
   .map-color-legend-title { font-weight:700; color:#e5e7eb; }
-  .map-color-ramp { width:min(320px, 42vw); height:9px; border-radius:999px; border:1px solid rgba(148,163,184,.38); }
+  .map-color-ramp { width:min(320px, 42vw); max-width:100%; min-width:60px; height:9px; border-radius:999px; border:1px solid rgba(148,163,184,.38); }
   .map-color-range { display:flex; gap:6px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .map-genre-legend { display:flex; flex-wrap:wrap; gap:6px 10px; max-height:56px; overflow:auto; align-items:center; }
   .map-genre-chip { display:inline-flex; gap:5px; align-items:center; color:#cbd5e1; font-size:11px; white-space:nowrap; }
   .map-genre-chip i { width:9px; height:9px; border-radius:999px; display:inline-block; border:1px solid rgba(15,23,42,.7); box-shadow:0 0 0 1px rgba(148,163,184,.2); }
-  .map-state-legend { min-height:24px; display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; color:#cbd5e1; font-size:11px; padding:0 4px; }
-  .map-state-legend-title { font-weight:700; color:#e5e7eb; }
+  .map-state-legend { min-height:0; display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; color:#cbd5e1; font-size:11px; }
   .map-state-legend .map-genre-chip i.map-state-swatch { width:8px; height:8px; background:transparent; border:2px solid #94a3b8; box-shadow:none; }
   .map-state-legend .map-genre-chip i.map-state-swatch.map-state-square { border-radius:2px; }
   .map-legend-restore { font-size:11px; padding:2px 8px; margin-left:auto; }
@@ -104,7 +133,7 @@
   .help-list { display:grid; gap:6px; margin:0; padding:0; list-style:none; }
   .help-list li { display:grid; grid-template-columns:minmax(52px, auto) minmax(0,1fr); gap:8px; align-items:start; color:#cbd5e1; font-size:12px; }
   .help-key { display:inline-grid; place-items:center; min-width:28px; min-height:22px; padding:1px 6px; border:1px solid #334155; border-radius:5px; background:#0b1020; color:#e5e7eb; font-weight:800; font-variant-numeric:tabular-nums; }
-  .song-hover-card { position:absolute; z-index:5; pointer-events:none; max-width:330px; min-width:260px; border:1px solid #334155; background:rgba(15,23,42,.96); box-shadow:0 18px 40px rgba(0,0,0,.34); border-radius:7px; padding:10px; backdrop-filter:blur(8px); }
+  .song-hover-card { position:absolute; z-index:5; pointer-events:none; box-sizing:border-box; max-width:min(330px, calc(100% - 16px)); min-width:min(260px, calc(100% - 16px)); border:1px solid #334155; background:rgba(15,23,42,.96); box-shadow:0 18px 40px rgba(0,0,0,.34); border-radius:7px; padding:10px; backdrop-filter:blur(8px); }
   .song-hover-card.hidden { display:none; }
   .side-settings { border:1px solid var(--line); background:var(--panel); border-radius:7px; overflow:hidden; }
   .side-settings summary { cursor:pointer; padding:8px 10px; font-size:12px; color:#cbd5e1; user-select:none; }
@@ -116,9 +145,45 @@
   .transition-badge { border: 1px solid var(--line); background: var(--panel); padding: 8px; border-radius: 6px; min-height: 48px; min-width:0; overflow:hidden; }
   .transition-badge b { color: var(--ink); font-size: 11px; }
   .deck-card-head { display:flex; align-items:center; justify-content:space-between; gap:6px; margin-bottom:5px; }
+  /* ---- Global track drag-and-drop ---- */
+  .transition-badge[data-deck-drag] { cursor:grab; }
+  .deck-empty-hint { font-size:11px; font-style:italic; }
+  .transition-badge.deck-drop-ready { border-style:dashed; border-color:#3f5170; }
+  .transition-badge.deck-drop-over { border-style:solid; border-color:#2dd4bf; background:#12312e; box-shadow:0 0 0 2px rgba(45,212,191,.28) inset; }
+  .transition-badge.out.deck-drop-over { border-color:var(--track1); box-shadow:inset 3px 0 0 var(--track1), 0 0 0 2px rgba(56,189,248,.3) inset; }
+  .transition-badge.in.deck-drop-over { border-color:var(--track2); box-shadow:inset 3px 0 0 var(--track2), 0 0 0 2px rgba(192,132,252,.3) inset; }
+  body.track-dragging { cursor:grabbing; user-select:none; }
+  body.track-dragging [data-library-row-idx], body.track-dragging [data-rec-row-idx], body.track-dragging [data-slot-drag] { cursor:grabbing; }
+  [data-library-row-idx], [data-rec-row-idx] { cursor:grab; }
+  body.track-drag-will-unload .transition-badge[data-deck-drag] { border-color:#fb7185; box-shadow:inset 3px 0 0 #fb7185; opacity:.62; }
+  .track-drag-ghost { position:fixed; left:0; top:0; z-index:60; display:none; align-items:center; gap:8px; max-width:260px; padding:6px 9px 6px 6px; border:1px solid #2dd4bf; border-radius:8px; background:rgba(15,23,42,.97); box-shadow:0 14px 34px rgba(0,0,0,.46); pointer-events:none; }
+  .track-drag-ghost.visible { display:flex; }
+  .track-drag-ghost .art-thumb { width:30px; height:30px; border-radius:4px; }
+  .track-drag-ghost-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font-size:12px; font-weight:700; }
   .deck-play { width:26px; min-width:26px; height:26px; min-height:26px; padding:0; font-size:12px; border-radius:999px; }
-  .transition-badge .track-summary.compact { grid-template-columns:44px minmax(0,1fr); gap:8px; align-items:center; }
-  .transition-badge .art-thumb { width:44px; height:44px; border-radius:5px; }
+  /* Circular cover gets its own row; it spins like a record while this deck plays. */
+  .deck-actions-row { display:flex; justify-content:flex-end; }
+  .deck-actions-row button { padding:4px 9px; font-size:11px; }
+  .deck-actions-row button.danger { color:#fecaca; border-color:#4b2630; }
+  .deck-actions-row button.danger:hover { border-color:#fb7185; }
+  .deck-cover-row { display:block; padding:8px 0 9px; }
+  /* The disc spans the full card width — diameter follows the card, always a circle. */
+  .deck-cover-disc { position:relative; display:block; width:100%; aspect-ratio:1 / 1; border-radius:50%; }
+  .deck-cover-disc .deck-cover { width:100%; height:100%; border-radius:50%; object-fit:cover; display:block; background:#0f172a; box-shadow:0 6px 18px rgba(0,0,0,.42); }
+  .deck-cover-disc .art-placeholder { display:grid; place-items:center; color:var(--muted); font-size:11px; }
+  .deck-cover-spindle { position:absolute; left:50%; top:50%; width:16px; height:16px; margin:-8px 0 0 -8px; border-radius:50%; background:#0b1020; box-shadow:0 0 0 2px rgba(148,163,184,.5) inset; pointer-events:none; z-index:2; }
+  /* Clicking the cover plays / pauses that deck — no play button. */
+  .deck-cover-disc { cursor:pointer; }
+  .deck-cover-disc::after { content:'▶'; position:absolute; inset:0; display:grid; place-items:center; border-radius:50%; background:rgba(9,14,28,.5); color:#fff; font-size:30px; opacity:0; transition:opacity .12s; pointer-events:none; }
+  .deck-cover-disc.spinning::after { content:'⏸'; }
+  .deck-cover-disc:hover::after { opacity:1; }
+  .transition-badge.out .deck-cover { box-shadow:0 0 0 3px var(--track1), 0 6px 18px rgba(0,0,0,.42); }
+  .transition-badge.in .deck-cover { box-shadow:0 0 0 3px var(--track2), 0 6px 18px rgba(0,0,0,.42); }
+  @keyframes deck-cover-spin { to { transform: rotate(360deg); } }
+  .deck-cover-disc.spinning .deck-cover { animation: deck-cover-spin 5.5s linear infinite; }
+  @media (prefers-reduced-motion: reduce) { .deck-cover-disc.spinning .deck-cover { animation:none; } }
+  /* The rest of the track detail lives in its own small card under the cover. */
+  .deck-info-card { min-width:0; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:#0f172a; }
   .transition-badge .track-title { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-size:12px; line-height:1.2; }
   .transition-badge .track-artist, .transition-badge .track-meta-line { font-size:11px; }
   .transition-badge.out { border-color:rgba(56,189,248,.42); box-shadow:inset 3px 0 0 var(--track1); }
@@ -133,15 +198,55 @@
   .transition-mini-meter-row { display:grid; grid-template-columns:minmax(0, 1fr); gap:3px; align-items:center; min-width:0; }
   .transition-mini-meter-row > span { min-width:0; color:#cbd5e1; font-size:11px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .control-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 7px; align-items: center; padding: 9px; border: 1px solid var(--line); background: var(--panel); }
-  .side-settings .control-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Scoring weights live outside the collapsed fold: the Tempo/Groove/Key triangle is
+     a primary control, so it stays visible next to the map. */
+  /* A permanent row of the map pane's vertical split — no sticky overlay needed. */
+  .weights-panel { border:1px solid var(--line); border-radius:7px; background:var(--panel); overflow:hidden; }
+  .weights-panel-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; padding:6px 10px; border-bottom:1px solid var(--line); }
+  .weights-panel-head .control-note { flex:1 1 260px; }
+  .weights-panel > .control-grid { border:0; padding:8px 10px; grid-template-columns: 140px minmax(0,1fr) 42px; gap:6px 8px; }
+  /* Triangle on the left spanning both rows, the four weight sliders stacked at right. */
+  .weights-panel .mixability-controls { grid-column: 1 / -1; grid-template-columns: 150px minmax(220px, 1fr); gap:8px 14px; align-items:center; }
+  .weights-panel .mixability-controls > .simplex-control { grid-column:1; grid-row:1 / span 2; max-width:150px; justify-self:start; }
+  .weights-panel .mixability-controls > .weights { grid-column:2; grid-template-columns: 76px minmax(0,1fr) 38px; gap:5px 7px; }
+  /* Region 3: the energy row. "Energy source", "Energy penalty" and its <output> used to be three
+     independent children of the 140px / 1fr / 42px track list, so they landed on three different
+     baselines and the range stretched to the whole middle track (measured 596px at an 820px
+     column). Grouping them into one full-width flex row puts them on one baseline and caps the
+     range at ~190px. Deliberately self-contained: every property these two controls need is
+     declared right here, so the row does not depend on any shared .field-inline / .slider-triple
+     block landing. The class names are kept so that if such a block is added later these controls
+     pick up its shared styling too -- these selectors are (0,2,0)/(0,3,0), so they beat both
+     `label { display:grid }` (0,0,1) at line 222 and any (0,1,0) shared rule regardless of
+     source order. Nothing above is deleted, so `.weights-panel > .control-grid`'s `border:0;
+     padding:8px 10px` and the triangle's 2-column layout are untouched. */
+  .weights-panel > .control-grid > .energy-controls { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:8px 18px; min-width:0; margin-top:2px; padding-top:8px; border-top:1px solid var(--line); }
+  .energy-controls > .field-inline { display:inline-flex; align-items:center; gap:6px; flex:0 1 auto; min-width:0; font-size:11px; color:var(--muted); }
+  .energy-controls > .field-inline > select { flex:0 1 auto; min-width:80px; max-width:150px; }
+  .energy-controls > .energy-penalty-row { display:grid; align-items:center; flex:1 1 240px; max-width:320px; min-width:0; grid-template-columns:minmax(0, max-content) minmax(72px, 1fr) 38px; gap:5px 7px; }
+  .energy-controls > .energy-penalty-row > div { min-width:0; font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .energy-controls > .energy-penalty-row > input[type="range"] { min-width:0; width:100%; }
+  .energy-controls > .energy-penalty-row > output { min-width:0; text-align:right; font-variant-numeric:tabular-nums; }
   .misc-control-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:7px; align-items:center; padding:9px; border:1px solid var(--line); background:#0f172a; box-shadow:inset 0 1px 0 rgba(255,255,255,.03); }
   .map-slider-control { grid-column:span 1; min-width:0; }
+  /* --- Map display settings (Region 2). Self-contained: depends on no other patch. ---
+     (0,2,0) so it also beats the `grid-template-columns:1fr` flattening inside the
+     @media (max-width:1100px) block without editing that shared line. */
+  .side-settings > .misc-control-grid { grid-template-columns:repeat(auto-fit, minmax(min(100%, 176px), 1fr)); gap:10px; align-items:start; }
+  .misc-control-grid > * { min-width:0; }
+  .misc-control-grid label { color:#cbd5e1; }
+  /* The four on/off toggles ride in one wrapping strip that spans every column, so a
+     30px toggle can never be stranded in a row beside a 54px slider field. Flex on the
+     strip's labels is what stops the global `label { display:grid }` from stretching
+     each checkbox to the full column width. */
+  .misc-check-row { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:2px 16px; min-width:0; }
+  .misc-check-row > label { display:flex; align-items:center; gap:6px; min-height:26px; white-space:nowrap; }
+  .misc-check-row input[type="checkbox"] { flex:none; accent-color:var(--accent); }
   .map-slider-row { display:grid; grid-template-columns:minmax(0, 1fr) 28px; gap:7px; align-items:center; min-width:0; }
   .map-slider-row input { min-width:0; width:100%; }
   .map-slider-row output { text-align:right; font-variant-numeric:tabular-nums; }
   .control-note { color:var(--muted); font-size:11px; line-height:1.15; white-space:normal; }
   .mixability-controls { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(260px, 360px) minmax(280px, 1fr); gap: 10px; align-items: center; }
-  .side-settings .mixability-controls { grid-template-columns: 1fr; }
   .weights { display: grid; grid-template-columns: 76px 1fr 42px; gap: 6px; align-items: center; }
   .simplex-control { width: 100%; max-width: 220px; justify-self:center; display: block; touch-action: none; user-select: none; }
   .simplex-area { fill: #0f172a; stroke: #64748b; stroke-width: 1.5; }
@@ -150,7 +255,9 @@
   .simplex-handle { fill: #2dd4bf; stroke: #0f172a; stroke-width: 4; cursor: grab; }
   .simplex-handle:active { cursor: grabbing; }
   label { display: grid; gap: 4px; font-size: 11px; color: var(--muted); }
-  input, select, button { font: inherit; }
+  /* Without this, every `width:100%` control overflows its box by padding+border
+     (measured: .toolbar-num's input spilled its label by exactly 16px = 14 padding + 2 border). */
+  input, select, button, output { font: inherit; box-sizing: border-box; }
   input[type="number"], select { padding: 5px 6px; border: 1px solid var(--line); border-radius: 4px; background: #0f172a; color: var(--ink); min-width:0; }
   input[type="range"] { accent-color: var(--accent); }
   output { font-size: 11px; text-align: right; color: var(--ink); }
@@ -175,29 +282,22 @@
   .action-symbol-button.pin-button:hover,
   .action-symbol-button.pin-active { color:#fef3c7; border-color:var(--pin); background:rgba(251,191,36,.15); }
   .action-symbol-button.track-one span, .action-symbol-button.track-two span { font-size:11px; }
-  .song-panel audio { display: none; }
+  audio { display: none; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-start; }
   .side-actions { display:flex; gap:8px; flex-wrap:wrap; border:1px solid var(--line); background:var(--panel); padding:9px; }
   .side-actions button.danger { color:#fecaca; border-color:#4b2630; }
   .side-actions button.danger:hover { border-color:#fb7185; }
   .energy-curve { height: 220px; border: 1px solid var(--line); background: var(--panel); }
-  /* Right build column: fit and single-column stacking regardless of viewport width */
-  .build-column .sequence-list { height:auto; min-height:180px; max-height:320px; }
-  .build-column .recommendation-panel { max-height:none; }
-  .build-column .recommendation-panel table { min-width:600px; }
-  .build-column .transition-preview-panel { min-height:auto; }
-  .build-column .transition-workbench,
-  .build-column .transition-main,
-  .build-column .transition-settings-panel,
-  .build-column .preview-render-layout,
-  .build-column .preview-render-grid,
-  .build-column .preview-timing-grid,
-  .build-column .preview-mode-controls,
-  .build-column .transition-window-card,
-  .build-column .transition-editor-lanes,
-  .build-column .transition-lane-tools,
-  .build-column .transition-transport-row,
-  .build-column .diagnostic-transition-pair { grid-template-columns:1fr; }
+  /* The right column now holds only the energy curve + sequence. */
+  .build-column .sequence-list { height:auto; min-height:220px; max-height:none; }
+  /* Recommendations sit under the library table in the analysis column. */
+  /* Library pane splits the left column the same way the map pane does: the track
+     table flexes, recommendations keep a share below, and each card scrolls itself. */
+  #pane-library.active { height:100%; min-height:0; grid-template-rows:minmax(220px,1fr) minmax(190px,.7fr); align-content:stretch; }
+  .library-recommendations { margin-top:0; min-height:0; display:grid; grid-template-rows:auto auto minmax(0,1fr); }
+  .analysis-column .recommendation-panel { max-height:none; min-height:0; height:100%; }
+  #pane-transition.active { align-content:start; }
+  #pane-transition .transition-preview-panel { min-height:auto; }
   .explore-lower-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(430px, 520px); gap: 12px; align-items: start; }
   .energy-column, .sequence-panel, .recommendations-section { min-width: 0; display: grid; gap: 8px; align-content: start; }
   .sequence-panel { align-self: start; }
@@ -205,39 +305,69 @@
   .sequence-list, .recommendation-panel, .transition-diagnostics, .transition-preview-panel { border: 1px solid var(--line); background: var(--panel); max-height: 560px; overflow: auto; }
   .sequence-list { height: 260px; max-height: 260px; overflow-y: auto; overflow-x: hidden; resize:none; overscroll-behavior:contain; }
   .sequence-list table { table-layout:fixed; width:100%; min-width:0; }
-  .sequence-list .slot-col { width:42px; }
-  .sequence-list .target-col { width:52px; text-align:center; }
-  .sequence-list .actual-col { width:52px; text-align:center; }
-  /* Narrow right column: let the row actions wrap instead of squeezing the Track cell. */
-  .sequence-list .actions-col { width:104px; }
-  .sequence-list .table-actions { flex-wrap:wrap; gap:3px; justify-content:flex-end; }
-  .sequence-list .action-symbol-button, .sequence-list .play-button { width:28px; min-width:28px; height:28px; min-height:28px; padding:0; font-size:13px; }
+  .sequence-list .slot-col { width:34px; }
+  /* 52px minus the base 7px cell padding left a 38px content box, which is what
+     clipped input.target-edit ("5.00" measured clientWidth 42 / scrollWidth 46).
+     58px with 3px cell padding gives a 52px content box - see .target-edit below. */
+  .sequence-list .target-col { width:58px; text-align:center; }
+  .sequence-list th.target-col, .sequence-list td.target-col { padding-left:3px; padding-right:3px; }
+  /* 52px left a 38px content box for the two-line header "Track<br>energy"; "energy"
+     is ~40px at the table's 12px and overflowed its cell. Paid for out of the 28px
+     freed by the actions column below. */
+  .sequence-list .actual-col { width:46px; text-align:center; }
+  /* Narrow right column: a fixed 2x2 block of actions - select / up / down / remove is
+     the most a row can carry (energy_sequence_builder.js:4378-4381) - the same idiom the
+     recommendation panel uses. There is no global box-sizing:border-box in this file, so
+     the 28px below measured 30px on screen and 2*30+4 = 64px would overflow the 62px
+     content box a 76px column leaves; border-box makes it 2*28+4 = 60px in 62px, and
+     28px of column width goes back to the Track cell. */
+  /* One row of up to 4 actions (select / up / down / remove). A 2-wide block wrapped
+     3 buttons to 2 rows and made every slot row 73px tall - 730px for a 10-slot
+     sequence - to buy the Track cell 11px. 24px buttons fit all four on one line. */
+  .sequence-list .actions-col { width:106px; }
+  .sequence-list .table-actions { display:grid; grid-template-columns:repeat(4, 24px); gap:3px; align-items:center; justify-content:end; }
+  .sequence-list .action-symbol-button, .sequence-list .play-button { box-sizing:border-box; width:24px; min-width:24px; height:24px; min-height:24px; padding:0; font-size:12px; }
   .sequence-list td, .sequence-list th { vertical-align:middle; }
   .sequence-list th.target-col, .sequence-list td.target-col,
   .sequence-list th.actual-col, .sequence-list td.actual-col { text-align:center; }
-  .sequence-list .target-edit { width:42px; max-width:42px; text-align:center; box-sizing:border-box; padding-left:3px; padding-right:3px; }
+  /* Fill the 52px content box the 58px column now leaves, instead of a fixed 42px box
+     that clipped its own value (clientWidth 42 vs scrollWidth 46). Spinners are
+     suppressed so the digits get the whole box. */
+  .sequence-list .target-edit { width:100%; min-width:0; max-width:none; box-sizing:border-box; text-align:center; padding:4px 3px; font-size:11px; font-variant-numeric:tabular-nums; -moz-appearance:textfield; appearance:textfield; }
+  .sequence-list .target-edit::-webkit-outer-spin-button,
+  .sequence-list .target-edit::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
   .table-actions { display:flex; gap:4px; flex-wrap:nowrap; align-items:center; min-width:0; }
   .sequence-drag-handle { display:inline-grid; place-items:center; width:18px; height:18px; margin-right:4px; border:1px solid #334155; border-radius:4px; color:#cbd5e1; background:#0b1020; cursor:grab; user-select:none; font-size:12px; line-height:1; }
   .sequence-drag-handle:active { cursor:grabbing; border-color:#2dd4bf; color:#ecfeff; }
-  .sequence-list tr.drag-source { opacity:.58; outline:1px solid #2dd4bf; outline-offset:-1px; }
+  .sequence-list tr[data-slot-drag] { cursor:grab; }
+  .sequence-list tr.slot-drop-ready > td { border-top:1px dashed rgba(63,81,112,.9); }
+  .sequence-list tr.slot-drop-over > td { background:rgba(45,212,191,.13); box-shadow:inset 0 0 0 1px rgba(45,212,191,.5); }
+  body.track-drag-will-unload .sequence-list tr[data-slot-drag] { opacity:.6; }
   .recommendation-panel { max-height: 620px; overflow-y:auto; overflow-x:auto; }
-  .recommendation-panel table { font-size: 11px; width:100%; min-width:820px; }
+  .recommendation-panel table { font-size: 11px; width:100%; min-width:0; table-layout:fixed; }
   .recommendation-panel, .library-table { scrollbar-width:thin; scrollbar-color:#334155 transparent; }
   .recommendation-panel::-webkit-scrollbar, .library-table::-webkit-scrollbar { width:8px; height:8px; }
   .recommendation-panel::-webkit-scrollbar-thumb, .library-table::-webkit-scrollbar-thumb { background:#334155; border-radius:999px; }
-  .recommendation-panel th:nth-child(1), .recommendation-panel td:nth-child(1) { width:34px; }
-  .recommendation-panel th:nth-child(2), .recommendation-panel td:nth-child(2) { width:150px; }
-  .recommendation-panel th:nth-child(3), .recommendation-panel td:nth-child(3) { width:150px; }
-  .recommendation-panel th:nth-child(4), .recommendation-panel td:nth-child(4) { width:auto; min-width:200px; }
-  .recommendation-panel th:nth-child(n+5), .recommendation-panel td:nth-child(n+5) { width:58px; }
-  .recommendation-panel th, .recommendation-panel td { padding: 5px 6px; }
-  .recommendation-panel .table-actions { display:grid; grid-template-columns:repeat(5, 28px); gap:4px; align-items:center; justify-content:start; }
+  .recommendation-panel th:nth-child(1), .recommendation-panel td:nth-child(1) { width:44px; }
+  .recommendation-panel th:nth-child(2), .recommendation-panel td:nth-child(2) { width:auto; }
+  .recommendation-panel th:nth-child(n+3), .recommendation-panel td:nth-child(n+3) { width:52px; }
+
+  /* Fixed layout sets the column widths; let the score meters shrink into them. */
+  .recommendation-panel td.recommendation-score-cell,
+  .recommendation-panel td.recommendation-score-cell.bars-only { min-width:0; }
+  .recommendation-panel .score-meter, .recommendation-panel .score-meter.bars-only { min-width:0; }
+  /* Rank cell doubles as the pin toggle. */
+  .rec-rank { width:100%; padding:3px 4px; border:0; background:transparent; color:var(--muted); font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; border-radius:5px; cursor:pointer; }
+  .rec-rank:hover { background:rgba(251,191,36,.14); color:#fde68a; }
+  .rec-rank.pin-active { color:var(--pin); }
+  .recommendation-panel th, .recommendation-panel td,
+  .library-table th, .library-table td { padding:5px 7px; vertical-align:middle; }
+  /* Both tables are click-to-play and drag sources: same affordance in both. */
+  .recommendation-panel tbody tr, .library-table tbody tr { cursor:pointer; }
+  .recommendation-panel tbody tr:hover, .library-table tbody tr:hover { background:rgba(148,163,184,.07); }
+  .recommendation-panel .table-actions { display:grid; grid-template-columns:repeat(2, 28px); gap:4px; align-items:center; justify-content:start; }
   .recommendation-panel .action-symbol-button,
   .recommendation-panel .play-button { width:28px; min-width:28px; height:28px; min-height:28px; padding:0; font-size:13px; }
-  .recommendation-panel .track-summary { min-width:190px; }
-  .recommendation-panel .track-title,
-  .recommendation-panel .track-artist,
-  .recommendation-panel .track-meta-line { white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:break-word; }
   .recommendation-panel td.recommendation-score-cell { min-width:62px; vertical-align:middle; padding-top:7px; padding-bottom:7px; }
   .recommendation-panel td.recommendation-score-cell.bars-only { min-width:48px; padding-top:9px; padding-bottom:9px; }
   .score-meter { display:grid; grid-template-rows:auto 5px; gap:5px; align-items:center; min-width:52px; }
@@ -280,7 +410,6 @@
   .diagnostic-feature-bar.groove .diagnostic-bar-track i { background:#2dd4bf; }
   .diagnostic-feature-bar.harmonic .diagnostic-bar-track i { background:#fbbf24; }
   .diagnostic-feature-bar.energy .diagnostic-bar-track i { background:#38bdf8; }
-  .focused-score-bars .diagnostic-feature-bar { grid-template-columns:130px minmax(110px,1fr) 52px 42px; }
   .focused-score-bars { margin-bottom:8px; }
   .focused-transition-section, .focused-transition-waveforms { display:grid; gap:8px; min-width:0; margin-top:12px; }
   .focused-transition-waveforms h3 { margin:0; font-size:13px; color:#dbeafe; }
@@ -330,6 +459,13 @@
   .transition-workbench { min-height:760px; display:grid; grid-template-columns:1fr; align-content:start; background:#0b1020; }
   .transition-controls { border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:#101827; padding:12px 14px; overflow:visible; }
   .transition-main { min-width:0; display:grid; grid-template-rows:auto auto auto; }
+  /* A grid item's automatic minimum size is its min-content width, so any item in the
+     workbench chain can push .transition-main's auto track wider than the analysis column
+     even though .transition-main itself is already min-width:0. .transition-controls is the
+     load-bearing one - it wraps .transition-settings-panel, and its min-content is what made
+     .transition-main's column compute 892px inside an 820px box. */
+  .transition-controls, .transition-editor, .transition-editor-head, .transition-window-stack,
+  .transition-transport-row, .transition-topbar, .transition-lane-tools, .preview-render-section { min-width:0; }
   .transition-topbar { border-top:1px solid var(--line); background:var(--panel2); padding:8px 12px; display:flex; gap:10px; align-items:center; justify-content:flex-end; }
   .transition-links { display:flex; gap:8px; flex-wrap:wrap; }
   .transition-links a { color:#67e8f9; text-decoration:none; font-size:12px; }
@@ -358,7 +494,11 @@
   .transition-window-stack { display:grid; grid-template-columns:1fr; gap:10px; }
   .transition-transport-row { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; align-items:center; }
   .transition-transport-main { min-width:0; }
-  .transition-window-card { background:#151515; grid-template-columns:minmax(0,1fr) minmax(230px,300px); align-items:stretch; }
+  /* minmax(0,300px) still resolves to a 300px side panel whenever there is room (CSS Grid
+     12.6 Maximize Tracks grows a non-flexible track to its growth limit before the fr track
+     takes the remainder), but unlike minmax(230px,300px) it contributes no min-content floor
+     to the editor subtree. */
+  .transition-window-card { background:#151515; grid-template-columns:minmax(0,1fr) minmax(0,300px); align-items:stretch; }
   .transition-window-main { min-width:0; display:grid; align-content:stretch; }
   .transition-track-side { min-width:0; border-left:1px solid #2d2d2d; padding-left:10px; display:grid; grid-template-rows:auto minmax(0,1fr); gap:10px; align-content:start; }
   .transition-track-meta { min-width:0; overflow:hidden; }
@@ -380,30 +520,38 @@
   .transition-section-canvas { height:245px; border-radius:7px; }
   .transition-overview-canvas:active, .transition-section-canvas:active { cursor:grabbing; }
   .transition-editor-empty { border:1px solid var(--line); background:rgba(15,23,42,.62); border-radius:7px; padding:12px; color:var(--muted); font-size:12px; }
-  .current-transition-score, .library-panel { border:1px solid var(--line); background:var(--panel); }
+  .current-transition-score { border:1px solid var(--line); background:var(--panel); }
+  .library-panel { display:grid; }
+  #pane-library.active .library-panel { min-height:0; grid-template-rows:auto auto minmax(0,1fr); }
+  #pane-library.active .library-table { max-height:none; height:100%; min-height:0; }
   .current-transition-score { padding:10px; overflow:auto; }
-  .library-panel { padding:10px; display:grid; gap:10px; }
-  .library-toolbar { display:grid; grid-template-columns:minmax(260px,1fr); gap:10px; align-items:end; }
-  .library-table { max-height:690px; overflow:auto; border:1px solid var(--line); }
+
+  .library-table { max-height:690px; overflow:auto; }
   .library-table th[data-library-sort] { cursor:pointer; user-select:none; }
   .library-table th[data-library-sort]::after { content: attr(data-sort-indicator); color:#67e8f9; margin-left:6px; font-size:11px; }
   .library-table th[data-sort-indicator="↕"]::after { color:var(--muted); }
   .library-table .th-sort { background:none; border:0; padding:0; margin:0; color:inherit; font:inherit; font-weight:inherit; cursor:pointer; text-align:inherit; }
-  .library-table table { font-size:11px; min-width:980px; }
-  .library-table th, .library-table td { padding:4px 6px; vertical-align:middle; }
-  .library-table th.short { width:58px; min-width:52px; font-size:11px; line-height:1.05; }
-  .library-table th.wrap-head { white-space:normal; }
+  .library-table table { font-size:11px; width:100%; min-width:0; table-layout:fixed; }
+  .library-table th:nth-child(1), .library-table td:nth-child(1) { width:auto; }
+  .library-table th:nth-child(n+2), .library-table td:nth-child(n+2) { width:54px; }
+  .library-table th:last-child, .library-table td:last-child { width:78px; }
+
+  .library-table th.short { font-size:11px; line-height:1.05; }
   .library-table th.center, .library-table td.center { text-align:center; font-variant-numeric:tabular-nums; }
-  .library-title-cell { max-width:280px; font-weight:700; color:var(--ink); overflow:hidden; }
-  .library-title-summary { display:grid; grid-template-columns:30px minmax(0,1fr); gap:7px; align-items:center; min-width:0; }
-  .library-title-summary .art-thumb, .library-title-summary .art-placeholder { width:30px; height:30px; border-radius:4px; }
-  .library-title-summary span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .library-title-cell { min-width:0; color:var(--ink); overflow:hidden; }
+  /* Compact track cell: art + title + artist, one line each. */
+  .library-table .track-summary.compact,
+  .recommendation-panel .track-summary.compact { grid-template-columns:30px minmax(0,1fr); gap:7px; align-items:center; min-width:0; }
+  .library-table .track-summary.compact .art-thumb,
+  .recommendation-panel .track-summary.compact .art-thumb { width:30px; height:30px; border-radius:4px; }
+  .library-table .track-title, .recommendation-panel .track-title { font-weight:700; }
+  .library-table .track-title, .library-table .track-artist,
+  .recommendation-panel .track-title, .recommendation-panel .track-artist,
+  .recommendation-panel .track-meta-line { display:block; -webkit-line-clamp:none; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .library-table tr.is-track1 { box-shadow: inset 3px 0 0 var(--track1); }
   .library-table tr.is-track2 { box-shadow: inset 3px 0 0 var(--track2); }
   .library-table tr.now-playing { background: rgba(29,185,84,.12); box-shadow: inset 3px 0 0 #1db954; }
   .library-table tr.now-playing-paused { background: rgba(148,163,184,.08); box-shadow: inset 3px 0 0 #64748b; }
-  .library-actions { display:flex; gap:4px; flex-wrap:nowrap; align-items:center; min-width:0; }
-  .library-actions button { padding:4px 6px; }
   .row-player { display:grid; grid-template-columns:auto minmax(120px, 200px); gap:5px; align-items:center; min-width:220px; }
   .row-player .play-button { border-radius:999px; min-width:42px; }
   .row-waveform-scrubber { display:grid; grid-template-columns:minmax(80px, 1fr) 56px; gap:5px; align-items:center; min-width:0; }
@@ -412,24 +560,33 @@
   .row-waveform { width:100%; height:24px; border:1px solid #263244; background:#0b1020; border-radius:999px; cursor:pointer; display:block; }
   .scrub-range { --progress:0%; width:100%; min-width:80px; accent-color:#1db954; background:linear-gradient(to right, #1db954 var(--progress), #334155 var(--progress)); border-radius:999px; }
   .scrub-time { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right; }
-  .recommendation-filterbar { display:grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap:7px; padding:8px; border-bottom:1px solid var(--line); background:#0f172a; align-items:end; }
-  .recommendation-filterbar label { color:#cbd5e1; }
-  .recommendation-filterbar .recommendation-search { grid-column:span 2; min-width:min(280px, 100%); }
-  .recommendation-filterbar input[type="number"] { width:100%; }
-  .recommendation-filterbar input[type="search"] { width:100%; padding:5px 6px; border:1px solid var(--line); border-radius:4px; background:#0b1020; color:var(--ink); }
   .recommendation-panel tr.pinned-row { background:rgba(251,191,36,.09); box-shadow:inset 3px 0 0 var(--pin); }
   .preview-grid { display:grid; grid-template-columns: 1fr; gap: 10px; margin-bottom:12px; }
   .preview-card { border: 1px solid var(--line); background: var(--panel2); border-radius: 6px; padding: 10px; min-height: 0; overflow:hidden; }
   .preview-card h3 { margin: 0 0 7px; font-size: 13px; }
   .preview-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:0; }
   .preview-actions a { color:#67e8f9; text-decoration:none; border:1px solid var(--line); border-radius:4px; padding:6px 9px; }
-  .transition-settings-panel { display:grid; grid-template-columns:minmax(260px,.72fr) minmax(360px,1fr) auto; gap:12px; align-items:end; }
-  .preview-render-layout { display:grid; grid-template-columns:minmax(240px,.7fr) minmax(340px,1fr); gap:12px; align-items:start; }
+  /* 260 + 360 + auto(min-width:220) + 2x12 gap computed 864px inside an ~820px analysis
+     column - that is what put .preview-render-actions at x 677..897, on top of the Transition
+     FX column. repeat(auto-fit, minmax(min(100%,260px),1fr)) can never demand more than its
+     container: 3 tracks at >=~1050px of content (>=1500px viewport), 2 at ~790px, 1 below
+     ~530px, and auto-fit collapses the spare track so 3 items always fill their row.
+     .preview-render-layout is deleted rather than retuned - repo-wide grep finds it only in
+     this file and in stale data/exports snapshots, never on an element. Its @media entry is
+     removed by the last patch. */
+  .transition-settings-panel { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap:12px; align-items:start; }
   .preview-render-section { display:grid; gap:8px; padding:9px; border:1px solid var(--line); border-radius:7px; background:#0f172a; }
   .preview-render-section h3 { margin:0; font-size:12px; color:#dbeafe; }
-  .preview-render-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:10px; }
-  .preview-timing-grid { grid-template-columns: repeat(3, minmax(86px, 1fr)); gap:8px; }
-  .preview-mode-controls { display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap:8px; }
+  /* repeat(4, minmax(120px,1fr)) = 504px inside a 360px column is how the FX selects spilled
+     144px over the render buttons; repeat(3, minmax(86px,1fr)) = 274px did the same inside the
+     260px column. The min(100%, N) floors clamp both to the container at any width, and
+     auto-fit collapses the empty track so the 3 timing fields still sit 3-across whenever
+     3 x 86px + 16px of gap fits. .preview-render-grid's own track list is always overridden by
+     .preview-timing-grid (same element, later rule, equal specificity) - retuned anyway so the
+     class stays safe to use on its own. */
+  .preview-render-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap:10px; }
+  .preview-timing-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 86px), 1fr)); gap:8px; }
+  .preview-mode-controls { display:grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr)); gap:8px; }
   .fx-legend { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding-top:2px; color:#cbd5e1; font-size:11px; }
   .fx-item { display:inline-flex; gap:5px; align-items:center; padding:3px 6px; border:1px solid #263244; border-radius:999px; background:#101827; }
   .fx-icon { display:inline-grid; place-items:center; width:18px; height:18px; border-radius:999px; background:#172033; color:#e5e7eb; font-size:10px; font-weight:800; }
@@ -437,23 +594,32 @@
   .fx-line.volume { background:#48c8f2; }
   .fx-line.eq { background:#ffd13d; }
   .fx-line.filter { background:#f472b6; }
-  .preview-render-actions { display:grid; gap:8px; align-content:end; min-width:220px; }
+  /* The 220px floor was the measured cause of the render buttons overlapping their neighbour.
+     The buttons already sit in a wrapping .preview-actions flex row, so a 0 floor costs
+     nothing. */
+  .preview-render-actions { display:grid; gap:8px; align-content:end; min-width:0; }
   .preview-status { min-height:20px; color:var(--muted); font-size:12px; padding-top:5px; }
   .preview-result { border:1px solid var(--line); background:var(--panel2); border-radius:6px; margin-top:12px; padding:10px; }
-  .song-panel { border: 1px solid var(--line); background: linear-gradient(180deg, #151f32 0%, #101827 100%); padding: 10px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; box-shadow:0 14px 36px rgba(0,0,0,.26); }
-  .song-panel.hidden { display:none; }
-  .wave-player { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; align-items:center; min-width:0; }
   .player-toggle { width:44px; height:44px; border-radius:999px; display:grid; place-items:center; background:#1db954; border-color:#1db954; color:#06130a; font-weight:800; font-size:18px; line-height:1; padding:0; }
   .player-toggle:hover { border-color:#7ddf9b; }
-  .wave-main { min-width:0; display:grid; gap:5px; }
-  .wave-topline { display:flex; justify-content:space-between; gap:8px; font-size:11px; font-variant-numeric:tabular-nums; min-width:0; }
   .song-waveform { width:100%; height:54px; border:1px solid #243244; background:#0b1020; border-radius:7px; cursor:pointer; display:block; }
-  .global-player { position:relative; z-index:2; display:grid; grid-template-columns:48px minmax(140px, 1fr) auto minmax(220px, 2.4fr) auto minmax(120px, .5fr); gap:12px; align-items:center; padding:9px 14px; border:1px solid #334155; border-radius:9px; background:rgba(15,23,42,.96); }
+  /* The player bar's progress control is the waveform itself. */
+  .global-waveform { height:44px; min-width:0; border-radius:6px; touch-action:none; }
+  .global-player { position:relative; z-index:2; display:grid; grid-template-columns:minmax(180px, 1fr) minmax(220px, 2.6fr) auto minmax(120px, .5fr); gap:12px; align-items:center; padding:9px 14px; border:1px solid #334155; border-radius:9px; background:rgba(15,23,42,.96); }
+  /* No play button: the now-playing block itself toggles playback. */
+  .global-nowplaying { display:grid; grid-template-columns:48px minmax(0,1fr); gap:10px; align-items:center; min-width:0; padding:4px; margin:-4px; border-radius:8px; cursor:pointer; }
+  .global-nowplaying:hover { background:rgba(148,163,184,.10); }
+  .global-nowplaying.is-empty { cursor:default; opacity:.75; }
+  .global-nowplaying.is-empty:hover { background:none; }
+  .global-nowplaying .global-art { position:relative; }
+  .global-nowplaying:not(.is-empty) .global-art::after { content:'▶'; position:absolute; inset:0; display:grid; place-items:center; border-radius:5px; background:rgba(9,14,28,.62); color:#fff; font-size:16px; opacity:0; transition:opacity .12s; }
+  .global-nowplaying.is-playing:not(.is-empty) .global-art::after { content:'⏸'; }
+  .global-nowplaying:not(.is-empty):hover .global-art::after,
+  .global-nowplaying:not(.is-empty):focus-visible .global-art::after { opacity:1; }
   .global-art { width:48px; height:48px; border-radius:5px; object-fit:cover; border:1px solid var(--line); background:#0f172a; display:grid; place-items:center; color:var(--muted); font-size:11px; overflow:hidden; }
   .global-art img { width:100%; height:100%; object-fit:cover; display:block; }
   .global-track { min-width:0; display:grid; gap:2px; }
   .global-meta-line { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:11px; }
-  .global-scrub { min-width:0; }
   .global-volume { display:grid; grid-template-columns:22px minmax(76px,1fr); gap:7px; align-items:center; color:var(--muted); font-size:11px; min-width:116px; }
   .volume-icon { display:grid; place-items:center; width:22px; height:22px; color:#cbd5e1; border:0; background:transparent; padding:0; cursor:pointer; }
   .volume-icon:hover { color:#ecfeff; }
@@ -475,7 +641,6 @@
   .transition-badge .track-title, .transition-badge .track-artist, .transition-badge .track-meta-line { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
   .transition-badge .track-artist, .transition-badge .track-meta-line { font-size:11px; line-height:1.18; }
   .camelot-key { font-weight:700; }
-  .target-edit { width:70px; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
   th, td { border-bottom: 1px solid #263244; padding: 6px 7px; vertical-align: top; }
   th { position: sticky; top: 0; background: #0f172a; z-index: 1; text-align: left; color: #cbd5e1; }
@@ -494,7 +659,6 @@
   .toast-undo:hover { border-color:#5eead4; background:#164e46; }
   .toast-close { flex:none; width:24px; height:24px; display:grid; place-items:center; padding:0; border:0; background:transparent; color:var(--muted); font-size:12px; line-height:1; border-radius:5px; cursor:pointer; }
   .toast-close:hover { color:var(--ink); }
-  .pane-hint { margin:0 0 10px; font-size:12px; color:var(--muted); }
   .sequence-gap-warning { font-size:12px; margin:0 0 6px; }
   .transition-badge-note { font-size:10px; margin-top:4px; }
   @media (max-width: 1100px) {
@@ -505,16 +669,22 @@
     .build-column { grid-template-rows:auto auto; }
     .build-scroll { overflow:visible; }
     .transition-badges { grid-template-columns:1fr; }
-    .global-player { grid-template-columns:42px minmax(0,1fr) auto auto; grid-template-rows:auto auto; row-gap:8px; }
-    .global-player .global-scrub { grid-column:1 / 3; grid-row:2; }
-    .global-player #global-time { grid-column:3 / 4; grid-row:2; }
-    .global-player .global-volume { grid-column:4 / 5; grid-row:2; justify-self:end; }
-    .control-grid, .mixability-controls, .selected-panel, .lower-grid, .explore-lower-grid, .preview-grid, .preview-render-layout, .transition-settings-panel, .transition-window-card, .transition-transport-row, .transition-workbench, .transition-editor-lanes, .transition-lane-tools, .song-panel, .library-toolbar, .diagnostics-grid, .diagnostic-transition-pair, .diagnostic-embedding-compare { grid-template-columns: 1fr; }
+    .global-player { grid-template-columns:minmax(0,1fr) auto auto; grid-template-rows:auto auto; row-gap:8px; }
+    .global-player .global-nowplaying { grid-column:1 / -1; grid-row:1; }
+    .global-player .global-waveform { grid-column:1 / 2; grid-row:2; }
+    .global-player #global-time { grid-column:2 / 3; grid-row:2; }
+    .global-player .global-volume { grid-column:3 / 4; grid-row:2; justify-self:end; }
+    .control-grid, .mixability-controls, .selected-panel, .lower-grid, .explore-lower-grid, .preview-grid, .transition-window-card, .transition-transport-row, .transition-workbench, .transition-editor-lanes, .transition-lane-tools, .diagnostics-grid, .diagnostic-transition-pair, .diagnostic-embedding-compare { grid-template-columns: 1fr; }
     .diagnostic-card.wide { grid-column:auto; }
     .diagnostic-feature-bar { grid-template-columns:1fr; gap:4px; }
     .diagnostic-feature-bar b, .diagnostic-feature-bar em { text-align:left; }
     .transition-track-side { border-left:0; border-top:1px solid #2d2d2d; padding-left:0; padding-top:10px; }
     .preview-mode-controls { border-left:0; padding-left:0; }
-    .side-settings .control-grid, .misc-control-grid { grid-template-columns: 1fr; }
+    .weights-panel > .control-grid, .misc-control-grid { grid-template-columns: 1fr; }
     .actions { justify-content: flex-start; }
+    /* Stacked layout has no fixed column height, so cap the two library cards
+       instead of splitting the space between them. */
+    #pane-library.active { height:auto; grid-template-rows:auto auto; align-content:start; }
+    #pane-library.active .library-table { height:auto; max-height:520px; }
+    .analysis-column .recommendation-panel { height:auto; max-height:420px; }
   }

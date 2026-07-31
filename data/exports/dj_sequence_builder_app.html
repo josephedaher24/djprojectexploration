@@ -20,21 +20,38 @@
   .analysis-column .pane { min-height:0; }
   .build-column { min-width:0; min-height:0; display:grid; grid-template-rows: auto minmax(0, 1fr); gap:10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); padding:10px; }
   .build-top { display:grid; gap:10px; }
-  .build-segments { display:grid; grid-template-columns:repeat(3, 1fr); gap:4px; padding:3px; border:1px solid var(--line); border-radius:8px; background:#0d1425; }
-  .build-seg { border:0; border-radius:6px; background:transparent; color:var(--muted); font-size:12px; font-weight:700; padding:7px 6px; }
-  .build-seg:hover { color:#ecfeff; }
-  .build-seg.active { background:#0f766e; color:#ecfeff; }
   .build-scroll { min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; padding-right:3px; }
-  .build-seg-panel { display:grid; gap:10px; align-content:start; }
-  .build-seg-panel.hidden { display:none; }
   .build-section { border:1px solid var(--line); border-radius:7px; background:var(--panel); overflow:hidden; }
   .build-section-title { font-size:12px; font-weight:700; color:#dbeafe; letter-spacing:.02em; }
   .build-section-head { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:8px 10px; border-bottom:1px solid var(--line); }
-  .build-section > #energy-curve, .build-section > .recommendation-panel, .build-section > .transition-preview-panel { border:0; border-radius:0; }
+  /* Shared card furniture: every panel gets the same header count chip, filter
+     toolbar, context note and empty state. */
+  .panel-count { color:var(--muted); font-size:11px; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  /* Flex, not grid: an auto-fit grid gave the wide search a column span that fought
+     the column count, orphaning controls onto a second row at some widths. Flex
+     items wrap cleanly and can never overlap. */
+  .panel-toolbar { display:flex; flex-wrap:wrap; gap:8px 10px; padding:8px 10px; border-bottom:1px solid var(--line); background:#0f172a; align-items:flex-end; }
+  .panel-toolbar:empty { display:none; }
+  .panel-toolbar label { gap:4px; min-width:0; color:#cbd5e1; font-size:11px; white-space:nowrap; }
+  /* line-height pins search/number inputs to the same 28px box a native select uses. */
+  .panel-toolbar input[type="search"], .panel-toolbar input[type="number"], .panel-toolbar select { width:100%; padding:5px 7px; border:1px solid var(--line); border-radius:5px; background:#0b1020; color:var(--ink); font-size:12px; line-height:16px; }
+  .panel-toolbar .toolbar-search { flex:1 1 220px; min-width:150px; }
+  .panel-toolbar .toolbar-num { flex:0 1 92px; }
+  .panel-toolbar .toolbar-select { flex:0 1 112px; }
+  .panel-toolbar .toolbar-check { flex:0 0 auto; }
+  .panel-toolbar .toolbar-check > span { display:flex; align-items:center; gap:6px; min-height:29px; }
+  .panel-toolbar .toolbar-check input[type="checkbox"] { flex:none; accent-color:var(--accent); }
+  .panel-note { padding:7px 10px; border-bottom:1px solid rgba(45,55,76,.6); color:var(--muted); font-size:11px; line-height:1.3; }
+  .panel-note b { color:#cbd5e1; font-weight:700; }
+  .panel-empty { padding:14px 10px; color:var(--muted); font-size:12px; text-align:center; }
+  .build-section > #energy-curve, .build-section > .recommendation-panel, .build-section > .library-table, .build-section > .transition-preview-panel { border:0; border-radius:0; }
   .sequence-head-controls { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-  .sequence-length-label { flex-direction:row; align-items:center; gap:6px; color:var(--muted); font-size:11px; }
-  .sequence-length-label input { width:52px; }
-  .sequence-head-controls button { padding:5px 8px; font-size:11px; }
+  /* The old rule set flex-direction without ever setting display, so it was inert
+     against `label { display:grid }` (line 222) and "Length" stacked above its input.
+     inline-flex is the actual fix; the buttons get the same 28px control box. */
+  .sequence-length-label { display:inline-flex; flex-direction:row; align-items:center; gap:6px; color:var(--muted); font-size:11px; }
+  .sequence-length-label input { width:56px; box-sizing:border-box; }
+  .sequence-head-controls button { min-height:28px; padding:5px 8px; border-radius:5px; font-size:11px; }
   .sequence-head-controls button.danger { color:#fecaca; border-color:#4b2630; }
   .sequence-head-controls button.danger:hover { border-color:#fb7185; }
   .sequence-section > .sequence-list { border:0; }
@@ -64,11 +81,20 @@
   .settings-session-actions { padding:9px 10px; border-top:1px solid rgba(45,55,76,.72); display:flex; justify-content:flex-start; }
   .pane { display: none; }
   .pane.active { display: grid; gap: 12px; align-content: start; }
-  .plot-column { min-width: 0; display:grid; gap:10px; align-content:start; }
-  .plot-pane { min-width: 0; border: 1px solid var(--line); background: var(--panel); position: relative; overflow: hidden; }
+  /* Map pane splits the left column vertically: the map flexes to fill whatever is
+     left after the always-visible scoring-weights panel below it. */
+  #pane-explore.active { height:100%; min-height:0; grid-template-rows: minmax(0, 1fr); align-content: stretch; }
+  .plot-column { min-width: 0; min-height:0; display:grid; gap:10px; align-content:start; }
+  #pane-explore.active .plot-column { height:100%; align-content:stretch; grid-template-rows: minmax(220px, 1fr) auto auto auto; }
+  #pane-explore.active .plot-pane { height:100%; min-height:180px; }
+  #pane-explore.active .plot-pane .js-plotly-plot,
+  #pane-explore.active .plot-pane .plot-container,
+  #pane-explore.active .plot-pane .svg-container { height:100% !important; }
+  .plot-pane { min-width: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); position: relative; overflow: hidden; }
   .map-effects-canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:1; mix-blend-mode:screen; }
-  .map-artwork-canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:3; }
-  .plot-pane.map-renderer-webgl .map-artwork-canvas { display:none; }
+  /* Above the FX/point layers so covers and their index badges stay readable, but
+     below the minimap/zoom controls (they come later in the DOM at the same z-index). */
+  .map-artwork-canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:4; }
   .webgl-map-canvas { position:absolute; inset:0; width:100%; height:100%; z-index:2; display:none; cursor:default; touch-action:none; background:#111827; }
   .plot-pane .js-plotly-plot, .plot-pane .plot-container { position:relative; z-index:2; }
   .plot-pane.map-renderer-webgl .js-plotly-plot { visibility:hidden; pointer-events:none; }
@@ -90,17 +116,20 @@
   .map-mini-map.collapsed { display:none; }
   .mini-map-toggle { position:absolute; right:10px; bottom:136px; z-index:4; width:26px; height:22px; display:grid; place-items:center; padding:0; line-height:1; font-size:11px; border:1px solid rgba(148,163,184,.52); border-radius:6px; background:rgba(15,23,42,.84); color:#cbd5e1; backdrop-filter:blur(8px); }
   .plot-pane.mini-map-collapsed .mini-map-toggle { bottom:10px; }
-  .map-color-legend { min-height:30px; display:grid; grid-template-columns:auto minmax(180px, 320px) auto auto; gap:8px; align-items:center; justify-content:start; color:#cbd5e1; font-size:11px; padding:0 4px; }
-  .map-color-legend.genre-legend { grid-template-columns:auto minmax(0, 1fr); }
+  /* Genre legend and highlight key share one row. */
+  .map-legend-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; padding:0 4px; }
+  .map-legend-row > * { padding-left:0; padding-right:0; }
+  .map-color-legend { min-height:0; display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:4px 8px; min-width:0; max-width:100%; color:#cbd5e1; font-size:11px; padding:0 4px; }
+  .map-color-legend > * { min-width:0; max-width:100%; }
+  .map-color-legend .map-genre-legend { flex:1 1 0%; }
   .map-color-legend.hidden { display:none; }
   .map-color-legend-title { font-weight:700; color:#e5e7eb; }
-  .map-color-ramp { width:min(320px, 42vw); height:9px; border-radius:999px; border:1px solid rgba(148,163,184,.38); }
+  .map-color-ramp { width:min(320px, 42vw); max-width:100%; min-width:60px; height:9px; border-radius:999px; border:1px solid rgba(148,163,184,.38); }
   .map-color-range { display:flex; gap:6px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .map-genre-legend { display:flex; flex-wrap:wrap; gap:6px 10px; max-height:56px; overflow:auto; align-items:center; }
   .map-genre-chip { display:inline-flex; gap:5px; align-items:center; color:#cbd5e1; font-size:11px; white-space:nowrap; }
   .map-genre-chip i { width:9px; height:9px; border-radius:999px; display:inline-block; border:1px solid rgba(15,23,42,.7); box-shadow:0 0 0 1px rgba(148,163,184,.2); }
-  .map-state-legend { min-height:24px; display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; color:#cbd5e1; font-size:11px; padding:0 4px; }
-  .map-state-legend-title { font-weight:700; color:#e5e7eb; }
+  .map-state-legend { min-height:0; display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; color:#cbd5e1; font-size:11px; }
   .map-state-legend .map-genre-chip i.map-state-swatch { width:8px; height:8px; background:transparent; border:2px solid #94a3b8; box-shadow:none; }
   .map-state-legend .map-genre-chip i.map-state-swatch.map-state-square { border-radius:2px; }
   .map-legend-restore { font-size:11px; padding:2px 8px; margin-left:auto; }
@@ -112,7 +141,7 @@
   .help-list { display:grid; gap:6px; margin:0; padding:0; list-style:none; }
   .help-list li { display:grid; grid-template-columns:minmax(52px, auto) minmax(0,1fr); gap:8px; align-items:start; color:#cbd5e1; font-size:12px; }
   .help-key { display:inline-grid; place-items:center; min-width:28px; min-height:22px; padding:1px 6px; border:1px solid #334155; border-radius:5px; background:#0b1020; color:#e5e7eb; font-weight:800; font-variant-numeric:tabular-nums; }
-  .song-hover-card { position:absolute; z-index:5; pointer-events:none; max-width:330px; min-width:260px; border:1px solid #334155; background:rgba(15,23,42,.96); box-shadow:0 18px 40px rgba(0,0,0,.34); border-radius:7px; padding:10px; backdrop-filter:blur(8px); }
+  .song-hover-card { position:absolute; z-index:5; pointer-events:none; box-sizing:border-box; max-width:min(330px, calc(100% - 16px)); min-width:min(260px, calc(100% - 16px)); border:1px solid #334155; background:rgba(15,23,42,.96); box-shadow:0 18px 40px rgba(0,0,0,.34); border-radius:7px; padding:10px; backdrop-filter:blur(8px); }
   .song-hover-card.hidden { display:none; }
   .side-settings { border:1px solid var(--line); background:var(--panel); border-radius:7px; overflow:hidden; }
   .side-settings summary { cursor:pointer; padding:8px 10px; font-size:12px; color:#cbd5e1; user-select:none; }
@@ -124,9 +153,45 @@
   .transition-badge { border: 1px solid var(--line); background: var(--panel); padding: 8px; border-radius: 6px; min-height: 48px; min-width:0; overflow:hidden; }
   .transition-badge b { color: var(--ink); font-size: 11px; }
   .deck-card-head { display:flex; align-items:center; justify-content:space-between; gap:6px; margin-bottom:5px; }
+  /* ---- Global track drag-and-drop ---- */
+  .transition-badge[data-deck-drag] { cursor:grab; }
+  .deck-empty-hint { font-size:11px; font-style:italic; }
+  .transition-badge.deck-drop-ready { border-style:dashed; border-color:#3f5170; }
+  .transition-badge.deck-drop-over { border-style:solid; border-color:#2dd4bf; background:#12312e; box-shadow:0 0 0 2px rgba(45,212,191,.28) inset; }
+  .transition-badge.out.deck-drop-over { border-color:var(--track1); box-shadow:inset 3px 0 0 var(--track1), 0 0 0 2px rgba(56,189,248,.3) inset; }
+  .transition-badge.in.deck-drop-over { border-color:var(--track2); box-shadow:inset 3px 0 0 var(--track2), 0 0 0 2px rgba(192,132,252,.3) inset; }
+  body.track-dragging { cursor:grabbing; user-select:none; }
+  body.track-dragging [data-library-row-idx], body.track-dragging [data-rec-row-idx], body.track-dragging [data-slot-drag] { cursor:grabbing; }
+  [data-library-row-idx], [data-rec-row-idx] { cursor:grab; }
+  body.track-drag-will-unload .transition-badge[data-deck-drag] { border-color:#fb7185; box-shadow:inset 3px 0 0 #fb7185; opacity:.62; }
+  .track-drag-ghost { position:fixed; left:0; top:0; z-index:60; display:none; align-items:center; gap:8px; max-width:260px; padding:6px 9px 6px 6px; border:1px solid #2dd4bf; border-radius:8px; background:rgba(15,23,42,.97); box-shadow:0 14px 34px rgba(0,0,0,.46); pointer-events:none; }
+  .track-drag-ghost.visible { display:flex; }
+  .track-drag-ghost .art-thumb { width:30px; height:30px; border-radius:4px; }
+  .track-drag-ghost-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font-size:12px; font-weight:700; }
   .deck-play { width:26px; min-width:26px; height:26px; min-height:26px; padding:0; font-size:12px; border-radius:999px; }
-  .transition-badge .track-summary.compact { grid-template-columns:44px minmax(0,1fr); gap:8px; align-items:center; }
-  .transition-badge .art-thumb { width:44px; height:44px; border-radius:5px; }
+  /* Circular cover gets its own row; it spins like a record while this deck plays. */
+  .deck-actions-row { display:flex; justify-content:flex-end; }
+  .deck-actions-row button { padding:4px 9px; font-size:11px; }
+  .deck-actions-row button.danger { color:#fecaca; border-color:#4b2630; }
+  .deck-actions-row button.danger:hover { border-color:#fb7185; }
+  .deck-cover-row { display:block; padding:8px 0 9px; }
+  /* The disc spans the full card width — diameter follows the card, always a circle. */
+  .deck-cover-disc { position:relative; display:block; width:100%; aspect-ratio:1 / 1; border-radius:50%; }
+  .deck-cover-disc .deck-cover { width:100%; height:100%; border-radius:50%; object-fit:cover; display:block; background:#0f172a; box-shadow:0 6px 18px rgba(0,0,0,.42); }
+  .deck-cover-disc .art-placeholder { display:grid; place-items:center; color:var(--muted); font-size:11px; }
+  .deck-cover-spindle { position:absolute; left:50%; top:50%; width:16px; height:16px; margin:-8px 0 0 -8px; border-radius:50%; background:#0b1020; box-shadow:0 0 0 2px rgba(148,163,184,.5) inset; pointer-events:none; z-index:2; }
+  /* Clicking the cover plays / pauses that deck — no play button. */
+  .deck-cover-disc { cursor:pointer; }
+  .deck-cover-disc::after { content:'▶'; position:absolute; inset:0; display:grid; place-items:center; border-radius:50%; background:rgba(9,14,28,.5); color:#fff; font-size:30px; opacity:0; transition:opacity .12s; pointer-events:none; }
+  .deck-cover-disc.spinning::after { content:'⏸'; }
+  .deck-cover-disc:hover::after { opacity:1; }
+  .transition-badge.out .deck-cover { box-shadow:0 0 0 3px var(--track1), 0 6px 18px rgba(0,0,0,.42); }
+  .transition-badge.in .deck-cover { box-shadow:0 0 0 3px var(--track2), 0 6px 18px rgba(0,0,0,.42); }
+  @keyframes deck-cover-spin { to { transform: rotate(360deg); } }
+  .deck-cover-disc.spinning .deck-cover { animation: deck-cover-spin 5.5s linear infinite; }
+  @media (prefers-reduced-motion: reduce) { .deck-cover-disc.spinning .deck-cover { animation:none; } }
+  /* The rest of the track detail lives in its own small card under the cover. */
+  .deck-info-card { min-width:0; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:#0f172a; }
   .transition-badge .track-title { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-size:12px; line-height:1.2; }
   .transition-badge .track-artist, .transition-badge .track-meta-line { font-size:11px; }
   .transition-badge.out { border-color:rgba(56,189,248,.42); box-shadow:inset 3px 0 0 var(--track1); }
@@ -141,15 +206,55 @@
   .transition-mini-meter-row { display:grid; grid-template-columns:minmax(0, 1fr); gap:3px; align-items:center; min-width:0; }
   .transition-mini-meter-row > span { min-width:0; color:#cbd5e1; font-size:11px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .control-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 7px; align-items: center; padding: 9px; border: 1px solid var(--line); background: var(--panel); }
-  .side-settings .control-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Scoring weights live outside the collapsed fold: the Tempo/Groove/Key triangle is
+     a primary control, so it stays visible next to the map. */
+  /* A permanent row of the map pane's vertical split — no sticky overlay needed. */
+  .weights-panel { border:1px solid var(--line); border-radius:7px; background:var(--panel); overflow:hidden; }
+  .weights-panel-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; padding:6px 10px; border-bottom:1px solid var(--line); }
+  .weights-panel-head .control-note { flex:1 1 260px; }
+  .weights-panel > .control-grid { border:0; padding:8px 10px; grid-template-columns: 140px minmax(0,1fr) 42px; gap:6px 8px; }
+  /* Triangle on the left spanning both rows, the four weight sliders stacked at right. */
+  .weights-panel .mixability-controls { grid-column: 1 / -1; grid-template-columns: 150px minmax(220px, 1fr); gap:8px 14px; align-items:center; }
+  .weights-panel .mixability-controls > .simplex-control { grid-column:1; grid-row:1 / span 2; max-width:150px; justify-self:start; }
+  .weights-panel .mixability-controls > .weights { grid-column:2; grid-template-columns: 76px minmax(0,1fr) 38px; gap:5px 7px; }
+  /* Region 3: the energy row. "Energy source", "Energy penalty" and its <output> used to be three
+     independent children of the 140px / 1fr / 42px track list, so they landed on three different
+     baselines and the range stretched to the whole middle track (measured 596px at an 820px
+     column). Grouping them into one full-width flex row puts them on one baseline and caps the
+     range at ~190px. Deliberately self-contained: every property these two controls need is
+     declared right here, so the row does not depend on any shared .field-inline / .slider-triple
+     block landing. The class names are kept so that if such a block is added later these controls
+     pick up its shared styling too -- these selectors are (0,2,0)/(0,3,0), so they beat both
+     `label { display:grid }` (0,0,1) at line 222 and any (0,1,0) shared rule regardless of
+     source order. Nothing above is deleted, so `.weights-panel > .control-grid`'s `border:0;
+     padding:8px 10px` and the triangle's 2-column layout are untouched. */
+  .weights-panel > .control-grid > .energy-controls { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:8px 18px; min-width:0; margin-top:2px; padding-top:8px; border-top:1px solid var(--line); }
+  .energy-controls > .field-inline { display:inline-flex; align-items:center; gap:6px; flex:0 1 auto; min-width:0; font-size:11px; color:var(--muted); }
+  .energy-controls > .field-inline > select { flex:0 1 auto; min-width:80px; max-width:150px; }
+  .energy-controls > .energy-penalty-row { display:grid; align-items:center; flex:1 1 240px; max-width:320px; min-width:0; grid-template-columns:minmax(0, max-content) minmax(72px, 1fr) 38px; gap:5px 7px; }
+  .energy-controls > .energy-penalty-row > div { min-width:0; font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .energy-controls > .energy-penalty-row > input[type="range"] { min-width:0; width:100%; }
+  .energy-controls > .energy-penalty-row > output { min-width:0; text-align:right; font-variant-numeric:tabular-nums; }
   .misc-control-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:7px; align-items:center; padding:9px; border:1px solid var(--line); background:#0f172a; box-shadow:inset 0 1px 0 rgba(255,255,255,.03); }
   .map-slider-control { grid-column:span 1; min-width:0; }
+  /* --- Map display settings (Region 2). Self-contained: depends on no other patch. ---
+     (0,2,0) so it also beats the `grid-template-columns:1fr` flattening inside the
+     @media (max-width:1100px) block without editing that shared line. */
+  .side-settings > .misc-control-grid { grid-template-columns:repeat(auto-fit, minmax(min(100%, 176px), 1fr)); gap:10px; align-items:start; }
+  .misc-control-grid > * { min-width:0; }
+  .misc-control-grid label { color:#cbd5e1; }
+  /* The four on/off toggles ride in one wrapping strip that spans every column, so a
+     30px toggle can never be stranded in a row beside a 54px slider field. Flex on the
+     strip's labels is what stops the global `label { display:grid }` from stretching
+     each checkbox to the full column width. */
+  .misc-check-row { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:2px 16px; min-width:0; }
+  .misc-check-row > label { display:flex; align-items:center; gap:6px; min-height:26px; white-space:nowrap; }
+  .misc-check-row input[type="checkbox"] { flex:none; accent-color:var(--accent); }
   .map-slider-row { display:grid; grid-template-columns:minmax(0, 1fr) 28px; gap:7px; align-items:center; min-width:0; }
   .map-slider-row input { min-width:0; width:100%; }
   .map-slider-row output { text-align:right; font-variant-numeric:tabular-nums; }
   .control-note { color:var(--muted); font-size:11px; line-height:1.15; white-space:normal; }
   .mixability-controls { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(260px, 360px) minmax(280px, 1fr); gap: 10px; align-items: center; }
-  .side-settings .mixability-controls { grid-template-columns: 1fr; }
   .weights { display: grid; grid-template-columns: 76px 1fr 42px; gap: 6px; align-items: center; }
   .simplex-control { width: 100%; max-width: 220px; justify-self:center; display: block; touch-action: none; user-select: none; }
   .simplex-area { fill: #0f172a; stroke: #64748b; stroke-width: 1.5; }
@@ -158,7 +263,9 @@
   .simplex-handle { fill: #2dd4bf; stroke: #0f172a; stroke-width: 4; cursor: grab; }
   .simplex-handle:active { cursor: grabbing; }
   label { display: grid; gap: 4px; font-size: 11px; color: var(--muted); }
-  input, select, button { font: inherit; }
+  /* Without this, every `width:100%` control overflows its box by padding+border
+     (measured: .toolbar-num's input spilled its label by exactly 16px = 14 padding + 2 border). */
+  input, select, button, output { font: inherit; box-sizing: border-box; }
   input[type="number"], select { padding: 5px 6px; border: 1px solid var(--line); border-radius: 4px; background: #0f172a; color: var(--ink); min-width:0; }
   input[type="range"] { accent-color: var(--accent); }
   output { font-size: 11px; text-align: right; color: var(--ink); }
@@ -183,29 +290,22 @@
   .action-symbol-button.pin-button:hover,
   .action-symbol-button.pin-active { color:#fef3c7; border-color:var(--pin); background:rgba(251,191,36,.15); }
   .action-symbol-button.track-one span, .action-symbol-button.track-two span { font-size:11px; }
-  .song-panel audio { display: none; }
+  audio { display: none; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-start; }
   .side-actions { display:flex; gap:8px; flex-wrap:wrap; border:1px solid var(--line); background:var(--panel); padding:9px; }
   .side-actions button.danger { color:#fecaca; border-color:#4b2630; }
   .side-actions button.danger:hover { border-color:#fb7185; }
   .energy-curve { height: 220px; border: 1px solid var(--line); background: var(--panel); }
-  /* Right build column: fit and single-column stacking regardless of viewport width */
-  .build-column .sequence-list { height:auto; min-height:180px; max-height:320px; }
-  .build-column .recommendation-panel { max-height:none; }
-  .build-column .recommendation-panel table { min-width:600px; }
-  .build-column .transition-preview-panel { min-height:auto; }
-  .build-column .transition-workbench,
-  .build-column .transition-main,
-  .build-column .transition-settings-panel,
-  .build-column .preview-render-layout,
-  .build-column .preview-render-grid,
-  .build-column .preview-timing-grid,
-  .build-column .preview-mode-controls,
-  .build-column .transition-window-card,
-  .build-column .transition-editor-lanes,
-  .build-column .transition-lane-tools,
-  .build-column .transition-transport-row,
-  .build-column .diagnostic-transition-pair { grid-template-columns:1fr; }
+  /* The right column now holds only the energy curve + sequence. */
+  .build-column .sequence-list { height:auto; min-height:220px; max-height:none; }
+  /* Recommendations sit under the library table in the analysis column. */
+  /* Library pane splits the left column the same way the map pane does: the track
+     table flexes, recommendations keep a share below, and each card scrolls itself. */
+  #pane-library.active { height:100%; min-height:0; grid-template-rows:minmax(220px,1fr) minmax(190px,.7fr); align-content:stretch; }
+  .library-recommendations { margin-top:0; min-height:0; display:grid; grid-template-rows:auto auto minmax(0,1fr); }
+  .analysis-column .recommendation-panel { max-height:none; min-height:0; height:100%; }
+  #pane-transition.active { align-content:start; }
+  #pane-transition .transition-preview-panel { min-height:auto; }
   .explore-lower-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(430px, 520px); gap: 12px; align-items: start; }
   .energy-column, .sequence-panel, .recommendations-section { min-width: 0; display: grid; gap: 8px; align-content: start; }
   .sequence-panel { align-self: start; }
@@ -213,39 +313,69 @@
   .sequence-list, .recommendation-panel, .transition-diagnostics, .transition-preview-panel { border: 1px solid var(--line); background: var(--panel); max-height: 560px; overflow: auto; }
   .sequence-list { height: 260px; max-height: 260px; overflow-y: auto; overflow-x: hidden; resize:none; overscroll-behavior:contain; }
   .sequence-list table { table-layout:fixed; width:100%; min-width:0; }
-  .sequence-list .slot-col { width:42px; }
-  .sequence-list .target-col { width:52px; text-align:center; }
-  .sequence-list .actual-col { width:52px; text-align:center; }
-  /* Narrow right column: let the row actions wrap instead of squeezing the Track cell. */
-  .sequence-list .actions-col { width:104px; }
-  .sequence-list .table-actions { flex-wrap:wrap; gap:3px; justify-content:flex-end; }
-  .sequence-list .action-symbol-button, .sequence-list .play-button { width:28px; min-width:28px; height:28px; min-height:28px; padding:0; font-size:13px; }
+  .sequence-list .slot-col { width:34px; }
+  /* 52px minus the base 7px cell padding left a 38px content box, which is what
+     clipped input.target-edit ("5.00" measured clientWidth 42 / scrollWidth 46).
+     58px with 3px cell padding gives a 52px content box - see .target-edit below. */
+  .sequence-list .target-col { width:58px; text-align:center; }
+  .sequence-list th.target-col, .sequence-list td.target-col { padding-left:3px; padding-right:3px; }
+  /* 52px left a 38px content box for the two-line header "Track<br>energy"; "energy"
+     is ~40px at the table's 12px and overflowed its cell. Paid for out of the 28px
+     freed by the actions column below. */
+  .sequence-list .actual-col { width:46px; text-align:center; }
+  /* Narrow right column: a fixed 2x2 block of actions - select / up / down / remove is
+     the most a row can carry (energy_sequence_builder.js:4378-4381) - the same idiom the
+     recommendation panel uses. There is no global box-sizing:border-box in this file, so
+     the 28px below measured 30px on screen and 2*30+4 = 64px would overflow the 62px
+     content box a 76px column leaves; border-box makes it 2*28+4 = 60px in 62px, and
+     28px of column width goes back to the Track cell. */
+  /* One row of up to 4 actions (select / up / down / remove). A 2-wide block wrapped
+     3 buttons to 2 rows and made every slot row 73px tall - 730px for a 10-slot
+     sequence - to buy the Track cell 11px. 24px buttons fit all four on one line. */
+  .sequence-list .actions-col { width:106px; }
+  .sequence-list .table-actions { display:grid; grid-template-columns:repeat(4, 24px); gap:3px; align-items:center; justify-content:end; }
+  .sequence-list .action-symbol-button, .sequence-list .play-button { box-sizing:border-box; width:24px; min-width:24px; height:24px; min-height:24px; padding:0; font-size:12px; }
   .sequence-list td, .sequence-list th { vertical-align:middle; }
   .sequence-list th.target-col, .sequence-list td.target-col,
   .sequence-list th.actual-col, .sequence-list td.actual-col { text-align:center; }
-  .sequence-list .target-edit { width:42px; max-width:42px; text-align:center; box-sizing:border-box; padding-left:3px; padding-right:3px; }
+  /* Fill the 52px content box the 58px column now leaves, instead of a fixed 42px box
+     that clipped its own value (clientWidth 42 vs scrollWidth 46). Spinners are
+     suppressed so the digits get the whole box. */
+  .sequence-list .target-edit { width:100%; min-width:0; max-width:none; box-sizing:border-box; text-align:center; padding:4px 3px; font-size:11px; font-variant-numeric:tabular-nums; -moz-appearance:textfield; appearance:textfield; }
+  .sequence-list .target-edit::-webkit-outer-spin-button,
+  .sequence-list .target-edit::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
   .table-actions { display:flex; gap:4px; flex-wrap:nowrap; align-items:center; min-width:0; }
   .sequence-drag-handle { display:inline-grid; place-items:center; width:18px; height:18px; margin-right:4px; border:1px solid #334155; border-radius:4px; color:#cbd5e1; background:#0b1020; cursor:grab; user-select:none; font-size:12px; line-height:1; }
   .sequence-drag-handle:active { cursor:grabbing; border-color:#2dd4bf; color:#ecfeff; }
-  .sequence-list tr.drag-source { opacity:.58; outline:1px solid #2dd4bf; outline-offset:-1px; }
+  .sequence-list tr[data-slot-drag] { cursor:grab; }
+  .sequence-list tr.slot-drop-ready > td { border-top:1px dashed rgba(63,81,112,.9); }
+  .sequence-list tr.slot-drop-over > td { background:rgba(45,212,191,.13); box-shadow:inset 0 0 0 1px rgba(45,212,191,.5); }
+  body.track-drag-will-unload .sequence-list tr[data-slot-drag] { opacity:.6; }
   .recommendation-panel { max-height: 620px; overflow-y:auto; overflow-x:auto; }
-  .recommendation-panel table { font-size: 11px; width:100%; min-width:820px; }
+  .recommendation-panel table { font-size: 11px; width:100%; min-width:0; table-layout:fixed; }
   .recommendation-panel, .library-table { scrollbar-width:thin; scrollbar-color:#334155 transparent; }
   .recommendation-panel::-webkit-scrollbar, .library-table::-webkit-scrollbar { width:8px; height:8px; }
   .recommendation-panel::-webkit-scrollbar-thumb, .library-table::-webkit-scrollbar-thumb { background:#334155; border-radius:999px; }
-  .recommendation-panel th:nth-child(1), .recommendation-panel td:nth-child(1) { width:34px; }
-  .recommendation-panel th:nth-child(2), .recommendation-panel td:nth-child(2) { width:150px; }
-  .recommendation-panel th:nth-child(3), .recommendation-panel td:nth-child(3) { width:150px; }
-  .recommendation-panel th:nth-child(4), .recommendation-panel td:nth-child(4) { width:auto; min-width:200px; }
-  .recommendation-panel th:nth-child(n+5), .recommendation-panel td:nth-child(n+5) { width:58px; }
-  .recommendation-panel th, .recommendation-panel td { padding: 5px 6px; }
-  .recommendation-panel .table-actions { display:grid; grid-template-columns:repeat(5, 28px); gap:4px; align-items:center; justify-content:start; }
+  .recommendation-panel th:nth-child(1), .recommendation-panel td:nth-child(1) { width:44px; }
+  .recommendation-panel th:nth-child(2), .recommendation-panel td:nth-child(2) { width:auto; }
+  .recommendation-panel th:nth-child(n+3), .recommendation-panel td:nth-child(n+3) { width:52px; }
+
+  /* Fixed layout sets the column widths; let the score meters shrink into them. */
+  .recommendation-panel td.recommendation-score-cell,
+  .recommendation-panel td.recommendation-score-cell.bars-only { min-width:0; }
+  .recommendation-panel .score-meter, .recommendation-panel .score-meter.bars-only { min-width:0; }
+  /* Rank cell doubles as the pin toggle. */
+  .rec-rank { width:100%; padding:3px 4px; border:0; background:transparent; color:var(--muted); font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; border-radius:5px; cursor:pointer; }
+  .rec-rank:hover { background:rgba(251,191,36,.14); color:#fde68a; }
+  .rec-rank.pin-active { color:var(--pin); }
+  .recommendation-panel th, .recommendation-panel td,
+  .library-table th, .library-table td { padding:5px 7px; vertical-align:middle; }
+  /* Both tables are click-to-play and drag sources: same affordance in both. */
+  .recommendation-panel tbody tr, .library-table tbody tr { cursor:pointer; }
+  .recommendation-panel tbody tr:hover, .library-table tbody tr:hover { background:rgba(148,163,184,.07); }
+  .recommendation-panel .table-actions { display:grid; grid-template-columns:repeat(2, 28px); gap:4px; align-items:center; justify-content:start; }
   .recommendation-panel .action-symbol-button,
   .recommendation-panel .play-button { width:28px; min-width:28px; height:28px; min-height:28px; padding:0; font-size:13px; }
-  .recommendation-panel .track-summary { min-width:190px; }
-  .recommendation-panel .track-title,
-  .recommendation-panel .track-artist,
-  .recommendation-panel .track-meta-line { white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:break-word; }
   .recommendation-panel td.recommendation-score-cell { min-width:62px; vertical-align:middle; padding-top:7px; padding-bottom:7px; }
   .recommendation-panel td.recommendation-score-cell.bars-only { min-width:48px; padding-top:9px; padding-bottom:9px; }
   .score-meter { display:grid; grid-template-rows:auto 5px; gap:5px; align-items:center; min-width:52px; }
@@ -288,7 +418,6 @@
   .diagnostic-feature-bar.groove .diagnostic-bar-track i { background:#2dd4bf; }
   .diagnostic-feature-bar.harmonic .diagnostic-bar-track i { background:#fbbf24; }
   .diagnostic-feature-bar.energy .diagnostic-bar-track i { background:#38bdf8; }
-  .focused-score-bars .diagnostic-feature-bar { grid-template-columns:130px minmax(110px,1fr) 52px 42px; }
   .focused-score-bars { margin-bottom:8px; }
   .focused-transition-section, .focused-transition-waveforms { display:grid; gap:8px; min-width:0; margin-top:12px; }
   .focused-transition-waveforms h3 { margin:0; font-size:13px; color:#dbeafe; }
@@ -338,6 +467,13 @@
   .transition-workbench { min-height:760px; display:grid; grid-template-columns:1fr; align-content:start; background:#0b1020; }
   .transition-controls { border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:#101827; padding:12px 14px; overflow:visible; }
   .transition-main { min-width:0; display:grid; grid-template-rows:auto auto auto; }
+  /* A grid item's automatic minimum size is its min-content width, so any item in the
+     workbench chain can push .transition-main's auto track wider than the analysis column
+     even though .transition-main itself is already min-width:0. .transition-controls is the
+     load-bearing one - it wraps .transition-settings-panel, and its min-content is what made
+     .transition-main's column compute 892px inside an 820px box. */
+  .transition-controls, .transition-editor, .transition-editor-head, .transition-window-stack,
+  .transition-transport-row, .transition-topbar, .transition-lane-tools, .preview-render-section { min-width:0; }
   .transition-topbar { border-top:1px solid var(--line); background:var(--panel2); padding:8px 12px; display:flex; gap:10px; align-items:center; justify-content:flex-end; }
   .transition-links { display:flex; gap:8px; flex-wrap:wrap; }
   .transition-links a { color:#67e8f9; text-decoration:none; font-size:12px; }
@@ -366,7 +502,11 @@
   .transition-window-stack { display:grid; grid-template-columns:1fr; gap:10px; }
   .transition-transport-row { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; align-items:center; }
   .transition-transport-main { min-width:0; }
-  .transition-window-card { background:#151515; grid-template-columns:minmax(0,1fr) minmax(230px,300px); align-items:stretch; }
+  /* minmax(0,300px) still resolves to a 300px side panel whenever there is room (CSS Grid
+     12.6 Maximize Tracks grows a non-flexible track to its growth limit before the fr track
+     takes the remainder), but unlike minmax(230px,300px) it contributes no min-content floor
+     to the editor subtree. */
+  .transition-window-card { background:#151515; grid-template-columns:minmax(0,1fr) minmax(0,300px); align-items:stretch; }
   .transition-window-main { min-width:0; display:grid; align-content:stretch; }
   .transition-track-side { min-width:0; border-left:1px solid #2d2d2d; padding-left:10px; display:grid; grid-template-rows:auto minmax(0,1fr); gap:10px; align-content:start; }
   .transition-track-meta { min-width:0; overflow:hidden; }
@@ -388,30 +528,38 @@
   .transition-section-canvas { height:245px; border-radius:7px; }
   .transition-overview-canvas:active, .transition-section-canvas:active { cursor:grabbing; }
   .transition-editor-empty { border:1px solid var(--line); background:rgba(15,23,42,.62); border-radius:7px; padding:12px; color:var(--muted); font-size:12px; }
-  .current-transition-score, .library-panel { border:1px solid var(--line); background:var(--panel); }
+  .current-transition-score { border:1px solid var(--line); background:var(--panel); }
+  .library-panel { display:grid; }
+  #pane-library.active .library-panel { min-height:0; grid-template-rows:auto auto minmax(0,1fr); }
+  #pane-library.active .library-table { max-height:none; height:100%; min-height:0; }
   .current-transition-score { padding:10px; overflow:auto; }
-  .library-panel { padding:10px; display:grid; gap:10px; }
-  .library-toolbar { display:grid; grid-template-columns:minmax(260px,1fr); gap:10px; align-items:end; }
-  .library-table { max-height:690px; overflow:auto; border:1px solid var(--line); }
+
+  .library-table { max-height:690px; overflow:auto; }
   .library-table th[data-library-sort] { cursor:pointer; user-select:none; }
   .library-table th[data-library-sort]::after { content: attr(data-sort-indicator); color:#67e8f9; margin-left:6px; font-size:11px; }
   .library-table th[data-sort-indicator="↕"]::after { color:var(--muted); }
   .library-table .th-sort { background:none; border:0; padding:0; margin:0; color:inherit; font:inherit; font-weight:inherit; cursor:pointer; text-align:inherit; }
-  .library-table table { font-size:11px; min-width:980px; }
-  .library-table th, .library-table td { padding:4px 6px; vertical-align:middle; }
-  .library-table th.short { width:58px; min-width:52px; font-size:11px; line-height:1.05; }
-  .library-table th.wrap-head { white-space:normal; }
+  .library-table table { font-size:11px; width:100%; min-width:0; table-layout:fixed; }
+  .library-table th:nth-child(1), .library-table td:nth-child(1) { width:auto; }
+  .library-table th:nth-child(n+2), .library-table td:nth-child(n+2) { width:54px; }
+  .library-table th:last-child, .library-table td:last-child { width:78px; }
+
+  .library-table th.short { font-size:11px; line-height:1.05; }
   .library-table th.center, .library-table td.center { text-align:center; font-variant-numeric:tabular-nums; }
-  .library-title-cell { max-width:280px; font-weight:700; color:var(--ink); overflow:hidden; }
-  .library-title-summary { display:grid; grid-template-columns:30px minmax(0,1fr); gap:7px; align-items:center; min-width:0; }
-  .library-title-summary .art-thumb, .library-title-summary .art-placeholder { width:30px; height:30px; border-radius:4px; }
-  .library-title-summary span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .library-title-cell { min-width:0; color:var(--ink); overflow:hidden; }
+  /* Compact track cell: art + title + artist, one line each. */
+  .library-table .track-summary.compact,
+  .recommendation-panel .track-summary.compact { grid-template-columns:30px minmax(0,1fr); gap:7px; align-items:center; min-width:0; }
+  .library-table .track-summary.compact .art-thumb,
+  .recommendation-panel .track-summary.compact .art-thumb { width:30px; height:30px; border-radius:4px; }
+  .library-table .track-title, .recommendation-panel .track-title { font-weight:700; }
+  .library-table .track-title, .library-table .track-artist,
+  .recommendation-panel .track-title, .recommendation-panel .track-artist,
+  .recommendation-panel .track-meta-line { display:block; -webkit-line-clamp:none; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .library-table tr.is-track1 { box-shadow: inset 3px 0 0 var(--track1); }
   .library-table tr.is-track2 { box-shadow: inset 3px 0 0 var(--track2); }
   .library-table tr.now-playing { background: rgba(29,185,84,.12); box-shadow: inset 3px 0 0 #1db954; }
   .library-table tr.now-playing-paused { background: rgba(148,163,184,.08); box-shadow: inset 3px 0 0 #64748b; }
-  .library-actions { display:flex; gap:4px; flex-wrap:nowrap; align-items:center; min-width:0; }
-  .library-actions button { padding:4px 6px; }
   .row-player { display:grid; grid-template-columns:auto minmax(120px, 200px); gap:5px; align-items:center; min-width:220px; }
   .row-player .play-button { border-radius:999px; min-width:42px; }
   .row-waveform-scrubber { display:grid; grid-template-columns:minmax(80px, 1fr) 56px; gap:5px; align-items:center; min-width:0; }
@@ -420,24 +568,33 @@
   .row-waveform { width:100%; height:24px; border:1px solid #263244; background:#0b1020; border-radius:999px; cursor:pointer; display:block; }
   .scrub-range { --progress:0%; width:100%; min-width:80px; accent-color:#1db954; background:linear-gradient(to right, #1db954 var(--progress), #334155 var(--progress)); border-radius:999px; }
   .scrub-time { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right; }
-  .recommendation-filterbar { display:grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap:7px; padding:8px; border-bottom:1px solid var(--line); background:#0f172a; align-items:end; }
-  .recommendation-filterbar label { color:#cbd5e1; }
-  .recommendation-filterbar .recommendation-search { grid-column:span 2; min-width:min(280px, 100%); }
-  .recommendation-filterbar input[type="number"] { width:100%; }
-  .recommendation-filterbar input[type="search"] { width:100%; padding:5px 6px; border:1px solid var(--line); border-radius:4px; background:#0b1020; color:var(--ink); }
   .recommendation-panel tr.pinned-row { background:rgba(251,191,36,.09); box-shadow:inset 3px 0 0 var(--pin); }
   .preview-grid { display:grid; grid-template-columns: 1fr; gap: 10px; margin-bottom:12px; }
   .preview-card { border: 1px solid var(--line); background: var(--panel2); border-radius: 6px; padding: 10px; min-height: 0; overflow:hidden; }
   .preview-card h3 { margin: 0 0 7px; font-size: 13px; }
   .preview-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:0; }
   .preview-actions a { color:#67e8f9; text-decoration:none; border:1px solid var(--line); border-radius:4px; padding:6px 9px; }
-  .transition-settings-panel { display:grid; grid-template-columns:minmax(260px,.72fr) minmax(360px,1fr) auto; gap:12px; align-items:end; }
-  .preview-render-layout { display:grid; grid-template-columns:minmax(240px,.7fr) minmax(340px,1fr); gap:12px; align-items:start; }
+  /* 260 + 360 + auto(min-width:220) + 2x12 gap computed 864px inside an ~820px analysis
+     column - that is what put .preview-render-actions at x 677..897, on top of the Transition
+     FX column. repeat(auto-fit, minmax(min(100%,260px),1fr)) can never demand more than its
+     container: 3 tracks at >=~1050px of content (>=1500px viewport), 2 at ~790px, 1 below
+     ~530px, and auto-fit collapses the spare track so 3 items always fill their row.
+     .preview-render-layout is deleted rather than retuned - repo-wide grep finds it only in
+     this file and in stale data/exports snapshots, never on an element. Its @media entry is
+     removed by the last patch. */
+  .transition-settings-panel { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap:12px; align-items:start; }
   .preview-render-section { display:grid; gap:8px; padding:9px; border:1px solid var(--line); border-radius:7px; background:#0f172a; }
   .preview-render-section h3 { margin:0; font-size:12px; color:#dbeafe; }
-  .preview-render-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:10px; }
-  .preview-timing-grid { grid-template-columns: repeat(3, minmax(86px, 1fr)); gap:8px; }
-  .preview-mode-controls { display:grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap:8px; }
+  /* repeat(4, minmax(120px,1fr)) = 504px inside a 360px column is how the FX selects spilled
+     144px over the render buttons; repeat(3, minmax(86px,1fr)) = 274px did the same inside the
+     260px column. The min(100%, N) floors clamp both to the container at any width, and
+     auto-fit collapses the empty track so the 3 timing fields still sit 3-across whenever
+     3 x 86px + 16px of gap fits. .preview-render-grid's own track list is always overridden by
+     .preview-timing-grid (same element, later rule, equal specificity) - retuned anyway so the
+     class stays safe to use on its own. */
+  .preview-render-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap:10px; }
+  .preview-timing-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 86px), 1fr)); gap:8px; }
+  .preview-mode-controls { display:grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr)); gap:8px; }
   .fx-legend { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding-top:2px; color:#cbd5e1; font-size:11px; }
   .fx-item { display:inline-flex; gap:5px; align-items:center; padding:3px 6px; border:1px solid #263244; border-radius:999px; background:#101827; }
   .fx-icon { display:inline-grid; place-items:center; width:18px; height:18px; border-radius:999px; background:#172033; color:#e5e7eb; font-size:10px; font-weight:800; }
@@ -445,23 +602,32 @@
   .fx-line.volume { background:#48c8f2; }
   .fx-line.eq { background:#ffd13d; }
   .fx-line.filter { background:#f472b6; }
-  .preview-render-actions { display:grid; gap:8px; align-content:end; min-width:220px; }
+  /* The 220px floor was the measured cause of the render buttons overlapping their neighbour.
+     The buttons already sit in a wrapping .preview-actions flex row, so a 0 floor costs
+     nothing. */
+  .preview-render-actions { display:grid; gap:8px; align-content:end; min-width:0; }
   .preview-status { min-height:20px; color:var(--muted); font-size:12px; padding-top:5px; }
   .preview-result { border:1px solid var(--line); background:var(--panel2); border-radius:6px; margin-top:12px; padding:10px; }
-  .song-panel { border: 1px solid var(--line); background: linear-gradient(180deg, #151f32 0%, #101827 100%); padding: 10px; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; box-shadow:0 14px 36px rgba(0,0,0,.26); }
-  .song-panel.hidden { display:none; }
-  .wave-player { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; align-items:center; min-width:0; }
   .player-toggle { width:44px; height:44px; border-radius:999px; display:grid; place-items:center; background:#1db954; border-color:#1db954; color:#06130a; font-weight:800; font-size:18px; line-height:1; padding:0; }
   .player-toggle:hover { border-color:#7ddf9b; }
-  .wave-main { min-width:0; display:grid; gap:5px; }
-  .wave-topline { display:flex; justify-content:space-between; gap:8px; font-size:11px; font-variant-numeric:tabular-nums; min-width:0; }
   .song-waveform { width:100%; height:54px; border:1px solid #243244; background:#0b1020; border-radius:7px; cursor:pointer; display:block; }
-  .global-player { position:relative; z-index:2; display:grid; grid-template-columns:48px minmax(140px, 1fr) auto minmax(220px, 2.4fr) auto minmax(120px, .5fr); gap:12px; align-items:center; padding:9px 14px; border:1px solid #334155; border-radius:9px; background:rgba(15,23,42,.96); }
+  /* The player bar's progress control is the waveform itself. */
+  .global-waveform { height:44px; min-width:0; border-radius:6px; touch-action:none; }
+  .global-player { position:relative; z-index:2; display:grid; grid-template-columns:minmax(180px, 1fr) minmax(220px, 2.6fr) auto minmax(120px, .5fr); gap:12px; align-items:center; padding:9px 14px; border:1px solid #334155; border-radius:9px; background:rgba(15,23,42,.96); }
+  /* No play button: the now-playing block itself toggles playback. */
+  .global-nowplaying { display:grid; grid-template-columns:48px minmax(0,1fr); gap:10px; align-items:center; min-width:0; padding:4px; margin:-4px; border-radius:8px; cursor:pointer; }
+  .global-nowplaying:hover { background:rgba(148,163,184,.10); }
+  .global-nowplaying.is-empty { cursor:default; opacity:.75; }
+  .global-nowplaying.is-empty:hover { background:none; }
+  .global-nowplaying .global-art { position:relative; }
+  .global-nowplaying:not(.is-empty) .global-art::after { content:'▶'; position:absolute; inset:0; display:grid; place-items:center; border-radius:5px; background:rgba(9,14,28,.62); color:#fff; font-size:16px; opacity:0; transition:opacity .12s; }
+  .global-nowplaying.is-playing:not(.is-empty) .global-art::after { content:'⏸'; }
+  .global-nowplaying:not(.is-empty):hover .global-art::after,
+  .global-nowplaying:not(.is-empty):focus-visible .global-art::after { opacity:1; }
   .global-art { width:48px; height:48px; border-radius:5px; object-fit:cover; border:1px solid var(--line); background:#0f172a; display:grid; place-items:center; color:var(--muted); font-size:11px; overflow:hidden; }
   .global-art img { width:100%; height:100%; object-fit:cover; display:block; }
   .global-track { min-width:0; display:grid; gap:2px; }
   .global-meta-line { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:11px; }
-  .global-scrub { min-width:0; }
   .global-volume { display:grid; grid-template-columns:22px minmax(76px,1fr); gap:7px; align-items:center; color:var(--muted); font-size:11px; min-width:116px; }
   .volume-icon { display:grid; place-items:center; width:22px; height:22px; color:#cbd5e1; border:0; background:transparent; padding:0; cursor:pointer; }
   .volume-icon:hover { color:#ecfeff; }
@@ -483,7 +649,6 @@
   .transition-badge .track-title, .transition-badge .track-artist, .transition-badge .track-meta-line { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
   .transition-badge .track-artist, .transition-badge .track-meta-line { font-size:11px; line-height:1.18; }
   .camelot-key { font-weight:700; }
-  .target-edit { width:70px; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
   th, td { border-bottom: 1px solid #263244; padding: 6px 7px; vertical-align: top; }
   th { position: sticky; top: 0; background: #0f172a; z-index: 1; text-align: left; color: #cbd5e1; }
@@ -502,7 +667,6 @@
   .toast-undo:hover { border-color:#5eead4; background:#164e46; }
   .toast-close { flex:none; width:24px; height:24px; display:grid; place-items:center; padding:0; border:0; background:transparent; color:var(--muted); font-size:12px; line-height:1; border-radius:5px; cursor:pointer; }
   .toast-close:hover { color:var(--ink); }
-  .pane-hint { margin:0 0 10px; font-size:12px; color:var(--muted); }
   .sequence-gap-warning { font-size:12px; margin:0 0 6px; }
   .transition-badge-note { font-size:10px; margin-top:4px; }
   @media (max-width: 1100px) {
@@ -513,18 +677,24 @@
     .build-column { grid-template-rows:auto auto; }
     .build-scroll { overflow:visible; }
     .transition-badges { grid-template-columns:1fr; }
-    .global-player { grid-template-columns:42px minmax(0,1fr) auto auto; grid-template-rows:auto auto; row-gap:8px; }
-    .global-player .global-scrub { grid-column:1 / 3; grid-row:2; }
-    .global-player #global-time { grid-column:3 / 4; grid-row:2; }
-    .global-player .global-volume { grid-column:4 / 5; grid-row:2; justify-self:end; }
-    .control-grid, .mixability-controls, .selected-panel, .lower-grid, .explore-lower-grid, .preview-grid, .preview-render-layout, .transition-settings-panel, .transition-window-card, .transition-transport-row, .transition-workbench, .transition-editor-lanes, .transition-lane-tools, .song-panel, .library-toolbar, .diagnostics-grid, .diagnostic-transition-pair, .diagnostic-embedding-compare { grid-template-columns: 1fr; }
+    .global-player { grid-template-columns:minmax(0,1fr) auto auto; grid-template-rows:auto auto; row-gap:8px; }
+    .global-player .global-nowplaying { grid-column:1 / -1; grid-row:1; }
+    .global-player .global-waveform { grid-column:1 / 2; grid-row:2; }
+    .global-player #global-time { grid-column:2 / 3; grid-row:2; }
+    .global-player .global-volume { grid-column:3 / 4; grid-row:2; justify-self:end; }
+    .control-grid, .mixability-controls, .selected-panel, .lower-grid, .explore-lower-grid, .preview-grid, .transition-window-card, .transition-transport-row, .transition-workbench, .transition-editor-lanes, .transition-lane-tools, .diagnostics-grid, .diagnostic-transition-pair, .diagnostic-embedding-compare { grid-template-columns: 1fr; }
     .diagnostic-card.wide { grid-column:auto; }
     .diagnostic-feature-bar { grid-template-columns:1fr; gap:4px; }
     .diagnostic-feature-bar b, .diagnostic-feature-bar em { text-align:left; }
     .transition-track-side { border-left:0; border-top:1px solid #2d2d2d; padding-left:0; padding-top:10px; }
     .preview-mode-controls { border-left:0; padding-left:0; }
-    .side-settings .control-grid, .misc-control-grid { grid-template-columns: 1fr; }
+    .weights-panel > .control-grid, .misc-control-grid { grid-template-columns: 1fr; }
     .actions { justify-content: flex-start; }
+    /* Stacked layout has no fixed column height, so cap the two library cards
+       instead of splitting the space between them. */
+    #pane-library.active { height:auto; grid-template-rows:auto auto; align-content:start; }
+    #pane-library.active .library-table { height:auto; max-height:520px; }
+    .analysis-column .recommendation-panel { height:auto; max-height:420px; }
   }
 </style>
 </head>
@@ -535,6 +705,7 @@
     <nav class="pane-tabs" role="tablist" aria-label="Analysis views">
       <button class="tab-button active" id="tab-explore" role="tab" aria-selected="true" aria-controls="pane-explore" tabindex="0" data-pane-tab="explore">Map</button>
       <button class="tab-button" id="tab-library" role="tab" aria-selected="false" aria-controls="pane-library" tabindex="-1" data-pane-tab="library">Library</button>
+      <button class="tab-button" id="tab-transition" role="tab" aria-selected="false" aria-controls="pane-transition" tabindex="-1" data-pane-tab="transition">Transition</button>
       <button class="tab-button" id="tab-diagnostics" role="tab" aria-selected="false" aria-controls="pane-diagnostics" tabindex="-1" data-pane-tab="diagnostics">Diagnostics</button>
     </nav>
     <button id="help-toggle" class="icon-button settings-toggle" type="button" aria-label="Keyboard shortcuts and controls" aria-controls="help-popover" aria-expanded="false" title="Keyboard shortcuts and controls">?</button>
@@ -559,7 +730,6 @@
   <div class="app-body">
   <div class="analysis-column" aria-label="Analysis views">
     <section id="pane-explore" class="pane active" role="tabpanel" aria-labelledby="tab-explore">
-      <p class="pane-hint">Pick tracks on the map — click a dot to preview, then send it to the deck or sequence on the right.</p>
       <div class="plot-column">
         <div class="plot-pane">
           <div>                        <script>window.PlotlyConfig = {MathJaxConfig: 'local'};</script>
@@ -4444,7 +4614,7 @@ maplibre-gl/dist/maplibre-gl.js:
 
 window.Plotly = Plotly;
 return Plotly;
-}));</script>                <div id="dj_sequence_builder_pacmap" class="plotly-graph-div" style="height:650px; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("dj_sequence_builder_pacmap")) {                    Plotly.newPlot(                        "dj_sequence_builder_pacmap",                        [{"customdata":[[0,"Used To Love","Martin Garrix\u002fDean Lewis","Unknown","warren","","",119.0,"1","Martin Garrix; Dean Lewis - Used To Love.mp3",null,4.531752586364746,"Unknown","3:57","#cbd5e1"],[1,"Ocean (Don Diablo Remix)","Martin Garrix\u002fDon Diablo\u002fKhalid","Unknown","warren","","",123.0,"2","Martin Garrix; Don Diablo; Khalid - Ocean (Don Diablo Remix).mp3",null,5.7740654945373535,"Unknown","3:23","#cbd5e1"],[2,"Empty","Martin Garrix\u002fDubVision\u002fJaimes","Unknown","warren","","",127.0,"3","Martin Garrix; DubVision; Jaimes - Empty.mp3",null,6.036455154418945,"Unknown","3:18","#cbd5e1"],[3,"Latency","Martin Garrix\u002fDyro","Unknown","warren","","",128.0,"4","Martin Garrix; Dyro - Latency.mp3",null,7.470173358917236,"Unknown","3:24","#cbd5e1"],[4,"Love Runs Out","Martin Garrix\u002fG-Eazy\u002fSasha Alex Sloan","Unknown","warren","","",90.0,"5","Martin Garrix; G-Eazy; Sasha Alex Sloan - Love Runs Out.mp3",null,4.731134414672852,"Unknown","2:44","#cbd5e1"],[5,"Wizard (Original Mix)","Martin Garrix\u002fJay Hardway","Unknown","warren","","",128.0,"6","Martin Garrix; Jay Hardway - Wizard (Original Mix).mp3",null,7.728114128112793,"Unknown","4:41","#cbd5e1"],[6,"These Are The Times","Martin Garrix\u002fJRM","Unknown","warren","","",127.0,"7","Martin Garrix; JRM - These Are The Times.mp3",null,5.531683444976807,"Unknown","3:09","#cbd5e1"],[7,"These Are The Times (Dyro Remix)","Martin Garrix\u002fJRM\u002fDyro","Unknown","warren","","",127.0,"8","Martin Garrix; JRM; Dyro - These Are The Times (Dyro Remix).mp3",null,7.105457782745361,"Unknown","2:43","#cbd5e1"],[8,"Burn Out","Martin Garrix\u002fJustin Mylo\u002fDewain Whitmore","Unknown","warren","","",128.0,"9","Martin Garrix; Justin Mylo; Dewain Whitmore - Burn Out.mp3",null,5.855261325836182,"Unknown","3:20","#cbd5e1"],[9,"Bouncybob","Martin Garrix\u002fJustin Mylo\u002fMesto","Unknown","warren","","",128.0,"10","Martin Garrix; Justin Mylo; Mesto - Bouncybob.mp3",null,5.556961536407471,"Unknown","4:11","#cbd5e1"],[10,"Hero","Martin Garrix\u002fJVKE","Unknown","warren","","",84.0,"11","Martin Garrix; JVKE - Hero.mp3",null,6.247704982757568,"Unknown","2:41","#cbd5e1"],[11,"Ocean","Martin Garrix\u002fKhalid","Unknown","warren","","",140.0,"12","Martin Garrix; Khalid - Ocean.mp3",null,4.292067050933838,"Unknown","3:37","#cbd5e1"],[12,"Game Over","Martin Garrix\u002fLOOPERS","Unknown","warren","","",128.0,"13","Martin Garrix; LOOPERS - Game Over.mp3",null,7.194375991821289,"Unknown","2:36","#cbd5e1"],[13,"Summer Days","Martin Garrix\u002fMacklemore\u002fPatrick Stump","Unknown","warren","","",114.0,"14","Martin Garrix; Macklemore; Patrick Stump - Summer Days.mp3",null,4.963922023773193,"Unknown","2:44","#cbd5e1"],[14,"Summer Days (Vintage Culture & Bruno Be Remix)","Martin Garrix\u002fMacklemore\u002fPatrick Stump\u002fVintage Culture\u002fBruno Be","Unknown","warren","","",122.0,"15","Martin Garrix; Macklemore; Patrick Stump; Vintage Culture; Bruno Be - Summer Days (Vintage Culture & Bruno Be Remix).mp3",null,5.90132999420166,"Unknown","3:16","#cbd5e1"],[15,"Forever","Martin Garrix\u002fMatisse & Sadko","Unknown","warren","","",128.0,"16","Martin Garrix; Matisse & Sadko - Forever.mp3",null,6.194779396057129,"Unknown","3:39","#cbd5e1"],[16,"Mistaken","Martin Garrix\u002fMatisse & Sadko\u002fAlex Aris","Unknown","warren","","",128.0,"17","Martin Garrix; Matisse & Sadko; Alex Aris - Mistaken.mp3",null,5.557770252227783,"Unknown","4:43","#cbd5e1"],[17,"Together","Martin Garrix\u002fMatisse & Sadko\u002fMax McElligott","Unknown","warren","","",128.0,"18","Martin Garrix; Matisse & Sadko; Max McElligott - Together.mp3",null,6.2392802238464355,"Unknown","3:41","#cbd5e1"],[18,"Limitless","Martin Garrix\u002fMesto","Unknown","warren","","",126.0,"19","Martin Garrix; Mesto - Limitless.mp3",null,6.249465465545654,"Unknown","2:27","#cbd5e1"],[19,"WIEE","Martin Garrix\u002fMesto","Unknown","warren","","",128.0,"20","Martin Garrix; Mesto - WIEE.mp3",null,5.844660758972168,"Unknown","3:23","#cbd5e1"]],"hoverinfo":"none","marker":{"color":"#1f77b4","line":{"color":"black","width":0.5},"size":9},"mode":"markers","name":"Unknown","x":{"dtype":"f4","bdata":"X+pEPznw372iEpm+ftYKv2+\u002fEkBG7Be\u002fAD34vUqasb74NwG\u002f8xU0v4j3DUCvYAdAViqxvrhYrj\u002flA04+zi3dvuDzh770XUW+dHYAv\u002fxH+L4="},"y":{"dtype":"f4","bdata":"4OPavpoJ3z2Cxgs+YgGmPpcZkL+ax6E+UgMGPbOLLj5H6kk+bgeyPrrRjL9QDoK\u002f7E1IPgtlH79M7j69u4RjPks\u002f5j3Vwe09R8SHPpAHlD4="},"type":"scatter"},{"hoverinfo":"skip","marker":{"color":"rgba(255,255,255,0.02)","line":{"color":"rgba(255,255,255,0.92)","width":2},"size":18},"mode":"markers","name":"Hovered","showlegend":false,"x":[],"y":[],"type":"scatter"},{"hoverinfo":"skip","marker":{"color":"rgba(255,255,255,0.16)","line":{"color":"#e5e7eb","width":3},"size":24},"mode":"markers","name":"Selected","showlegend":false,"x":[],"y":[],"type":"scatter"},{"hoverinfo":"skip","line":{"color":"rgba(192,132,252,0.0)","width":0},"mode":"lines","name":"Transition pair","showlegend":false,"x":[],"y":[],"type":"scatter"},{"hoverinfo":"skip","marker":{"color":"rgba(56,189,248,0.18)","line":{"color":"#38bdf8","width":3},"size":20},"mode":"markers+text","name":"Track 1","showlegend":false,"text":[],"textfont":{"color":"#bae6fd","size":12},"textposition":"top center","x":[],"y":[],"type":"scatter"},{"hoverinfo":"skip","marker":{"color":"rgba(192,132,252,0.18)","line":{"color":"#c084fc","width":3},"size":20},"mode":"markers+text","name":"Track 2","showlegend":false,"text":[],"textfont":{"color":"#f3e8ff","size":12},"textposition":"top center","x":[],"y":[],"type":"scatter"},{"hoverinfo":"skip","marker":{"color":"rgba(251,146,60,0.24)","line":{"color":"#fb923c","width":2},"size":14,"symbol":"square"},"mode":"markers+text","name":"Sequence path","showlegend":false,"text":[],"textfont":{"color":"#fed7aa","size":12},"textposition":"top center","x":[],"y":[],"type":"scatter"},{"hoverinfo":"skip","line":{"color":"rgba(52,211,153,0.0)","width":0},"mode":"lines","name":"Recommended next links","showlegend":false,"x":[],"y":[],"type":"scatter"},{"customdata":[],"hoverinfo":"skip","marker":{"color":"rgba(52,211,153,0.12)","line":{"color":"rgba(52,211,153,0.74)","width":1.5},"size":15},"mode":"markers+text","name":"Recommended next","showlegend":false,"text":[],"textfont":{"color":"#d1fae5","size":11},"textposition":"bottom center","x":[],"y":[],"type":"scatter"}],                        {"template":{"data":{"barpolar":[{"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"bar":[{"error_x":{"color":"#f2f5fa"},"error_y":{"color":"#f2f5fa"},"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"carpet":[{"aaxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"baxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"type":"carpet"}],"choropleth":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"choropleth"}],"contourcarpet":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"contourcarpet"}],"contour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"contour"}],"heatmap":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"heatmap"}],"histogram2dcontour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2dcontour"}],"histogram2d":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2d"}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"mesh3d":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"mesh3d"}],"parcoords":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"parcoords"}],"pie":[{"automargin":true,"type":"pie"}],"scatter3d":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatter3d"}],"scattercarpet":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattercarpet"}],"scattergeo":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattergeo"}],"scattergl":[{"marker":{"line":{"color":"#283442"}},"type":"scattergl"}],"scattermapbox":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermapbox"}],"scattermap":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermap"}],"scatterpolargl":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolargl"}],"scatterpolar":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolar"}],"scatter":[{"marker":{"line":{"color":"#283442"}},"type":"scatter"}],"scatterternary":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterternary"}],"surface":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"surface"}],"table":[{"cells":{"fill":{"color":"#506784"},"line":{"color":"rgb(17,17,17)"}},"header":{"fill":{"color":"#2a3f5f"},"line":{"color":"rgb(17,17,17)"}},"type":"table"}]},"layout":{"annotationdefaults":{"arrowcolor":"#f2f5fa","arrowhead":0,"arrowwidth":1},"autotypenumbers":"strict","coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]],"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]},"colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#f2f5fa"},"geo":{"bgcolor":"rgb(17,17,17)","lakecolor":"rgb(17,17,17)","landcolor":"rgb(17,17,17)","showlakes":true,"showland":true,"subunitcolor":"#506784"},"hoverlabel":{"align":"left"},"hovermode":"closest","mapbox":{"style":"dark"},"paper_bgcolor":"rgb(17,17,17)","plot_bgcolor":"rgb(17,17,17)","polar":{"angularaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","radialaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"scene":{"xaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"yaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"zaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"}},"shapedefaults":{"line":{"color":"#f2f5fa"}},"sliderdefaults":{"bgcolor":"#C8D4E3","bordercolor":"rgb(17,17,17)","borderwidth":1,"tickwidth":0},"ternary":{"aaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"baxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","caxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"title":{"x":0.05},"updatemenudefaults":{"bgcolor":"#506784","borderwidth":0},"xaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2},"yaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2}}},"title":{"text":"","x":0.5,"xanchor":"center"},"margin":{"t":10,"r":10,"b":72,"l":10},"legend":{"title":{"text":"Genre"},"orientation":"h","x":0.0,"y":-0.08,"xanchor":"left","yanchor":"top"},"font":{"color":"#e5e7eb"},"hoverlabel":{"font":{"color":"#f8fafc","size":12},"bgcolor":"#0f172a","bordercolor":"#475569","namelength":-1},"autosize":true,"height":650,"dragmode":"pan","hoverdistance":30,"paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)","xaxis":{"title":{"text":""},"showticklabels":false,"showgrid":false,"zeroline":false,"visible":false},"yaxis":{"title":{"text":""},"showticklabels":false,"showgrid":false,"zeroline":false,"visible":false}},                        {"responsive": true, "scrollZoom": true, "displayModeBar": true, "modeBarButtonsToRemove": ["lasso2d", "select2d"]}                    )                };            </script>        </div>
+}));</script>                <div id="dj_sequence_builder_pacmap" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("dj_sequence_builder_pacmap")) {                    Plotly.newPlot(                        "dj_sequence_builder_pacmap",                        [{"customdata":[[0,"Used To Love","Martin Garrix\u002fDean Lewis","Unknown","warren","","",119.0,"1","Martin Garrix; Dean Lewis - Used To Love.mp3",null,4.531752586364746,"Unknown","3:57","#cbd5e1"],[1,"Ocean (Don Diablo Remix)","Martin Garrix\u002fDon Diablo\u002fKhalid","Unknown","warren","","",123.0,"2","Martin Garrix; Don Diablo; Khalid - Ocean (Don Diablo Remix).mp3",null,5.7740654945373535,"Unknown","3:23","#cbd5e1"],[2,"Empty","Martin Garrix\u002fDubVision\u002fJaimes","Unknown","warren","","",127.0,"3","Martin Garrix; DubVision; Jaimes - Empty.mp3",null,6.036455154418945,"Unknown","3:18","#cbd5e1"],[3,"Latency","Martin Garrix\u002fDyro","Unknown","warren","","",128.0,"4","Martin Garrix; Dyro - Latency.mp3",null,7.470173358917236,"Unknown","3:24","#cbd5e1"],[4,"Love Runs Out","Martin Garrix\u002fG-Eazy\u002fSasha Alex Sloan","Unknown","warren","","",90.0,"5","Martin Garrix; G-Eazy; Sasha Alex Sloan - Love Runs Out.mp3",null,4.731134414672852,"Unknown","2:44","#cbd5e1"],[5,"Wizard (Original Mix)","Martin Garrix\u002fJay Hardway","Unknown","warren","","",128.0,"6","Martin Garrix; Jay Hardway - Wizard (Original Mix).mp3",null,7.728114128112793,"Unknown","4:41","#cbd5e1"],[6,"These Are The Times","Martin Garrix\u002fJRM","Unknown","warren","","",127.0,"7","Martin Garrix; JRM - These Are The Times.mp3",null,5.531683444976807,"Unknown","3:09","#cbd5e1"],[7,"These Are The Times (Dyro Remix)","Martin Garrix\u002fJRM\u002fDyro","Unknown","warren","","",127.0,"8","Martin Garrix; JRM; Dyro - These Are The Times (Dyro Remix).mp3",null,7.105457782745361,"Unknown","2:43","#cbd5e1"],[8,"Burn Out","Martin Garrix\u002fJustin Mylo\u002fDewain Whitmore","Unknown","warren","","",128.0,"9","Martin Garrix; Justin Mylo; Dewain Whitmore - Burn Out.mp3",null,5.855261325836182,"Unknown","3:20","#cbd5e1"],[9,"Bouncybob","Martin Garrix\u002fJustin Mylo\u002fMesto","Unknown","warren","","",128.0,"10","Martin Garrix; Justin Mylo; Mesto - Bouncybob.mp3",null,5.556961536407471,"Unknown","4:11","#cbd5e1"],[10,"Hero","Martin Garrix\u002fJVKE","Unknown","warren","","",84.0,"11","Martin Garrix; JVKE - Hero.mp3",null,6.247704982757568,"Unknown","2:41","#cbd5e1"],[11,"Ocean","Martin Garrix\u002fKhalid","Unknown","warren","","",140.0,"12","Martin Garrix; Khalid - Ocean.mp3",null,4.292067050933838,"Unknown","3:37","#cbd5e1"],[12,"Game Over","Martin Garrix\u002fLOOPERS","Unknown","warren","","",128.0,"13","Martin Garrix; LOOPERS - Game Over.mp3",null,7.194375991821289,"Unknown","2:36","#cbd5e1"],[13,"Summer Days","Martin Garrix\u002fMacklemore\u002fPatrick Stump","Unknown","warren","","",114.0,"14","Martin Garrix; Macklemore; Patrick Stump - Summer Days.mp3",null,4.963922023773193,"Unknown","2:44","#cbd5e1"],[14,"Summer Days (Vintage Culture & Bruno Be Remix)","Martin Garrix\u002fMacklemore\u002fPatrick Stump\u002fVintage Culture\u002fBruno Be","Unknown","warren","","",122.0,"15","Martin Garrix; Macklemore; Patrick Stump; Vintage Culture; Bruno Be - Summer Days (Vintage Culture & Bruno Be Remix).mp3",null,5.90132999420166,"Unknown","3:16","#cbd5e1"],[15,"Forever","Martin Garrix\u002fMatisse & Sadko","Unknown","warren","","",128.0,"16","Martin Garrix; Matisse & Sadko - Forever.mp3",null,6.194779396057129,"Unknown","3:39","#cbd5e1"],[16,"Mistaken","Martin Garrix\u002fMatisse & Sadko\u002fAlex Aris","Unknown","warren","","",128.0,"17","Martin Garrix; Matisse & Sadko; Alex Aris - Mistaken.mp3",null,5.557770252227783,"Unknown","4:43","#cbd5e1"],[17,"Together","Martin Garrix\u002fMatisse & Sadko\u002fMax McElligott","Unknown","warren","","",128.0,"18","Martin Garrix; Matisse & Sadko; Max McElligott - Together.mp3",null,6.2392802238464355,"Unknown","3:41","#cbd5e1"],[18,"Limitless","Martin Garrix\u002fMesto","Unknown","warren","","",126.0,"19","Martin Garrix; Mesto - Limitless.mp3",null,6.249465465545654,"Unknown","2:27","#cbd5e1"],[19,"WIEE","Martin Garrix\u002fMesto","Unknown","warren","","",128.0,"20","Martin Garrix; Mesto - WIEE.mp3",null,5.844660758972168,"Unknown","3:23","#cbd5e1"]],"hoverinfo":"none","marker":{"color":"#1f77b4","line":{"color":"black","width":0.5},"size":9},"mode":"markers","name":"Unknown","x":{"dtype":"f4","bdata":"X+pEPznw372iEpm+ftYKv2+\u002fEkBG7Be\u002fAD34vUqasb74NwG\u002f8xU0v4j3DUCvYAdAViqxvrhYrj\u002flA04+zi3dvuDzh770XUW+dHYAv\u002fxH+L4="},"y":{"dtype":"f4","bdata":"4OPavpoJ3z2Cxgs+YgGmPpcZkL+ax6E+UgMGPbOLLj5H6kk+bgeyPrrRjL9QDoK\u002f7E1IPgtlH79M7j69u4RjPks\u002f5j3Vwe09R8SHPpAHlD4="},"type":"scatter"},{"hoverinfo":"skip","marker":{"color":"rgba(255,255,255,0.02)","line":{"color":"rgba(255,255,255,0.92)","width":2},"size":18},"mode":"markers","name":"Hovered","showlegend":false,"x":[],"y":[],"type":"scatter"},{"hoverinfo":"skip","marker":{"color":"rgba(255,255,255,0.16)","line":{"color":"#e5e7eb","width":3},"size":24},"mode":"markers","name":"Selected","showlegend":false,"x":[],"y":[],"type":"scatter"},{"hoverinfo":"skip","line":{"color":"rgba(192,132,252,0.0)","width":0},"mode":"lines","name":"Transition pair","showlegend":false,"x":[],"y":[],"type":"scatter"},{"hoverinfo":"skip","marker":{"color":"rgba(56,189,248,0.18)","line":{"color":"#38bdf8","width":3},"size":20},"mode":"markers+text","name":"Track 1","showlegend":false,"text":[],"textfont":{"color":"#bae6fd","size":12},"textposition":"top center","x":[],"y":[],"type":"scatter"},{"hoverinfo":"skip","marker":{"color":"rgba(192,132,252,0.18)","line":{"color":"#c084fc","width":3},"size":20},"mode":"markers+text","name":"Track 2","showlegend":false,"text":[],"textfont":{"color":"#f3e8ff","size":12},"textposition":"top center","x":[],"y":[],"type":"scatter"},{"hoverinfo":"skip","marker":{"color":"rgba(251,146,60,0.24)","line":{"color":"#fb923c","width":2},"size":14,"symbol":"square"},"mode":"markers+text","name":"Sequence path","showlegend":false,"text":[],"textfont":{"color":"#fed7aa","size":12},"textposition":"top center","x":[],"y":[],"type":"scatter"},{"hoverinfo":"skip","line":{"color":"rgba(52,211,153,0.0)","width":0},"mode":"lines","name":"Recommended next links","showlegend":false,"x":[],"y":[],"type":"scatter"},{"customdata":[],"hoverinfo":"skip","marker":{"color":"rgba(52,211,153,0.12)","line":{"color":"rgba(52,211,153,0.74)","width":1.5},"size":15},"mode":"markers+text","name":"Recommended next","showlegend":false,"text":[],"textfont":{"color":"#d1fae5","size":11},"textposition":"bottom center","x":[],"y":[],"type":"scatter"}],                        {"template":{"data":{"barpolar":[{"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"bar":[{"error_x":{"color":"#f2f5fa"},"error_y":{"color":"#f2f5fa"},"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"carpet":[{"aaxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"baxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"type":"carpet"}],"choropleth":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"choropleth"}],"contourcarpet":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"contourcarpet"}],"contour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"contour"}],"heatmap":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"heatmap"}],"histogram2dcontour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2dcontour"}],"histogram2d":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2d"}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"mesh3d":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"mesh3d"}],"parcoords":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"parcoords"}],"pie":[{"automargin":true,"type":"pie"}],"scatter3d":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatter3d"}],"scattercarpet":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattercarpet"}],"scattergeo":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattergeo"}],"scattergl":[{"marker":{"line":{"color":"#283442"}},"type":"scattergl"}],"scattermapbox":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermapbox"}],"scattermap":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermap"}],"scatterpolargl":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolargl"}],"scatterpolar":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolar"}],"scatter":[{"marker":{"line":{"color":"#283442"}},"type":"scatter"}],"scatterternary":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterternary"}],"surface":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"surface"}],"table":[{"cells":{"fill":{"color":"#506784"},"line":{"color":"rgb(17,17,17)"}},"header":{"fill":{"color":"#2a3f5f"},"line":{"color":"rgb(17,17,17)"}},"type":"table"}]},"layout":{"annotationdefaults":{"arrowcolor":"#f2f5fa","arrowhead":0,"arrowwidth":1},"autotypenumbers":"strict","coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]],"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]},"colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#f2f5fa"},"geo":{"bgcolor":"rgb(17,17,17)","lakecolor":"rgb(17,17,17)","landcolor":"rgb(17,17,17)","showlakes":true,"showland":true,"subunitcolor":"#506784"},"hoverlabel":{"align":"left"},"hovermode":"closest","mapbox":{"style":"dark"},"paper_bgcolor":"rgb(17,17,17)","plot_bgcolor":"rgb(17,17,17)","polar":{"angularaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","radialaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"scene":{"xaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"yaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"zaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"}},"shapedefaults":{"line":{"color":"#f2f5fa"}},"sliderdefaults":{"bgcolor":"#C8D4E3","bordercolor":"rgb(17,17,17)","borderwidth":1,"tickwidth":0},"ternary":{"aaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"baxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","caxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"title":{"x":0.05},"updatemenudefaults":{"bgcolor":"#506784","borderwidth":0},"xaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2},"yaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2}}},"title":{"text":"","x":0.5,"xanchor":"center"},"margin":{"t":10,"r":10,"b":72,"l":10},"legend":{"title":{"text":"Genre"},"orientation":"h","x":0.0,"y":-0.08,"xanchor":"left","yanchor":"top"},"font":{"color":"#e5e7eb"},"hoverlabel":{"font":{"color":"#f8fafc","size":12},"bgcolor":"#0f172a","bordercolor":"#475569","namelength":-1},"autosize":true,"dragmode":"pan","hoverdistance":30,"paper_bgcolor":"rgba(0,0,0,0)","plot_bgcolor":"rgba(0,0,0,0)","xaxis":{"title":{"text":""},"showticklabels":false,"showgrid":false,"zeroline":false,"visible":false},"yaxis":{"title":{"text":""},"showticklabels":false,"showgrid":false,"zeroline":false,"visible":false}},                        {"responsive": true, "scrollZoom": true, "displayModeBar": true, "modeBarButtonsToRemove": ["lasso2d", "select2d"]}                    )                };            </script>        </div>
           <canvas id="map-artwork-canvas" class="map-artwork-canvas" aria-hidden="true"></canvas>
           <canvas id="webgl-map-canvas" class="webgl-map-canvas" aria-label="WebGL track map"></canvas>
           <canvas id="map-effects-canvas" class="map-effects-canvas" aria-hidden="true"></canvas>
@@ -4457,27 +4627,22 @@ return Plotly;
           <button id="mini-map-toggle" class="mini-map-toggle" type="button" aria-label="Hide mini map" aria-pressed="true" title="Hide mini map">▾</button>
           <div id="song-hover-card" class="song-hover-card hidden"></div>
         </div>
-        <div id="map-color-legend" class="map-color-legend hidden"></div>
-        <div id="map-state-legend" class="map-state-legend" aria-label="Map highlight key">
-          <span class="map-state-legend-title">Highlights</span>
-          <span class="map-genre-chip"><i class="map-state-swatch" style="border-color:var(--track1)"></i>Track 1</span>
-          <span class="map-genre-chip"><i class="map-state-swatch" style="border-color:var(--track2)"></i>Track 2</span>
-          <span class="map-genre-chip"><i class="map-state-swatch map-state-square" style="border-color:var(--sequence)"></i>Sequence</span>
-          <span class="map-genre-chip"><i class="map-state-swatch" style="border-color:var(--recommendation)"></i>Recommended next</span>
-          <span class="map-genre-chip"><i class="map-state-swatch" style="border-color:#f8fafc"></i>Selected</span>
-          <button id="map-legend-restore" class="map-legend-restore hidden" type="button" title="Show every genre hidden from the map legend">Show all genres</button>
+        <div class="map-legend-row">
+          <div id="map-color-legend" class="map-color-legend hidden"></div>
+          <div id="map-state-legend" class="map-state-legend" aria-label="Map highlight key">
+            <span class="map-genre-chip"><i class="map-state-swatch" style="border-color:var(--track1)"></i>Track 1</span>
+            <span class="map-genre-chip"><i class="map-state-swatch" style="border-color:var(--track2)"></i>Track 2</span>
+            <span class="map-genre-chip"><i class="map-state-swatch map-state-square" style="border-color:var(--sequence)"></i>Sequence</span>
+            <span class="map-genre-chip"><i class="map-state-swatch" style="border-color:var(--recommendation)"></i>Recommended next</span>
+            <span class="map-genre-chip"><i class="map-state-swatch" style="border-color:#f8fafc"></i>Selected</span>
+            <button id="map-legend-restore" class="map-legend-restore hidden" type="button" title="Show every genre hidden from the map legend">Show all genres</button>
+          </div>
         </div>
-        <details id="side-settings" class="side-settings">
-          <summary>Map and scoring settings</summary>
+        <section class="weights-panel" aria-label="Scoring weights">
+          <div class="weights-panel-head"><span class="build-section-title">Scoring weights</span>
+            <span class="control-note">Drag the triangle to balance Tempo / Groove / Key; the map layout and all scores follow.</span>
+          </div>
           <div class="control-grid">
-            <label>Energy source
-              <select id="energy-source">
-                <option value="human">Tagged energy</option>
-                <option value="glm">Auto energy</option>
-              </select>
-            </label>
-            <label>Energy penalty <input id="energy-penalty-scale" type="range" min="0" max="1" step="0.01" value="0.25" aria-label="Energy penalty scale"></label>
-            <output id="energy-penalty-scale-val">0.25</output>
             <div class="mixability-controls">
   <div class="weights">
     <div>Genre/style</div><input id="weight-style" type="range" min="0" max="1" step="0.01" value="0.45" aria-label="Genre/style weight"><output id="weight-style-val">0.45</output>
@@ -4505,7 +4670,21 @@ return Plotly;
   </div>
 </div>
 
+            <div class="energy-controls">
+              <label class="field-inline">Energy source<select id="energy-source">
+                <option value="human">Tagged energy</option>
+                <option value="glm">Auto energy</option>
+              </select></label>
+              <div class="slider-triple energy-penalty-row">
+                <div>Energy penalty</div>
+                <input id="energy-penalty-scale" type="range" min="0" max="1" step="0.01" value="0.25" aria-label="Energy penalty scale">
+                <output id="energy-penalty-scale-val">0.25</output>
+              </div>
+            </div>
           </div>
+        </section>
+        <details id="side-settings" class="side-settings">
+          <summary>Map display settings</summary>
           <div class="misc-control-grid" aria-label="Map display options">
             <label>Point color
               <select id="color-mode">
@@ -4522,10 +4701,6 @@ return Plotly;
                 <option value="webgl">WebGL experimental</option>
               </select>
             </label>
-            <label>Map FX <input id="map-effects-enabled" type="checkbox" checked></label>
-            <label title="Show album covers as map markers. Plotly renderer only.">Album art on map <input id="map-artwork-enabled" type="checkbox" checked></label>
-            <label>Show scores <input id="show-score-values" type="checkbox" checked></label>
-            <label>Play on select <input id="click-to-play" type="checkbox" checked></label>
             <label class="map-slider-control" title="How many similarity lines are drawn from each track on the map, using the current weight sliders.">Suggested links per track
               <span class="map-slider-row"><input id="latent-links-per-track" type="range" min="0" max="8" step="1" value="3" aria-label="Suggested links per track"><output id="latent-links-per-track-val">3</output></span>
               <span class="control-note">similarity lines per track</span>
@@ -4534,38 +4709,37 @@ return Plotly;
               <span class="map-slider-row"><input id="recommended-links-highlight" type="range" min="1" max="25" step="1" value="25" aria-label="Recommended links highlighted"><output id="recommended-links-highlight-val">25</output></span>
               <span class="control-note">selected track recommendations</span>
             </label>
-          </div>
-        </details>
-        <div id="song-popover" class="song-panel hidden">
-          <div id="song-wave-player" class="wave-player">
-            <div class="wave-main">
-              <div class="wave-topline">
-                <span id="song-player-status" class="muted">Preview</span>
-              </div>
-              <canvas id="song-waveform" class="song-waveform" height="54"></canvas>
+            <div class="misc-check-row">
+              <label>Map FX <input id="map-effects-enabled" type="checkbox" checked></label>
+              <label title="Show each track as its album cover, edged in its genre or deck colour, with the slot / rank number above it.">Album art on map <input id="map-artwork-enabled" type="checkbox" checked></label>
+              <label>Show scores <input id="show-score-values" type="checkbox" checked></label>
+              <label>Play on select <input id="click-to-play" type="checkbox" checked></label>
             </div>
           </div>
-          <audio id="track-audio" preload="metadata"></audio>
-          <div class="actions">
-            <button id="set-outgoing">Set Track 1</button>
-            <button id="set-incoming">Set Track 2</button>
-            <button id="append-selected">Add</button>
-            <button id="clear-transition">Clear</button>
-          </div>
-        </div>
+        </details>
       </div>
     </section>
     <section id="pane-library" class="pane" role="tabpanel" aria-labelledby="tab-library">
-      <p class="pane-hint">All tracks in table form — same actions as the map.</p>
-      <div class="library-panel">
-        <div class="library-toolbar">
-          <label>Search <input id="library-search" type="search" placeholder="title, artist, key, genre, mix"></label>
+      <section class="build-section library-panel">
+        <div class="build-section-head">
+          <span class="build-section-title">Library</span>
+          <span id="library-count" class="panel-count"></span>
+        </div>
+        <div class="panel-toolbar">
+          <label class="toolbar-search">Search<input id="library-search" type="search" placeholder="title, artist, key, genre, mix"></label>
         </div>
         <div id="library-table" class="library-table"></div>
-      </div>
+      </section>
+      <section class="build-section library-recommendations">
+        <div class="build-section-head">
+          <span class="build-section-title">Recommendations</span>
+          <span id="recommendation-count" class="panel-count"></span>
+        </div>
+        <div id="recommendation-filters" class="panel-toolbar"></div>
+        <div id="recommendation-panel" class="recommendation-panel"><div class="panel-empty">Select a track to score next-track candidates.</div></div>
+      </section>
     </section>
     <section id="pane-diagnostics" class="pane" role="tabpanel" aria-labelledby="tab-diagnostics">
-      <p class="pane-hint">Transition scores between consecutive sequence tracks.</p>
       <div>
         <h2>Sequence Transition Scores</h2>
         <div id="transition-diagnostics" class="transition-diagnostics"></div>
@@ -4575,57 +4749,48 @@ return Plotly;
         <div id="current-transition-score" class="current-transition-score"></div>
       </div>
     </section>
+    <section id="pane-transition" class="pane" role="tabpanel" aria-labelledby="tab-transition">
+      <div id="transition-score" class="transition-score"></div>
+      <section class="build-section">
+        <div id="transition-preview-panel" class="transition-preview-panel"></div>
+      </section>
+    </section>
   </div>
   <aside class="build-column" aria-label="Sequence and playback">
     <div class="build-top">
       <div id="transition-badges" class="transition-badges"></div>
-      <div class="build-segments" role="tablist" aria-label="Build view">
-        <button class="build-seg active" type="button" id="build-seg-sequence" data-build-seg="sequence" role="tab" aria-selected="true" aria-controls="build-panel-sequence" tabindex="0">Sequence</button>
-        <button class="build-seg" type="button" id="build-seg-recommend" data-build-seg="recommend" role="tab" aria-selected="false" aria-controls="build-panel-recommend" tabindex="-1">Recommend</button>
-        <button class="build-seg" type="button" id="build-seg-transition" data-build-seg="transition" role="tab" aria-selected="false" aria-controls="build-panel-transition" tabindex="-1">Transition</button>
-      </div>
     </div>
     <div class="build-scroll">
-      <div class="build-seg-panel" id="build-panel-sequence" data-build-seg-panel="sequence" role="tabpanel" aria-labelledby="build-seg-sequence">
-        <section class="build-section">
-          <div class="build-section-head"><span class="build-section-title">Energy Curve</span></div>
-          <div id="energy-curve" class="energy-curve"></div>
-        </section>
-        <section class="build-section sequence-section">
-          <div class="build-section-head">
-            <div class="sequence-head-controls">
-              <label class="sequence-length-label">Length <input id="sequence-length" type="number" min="2" max="40" step="1"></label>
-              <button id="clear-last" class="danger" title="Remove the last placed track from the sequence">Clear last</button>
-              <button id="reset-sequence" class="danger" title="Clear all placed tracks and reset target energies">Reset</button>
-              <button id="download-sequence" title="Download the sequence as CSV">CSV</button>
-            </div>
+      <section class="build-section">
+        <div class="build-section-head"><span class="build-section-title">Energy Curve</span></div>
+        <div id="energy-curve" class="energy-curve"></div>
+      </section>
+      <section class="build-section sequence-section">
+        <div class="build-section-head">
+          <span class="build-section-title">Sequence</span>
+          <div class="sequence-head-controls">
+            <label class="sequence-length-label">Length <input id="sequence-length" type="number" min="2" max="40" step="1"></label>
+            <button id="clear-last" class="danger" title="Remove the last placed track from the sequence">Clear last</button>
+            <button id="reset-sequence" class="danger" title="Clear all placed tracks and reset target energies">Reset</button>
+            <button id="download-sequence" title="Download the sequence as CSV">CSV</button>
           </div>
-          <div id="sequence-list" class="sequence-list"></div>
-        </section>
-      </div>
-      <div class="build-seg-panel hidden" id="build-panel-recommend" data-build-seg-panel="recommend" role="tabpanel" aria-labelledby="build-seg-recommend">
-        <section class="build-section">
-          <div id="recommendation-panel" class="recommendation-panel">Select a track to score next-track candidates.</div>
-        </section>
-      </div>
-      <div class="build-seg-panel hidden" id="build-panel-transition" data-build-seg-panel="transition" role="tabpanel" aria-labelledby="build-seg-transition">
-        <div id="transition-score" class="transition-score"></div>
-        <section class="build-section">
-          <div id="transition-preview-panel" class="transition-preview-panel"></div>
-        </section>
-      </div>
+        </div>
+        <div id="sequence-list" class="sequence-list"></div>
+      </section>
     </div>
   </aside>
   </div>
   <div id="global-player" class="global-player">
-    <div id="global-art" class="global-art art-placeholder">art</div>
-    <div class="global-track">
-      <div id="global-title" class="track-title"></div>
-      <div id="global-artist" class="track-artist muted"></div>
+    <div id="global-nowplaying" class="global-nowplaying" role="button" tabindex="0" aria-label="Play or pause the current track" title="Click to play or pause">
+      <div id="global-art" class="global-art art-placeholder"></div>
+      <div class="global-track">
+        <div id="global-title" class="track-title"></div>
+        <div id="global-artist" class="track-artist muted"></div>
+      </div>
     </div>
-    <button id="global-toggle" class="player-toggle" type="button" aria-label="Play" disabled>Play</button>
-    <input id="global-scrub" class="scrub-range global-scrub" type="range" min="0" max="1" step="0.1" value="0" aria-label="Playback position">
+    <canvas id="song-waveform" class="song-waveform global-waveform" height="44" aria-label="Playback position — click or drag the waveform to seek"></canvas>
     <div id="global-time" class="scrub-time">0:00 / 0:00</div>
+    <audio id="track-audio" preload="metadata"></audio>
     <div class="global-volume" title="Volume"><button id="global-volume-button" class="volume-icon" type="button" aria-label="Mute" title="Mute"><svg viewBox="0 0 32 32" focusable="false"><path d="M3 12h7l8-8c1.1-1 3-.3 3 1.2v21.6c0 1.5-1.9 2.2-3 1.2l-8-8H3c-1.1 0-2-.9-2-2v-4c0-1.1.9-2 2-2Z"/><path d="M24 11c1.8 2.9 1.8 7.1 0 10"/><path d="M27.8 7.2c3.8 5.2 3.8 12.4 0 17.6"/></svg></button><input id="global-volume" class="scrub-range" type="range" min="0" max="1" step="0.01" value="0.85" aria-label="Volume"></div>
   </div>
 </section>
@@ -4655,7 +4820,6 @@ return Plotly;
     click_to_play: true,
     mini_map_collapsed: false,
     side_settings_open: false,
-    build_segment: 'sequence',
   }, appSettings.defaults || {});
   appSettings.current = Object.assign({}, appSettings.defaults, appSettings.current || {});
   appSettings.behavior = Object.assign({
@@ -4711,12 +4875,9 @@ return Plotly;
   let sequenceLength = Number(config.default_length || 10);
   let sequence = Array.from({ length: sequenceLength }, () => null);
   let targetValues = Array.from({ length: sequenceLength }, () => DEFAULT_TARGET_ENERGY);
-  let sequenceDragSlot = null;
   let draggingEnergySlot = null;
   let currentPoints = [];
   let activePane = 'explore';
-  const BUILD_SEGMENTS = ['sequence', 'recommend', 'transition'];
-  let activeBuildSegment = 'sequence';
   let transitionFromIdx = null;
   let transitionToIdx = null;
   let webglMap = null;
@@ -4819,26 +4980,22 @@ return Plotly;
       explore: document.getElementById('pane-explore'),
       library: document.getElementById('pane-library'),
       diagnostics: document.getElementById('pane-diagnostics'),
+      transition: document.getElementById('pane-transition'),
     },
     transitionBadges: document.getElementById('transition-badges'),
     transitionScore: document.getElementById('transition-score'),
-    buildSegButtons: Array.from(document.querySelectorAll('[data-build-seg]')),
-    buildSegPanels: Array.from(document.querySelectorAll('[data-build-seg-panel]')),
     transitionPreview: document.getElementById('transition-preview-panel'),
-    setOutgoing: document.getElementById('set-outgoing'),
-    setIncoming: document.getElementById('set-incoming'),
-    songPopover: document.getElementById('song-popover'),
     audio: document.getElementById('track-audio'),
-    songPlayerStatus: document.getElementById('song-player-status'),
     songWaveform: document.getElementById('song-waveform'),
-    appendSelected: document.getElementById('append-selected'),
-    clearTransition: document.getElementById('clear-transition'),
     clearLast: document.getElementById('clear-last'),
     resetSequence: document.getElementById('reset-sequence'),
     downloadSequence: document.getElementById('download-sequence'),
     energyCurve: document.getElementById('energy-curve'),
     sequenceList: document.getElementById('sequence-list'),
     recommendationPanel: document.getElementById('recommendation-panel'),
+    recommendationFilters: document.getElementById('recommendation-filters'),
+    recommendationCount: document.getElementById('recommendation-count'),
+    libraryCount: document.getElementById('library-count'),
     transitionDiagnostics: document.getElementById('transition-diagnostics'),
     currentTransitionScore: document.getElementById('current-transition-score'),
     mapEffects: document.getElementById('map-effects-canvas'),
@@ -4856,8 +5013,7 @@ return Plotly;
     globalArt: document.getElementById('global-art'),
     globalTitle: document.getElementById('global-title'),
     globalArtist: document.getElementById('global-artist'),
-    globalToggle: document.getElementById('global-toggle'),
-    globalScrub: document.getElementById('global-scrub'),
+    globalNowPlaying: document.getElementById('global-nowplaying'),
     globalVolume: document.getElementById('global-volume'),
     globalVolumeButton: document.getElementById('global-volume-button'),
     globalTime: document.getElementById('global-time'),
@@ -5036,7 +5192,15 @@ return Plotly;
         helpKeyHtml('1', 'Set the selected track as Track 1.'),
         helpKeyHtml('2', 'Set the selected track as Track 2 (assign Track 1 first).'),
         helpKeyHtml('hover', 'Show preview without changing selection.'),
-        helpKeyHtml('Esc', 'Close open panels.'),
+        helpKeyHtml('Esc', 'Close open panels, or cancel a drag in progress.'),
+      ]) +
+      helpCardHtml('Drag and drop', [
+        helpKeyHtml('→ deck', 'Drag a map dot, library row, recommendation row or sequence row onto the Track 1 / Track 2 card to load it there.'),
+        helpKeyHtml('→ slot', 'Drag any track onto a sequence slot to place it there (replacing whatever is in that slot).'),
+        helpKeyHtml('slot → slot', 'Drag a sequence row onto another slot to reorder.'),
+        helpKeyHtml('drag out', 'Drag a track off its deck card or sequence row and drop it anywhere else to unload / remove it (with undo).'),
+        helpKeyHtml('Esc', 'Cancel the drag before dropping.'),
+        helpKeyHtml('1 / 2', 'Keyboard equivalent: load the selected track into Track 1 / Track 2.'),
       ]) +
       helpCardHtml('Sequence workflow', [
         helpKeyHtml('+ / ⇄', 'Add the selected track to the target slot (⇄ replaces a filled slot) and make it Track 1; a message shows what changed, with undo.'),
@@ -5933,13 +6097,14 @@ return Plotly;
       esc(durationText(record)),
     ].filter(Boolean).join(' &sdot; ');
   }
-  function trackSummaryHtml(record, { size='compact', showArt=true, slot=null, showEnergy=true, showResidual=true } = {}) {
+  function trackSummaryHtml(record, { size='compact', showArt=true, slot=null, showEnergy=true, showResidual=true, showMeta=true } = {}) {
     record = canonicalRecord(record);
     if (!record) return '<span class="muted">None selected</span>';
+    // showMeta=false when the surrounding table already has columns for these values.
     const body =
       '<div class="track-title">' + esc(record.title) + '</div>' +
       '<div class="track-artist muted">' + esc(record.artists) + '</div>' +
-      '<div class="track-meta-line muted">' + trackMetaHtml(record, { slot, showEnergy, showResidual }) + '</div>';
+      (showMeta ? '<div class="track-meta-line muted">' + trackMetaHtml(record, { slot, showEnergy, showResidual }) + '</div>' : '');
     if (!showArt) return body;
     return '<div class="track-summary ' + esc(size) + '">' + artworkHtml(record) + '<div>' + body + '</div></div>';
   }
@@ -6241,37 +6406,21 @@ return Plotly;
       setTimeout(() => Plotly.Plots.resize(plot), 30);
       setTimeout(ensureMapEffectsLoop, 40);
     }
-    // Energy curve and transition editor live in the always-visible right column,
-    // so keep them sized/drawn whenever the analysis view changes width.
+    // The energy curve is in the always-visible right column, so resize it whenever
+    // the analysis column changes width.
     if (window.Plotly && els.energyCurve) {
       setTimeout(() => Plotly.Plots.resize(els.energyCurve), 30);
     }
-    setTimeout(() => safeUi('transition editor draw', requestTransitionEditorDraw), 40);
+    // Recommendations and the transition editor now live in their own panes and draw
+    // at zero size while hidden — redraw once their pane becomes visible.
+    if (activePane === 'library') {
+      setTimeout(() => safeUi('recommendation scrubbers', updateRowScrubbers), 40);
+    }
+    if (activePane === 'transition') {
+      setTimeout(() => safeUi('transition editor bind', bindTransitionEditor), 30);
+      setTimeout(() => safeUi('transition editor draw', requestTransitionEditorDraw), 50);
+    }
     if (render) setTimeout(() => safeUi('pane render', renderAll), 0);
-  }
-  function setBuildSegment(seg, { persist=true } = {}) {
-    activeBuildSegment = BUILD_SEGMENTS.indexOf(seg) >= 0 ? seg : 'sequence';
-    els.buildSegButtons.forEach(btn => {
-      const active = btn.getAttribute('data-build-seg') === activeBuildSegment;
-      btn.classList.toggle('active', active);
-      btn.setAttribute('aria-selected', active ? 'true' : 'false');
-      btn.setAttribute('tabindex', active ? '0' : '-1');
-    });
-    els.buildSegPanels.forEach(panel => {
-      panel.classList.toggle('hidden', panel.getAttribute('data-build-seg-panel') !== activeBuildSegment);
-    });
-    if (persist) setAppSetting('build_segment', activeBuildSegment);
-    // Canvas/Plotly content renders at zero size while its panel is hidden, so
-    // size/redraw the active segment's visuals once it becomes visible.
-    if (activeBuildSegment === 'sequence' && window.Plotly && els.energyCurve) {
-      setTimeout(() => safeUi('energy curve resize', () => Plotly.Plots.resize(els.energyCurve)), 20);
-    }
-    if (activeBuildSegment === 'recommend') {
-      setTimeout(() => safeUi('recommendation scrubbers', updateRowScrubbers), 20);
-    }
-    if (activeBuildSegment === 'transition') {
-      setTimeout(() => safeUi('transition editor draw', requestTransitionEditorDraw), 20);
-    }
   }
   function timeText(seconds) {
     const n = Number(seconds);
@@ -6317,14 +6466,6 @@ return Plotly;
       (showTime ? '<span class="scrub-time" data-library-time-idx="' + record.idx + '">' + esc(timeText(value)) + ' / ' + esc(durationText(record)) + '</span>' : '') +
       '</div>';
   }
-  function rowPlayerHtml(record) {
-    record = canonicalRecord(record);
-    if (!record) return '';
-    return '<div class="row-player">' +
-      '<button class="play-button" data-play-idx="' + record.idx + '" data-play-mode="library" aria-label="Play">▶</button>' +
-      rowWaveformScrubberHtml(record) +
-      '</div>';
-  }
   function currentAudioRecord() {
     if (previewAudioIdx !== null && byIdx.has(Number(previewAudioIdx))) return byIdx.get(Number(previewAudioIdx));
     if (selectedIdx !== null && byIdx.has(Number(selectedIdx))) return byIdx.get(Number(selectedIdx));
@@ -6368,18 +6509,11 @@ return Plotly;
         ? '<span>' + esc(record.artists || '') + '</span><span class="global-meta-line">' + trackMetaHtml(record, { slot: relevantResidualSlot(record) }) + '</span>'
         : '';
     }
-    if (els.globalToggle) {
-      els.globalToggle.disabled = !hasRecord;
-      els.globalToggle.textContent = playing ? '⏸' : '▶';
-      els.globalToggle.setAttribute('aria-label', playing ? 'Pause' : 'Play');
-      els.globalToggle.setAttribute('title', playing ? 'Pause' : 'Play');
-    }
-    if (els.globalScrub) {
-      const max = Number.isFinite(duration) && duration > 0 ? duration : 1;
-      els.globalScrub.disabled = !hasRecord;
-      els.globalScrub.max = String(max);
-      els.globalScrub.value = String(clamp(current || 0, 0, max));
-      setRangeProgress(els.globalScrub, current || 0, max);
+    if (els.globalNowPlaying) {
+      els.globalNowPlaying.classList.toggle('is-playing', !!playing);
+      els.globalNowPlaying.classList.toggle('is-empty', !hasRecord);
+      els.globalNowPlaying.setAttribute('aria-label', playing ? 'Pause the current track' : 'Play the current track');
+      els.globalNowPlaying.setAttribute('title', playing ? 'Click to pause' : 'Click to play');
     }
     if (els.globalTime) els.globalTime.textContent = timeText(current || 0) + ' / ' + timeText(duration);
   }
@@ -6395,12 +6529,6 @@ return Plotly;
     const record = previewAudioIdx === null ? (selectedIdx === null ? null : byIdx.get(selectedIdx)) : byIdx.get(previewAudioIdx);
     const duration = audioDuration(record);
     const current = els.audio && Number.isFinite(Number(els.audio.currentTime)) ? Number(els.audio.currentTime) : 0;
-    if (els.songPlayerStatus) {
-      const activeWaveform = selectedIdx !== null && waveformState.idx === selectedIdx ? waveformState : null;
-      if (activeWaveform && activeWaveform.loading) els.songPlayerStatus.textContent = 'Loading waveform';
-      else if (activeWaveform && activeWaveform.error) els.songPlayerStatus.textContent = activeWaveform.error;
-      else els.songPlayerStatus.textContent = selectedIdx === null ? 'Preview' : 'Full track preview';
-    }
     document.querySelectorAll('[data-library-time-idx]').forEach(el => {
       const idx = Number(el.getAttribute('data-library-time-idx'));
       const row = byIdx.get(idx);
@@ -6424,11 +6552,22 @@ return Plotly;
       button.setAttribute('aria-label', (active ? 'Pause ' : 'Play ') + (info && info.cfg ? info.cfg.label : 'track'));
     });
   }
+  // The deck cover spins whenever that deck's track is the one playing, no matter
+  // where playback was started from.
+  function updateDeckCoverSpin() {
+    document.querySelectorAll('[data-deck-cover]').forEach(el => {
+      const deck = el.getAttribute('data-deck-cover');
+      const idx = deck === 'from' ? transitionFromIdx : transitionToIdx;
+      const spinning = idx !== null && previewAudioIdx === Number(idx) && previewAudioPlaying;
+      el.classList.toggle('spinning', spinning);
+    });
+  }
   function syncAudioUi() {
     previewAudioPlaying = !!(els.audio && !els.audio.paused && !els.audio.ended);
     updatePlayButtons();
     updateRowScrubbers();
     updateTransitionTrackPlayButtons();
+    updateDeckCoverSpin();
     updateGlobalPlayer();
     drawMainWaveform();
   }
@@ -6502,7 +6641,7 @@ return Plotly;
     syncAudioUi();
   }
   function hideSongPopover({ stopAudio=true } = {}) {
-    if (els.songPopover) els.songPopover.classList.add('hidden');
+    // The map preview panel is gone; only the audio side of this still matters.
     if (stopAudio && previewAudioContext === 'main') stopSharedAudio({ clear: false });
     updatePlayButtons();
   }
@@ -6525,9 +6664,8 @@ return Plotly;
     if (render) renderSelectionOnly();
   }
   function showSongPopover(record, { autoplay=true } = {}) {
-    if (!els.songPopover || !record) return;
-    els.songPopover.classList.remove('hidden');
-    // Track identity (art/title/artist/meta) is shown by the bottom player bar.
+    if (!record) return;
+    // Identity and waveform both live in the bottom player bar now.
     loadMainWaveform(record);
     const start = previewStart(record);
     if (autoplay) {
@@ -6868,7 +7006,8 @@ return Plotly;
   function drawMainWaveform() {
     const canvas = els.songWaveform;
     if (!canvas) return;
-    const record = selectedIdx === null ? null : byIdx.get(selectedIdx);
+    // The waveform lives in the player bar now: it follows whatever the bar shows.
+    const record = currentAudioRecord();
     const rect = canvas.getBoundingClientRect();
     const widthCss = Math.max(1, rect.width || canvas.clientWidth || 320);
     const heightCss = Math.max(1, rect.height || 54);
@@ -6887,7 +7026,7 @@ return Plotly;
     if (!record) {
       ctx.fillStyle = '#64748b';
       ctx.font = '12px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-      ctx.fillText('Select a track', 12, Math.round(heightCss / 2) + 4);
+      ctx.fillText('Click a track to preview', 12, Math.round(heightCss / 2) + 4);
       return;
     }
     const duration = audioDuration(record);
@@ -7089,8 +7228,8 @@ return Plotly;
     }
   }
   function seekMainWaveformFromEvent(ev, shouldPlay=true) {
-    if (selectedIdx === null || !els.songWaveform) return;
-    const record = byIdx.get(selectedIdx);
+    if (!els.songWaveform) return;
+    const record = currentAudioRecord();
     const duration = audioDuration(record);
     if (!record || !Number.isFinite(duration) || duration <= 0) return;
     const rect = els.songWaveform.getBoundingClientRect();
@@ -7948,6 +8087,9 @@ return Plotly;
   }
   function drawWebglStaticOverlays(ctx) {
     if (!usingWebglMap()) return;
+    // With album covers on, the artwork layer already draws the ring and the index
+    // badge above each cover — drawing these too would just stack labels on top.
+    if (artworkMarkersEnabled()) return;
     const hoverMatchesSelection = hoveredIdx !== null && (
       hoveredIdx === selectedIdx ||
       hoveredIdx === transitionFromIdx ||
@@ -7973,7 +8115,7 @@ return Plotly;
       });
     }
   }
-  const ARTWORK_MARKER_SIZE = 26;
+  const ARTWORK_MARKER_SIZE = 46;
   const artworkMarkerImages = new Map();
   function artworkMarkerThumb(uri) {
     if (!uri) return null;
@@ -8021,34 +8163,78 @@ return Plotly;
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
-    if (!artworkMarkersEnabled() || usingWebglMap() || !plot) return;
+    // Works for both renderers: plotPointPx projects via the WebGL view or plotly axes.
+    if (!artworkMarkersEnabled()) return;
+    if (!usingWebglMap() && !plot) return;
     const radius = ARTWORK_MARKER_SIZE / 2 - 1;
-    const margin = radius + 2;
-    const seqIdxSet = new Set(sequence.filter(v => v !== null));
-    const recIdxSet = new Set((recRows || []).map(row => Number(row.idx)));
+    const margin = radius + 4;
+    const seqSlotByIdx = new Map();
+    sequence.forEach((v, slot) => { if (v !== null) seqSlotByIdx.set(Number(v), slot + 1); });
+    const recRankByIdx = new Map();
+    (recRows || []).forEach((row, i) => { recRankByIdx.set(Number(row.idx), i + 1); });
     const hiddenGenres = hiddenGenreNames();
-    ctx.lineWidth = 2;
     records.forEach(record => {
-      if (!record || !record.artwork_uri) return;
+      if (!record) return;
       if (recordGenreHidden(record, hiddenGenres)) return;
       const idx = Number(record.idx);
       const p = plotPointPx(currentPoint(idx));
       if (!p || p.x < -margin || p.y < -margin || p.x > rect.width + margin || p.y > rect.height + margin) return;
-      const thumb = artworkMarkerThumb(record.artwork_uri);
-      if (!thumb) return;
-      ctx.drawImage(thumb, p.x - radius, p.y - radius, radius * 2, radius * 2);
+      // Edge colour marks state first, then genre.
       let ring;
-      if (idx === transitionFromIdx) ring = roleColors.track1;
-      else if (idx === transitionToIdx) ring = roleColors.track2;
+      let label = '';
+      if (idx === transitionFromIdx) { ring = roleColors.track1; label = 'T1'; }
+      else if (idx === transitionToIdx) { ring = roleColors.track2; label = 'T2'; }
+      else if (seqSlotByIdx.has(idx)) { ring = roleColors.sequence; label = String(seqSlotByIdx.get(idx)); }
+      else if (recRankByIdx.has(idx)) { ring = roleColors.recommendation; label = String(recRankByIdx.get(idx)); }
       else if (idx === selectedIdx || idx === hoveredIdx) ring = roleColors.selected;
-      else if (seqIdxSet.has(idx)) ring = roleColors.sequence;
-      else if (recIdxSet.has(idx)) ring = roleColors.recommendation;
       else ring = genreMarkerColor(record.genre || record.raw_genre);
+      if (idx === selectedIdx || idx === hoveredIdx) ring = roleColors.selected;
+      const thumb = artworkMarkerThumb(record.artwork_uri);
+      ctx.save();
+      if (thumb) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(thumb, p.x - radius, p.y - radius, radius * 2, radius * 2);
+        ctx.restore();
+        ctx.save();
+      } else {
+        // No artwork for this track: keep a filled dot so every track still reads.
+        ctx.fillStyle = 'rgba(15,23,42,.9)';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Dark inner hairline keeps light covers readable, then the coloured edge.
+      ctx.strokeStyle = 'rgba(8,12,24,.85)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius - 1.2, 0, Math.PI * 2);
+      ctx.stroke();
       ctx.strokeStyle = ring;
+      ctx.lineWidth = 3.2;
       ctx.beginPath();
       ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.restore();
+      // Badge is stacked on top of the cover (z order), centred on the marker.
+      if (label) drawArtworkBadge(ctx, p.x, p.y, label, ring);
     });
+  }
+  // No plate behind the number: just outlined text so the cover stays visible.
+  function drawArtworkBadge(ctx, x, y, label, color) {
+    ctx.save();
+    ctx.font = '900 16px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.miterLimit = 2;
+    ctx.strokeStyle = 'rgba(6,10,20,.95)';
+    ctx.lineWidth = 4;
+    ctx.strokeText(label, x, y + 0.5);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(label, x, y + 0.5);
+    ctx.restore();
   }
   function drawMapEffectsFrame(time) {
     mapEffectsFrame = null;
@@ -8199,19 +8385,18 @@ return Plotly;
     const n = Number(m[1]);
     return Number.isFinite(n) ? n : null;
   }
+  // Rendered into #recommendation-filters, which is itself the toolbar element.
   function recommendationFilterHtml() {
-    return '<div class="recommendation-filterbar">' +
-      '<label class="recommendation-search">Search<input data-rec-filter="query" type="search" placeholder="title, artist, genre, key, bpm, energy" value="' + esc(recFilters.query) + '"></label>' +
-      '<label><span><input data-rec-filter="sameKey" type="checkbox"' + (recFilters.sameKey ? ' checked' : '') + '> Key family</span></label>' +
-      '<label>BPM +/-<input data-rec-filter="bpmRange" type="number" min="0" max="60" step="1" placeholder="Any" value="' + esc(recFilters.bpmRange) + '"></label>' +
-      '<label>Energy +/-<input data-rec-filter="energyRange" type="number" min="0" max="8" step="0.25" placeholder="Any" value="' + esc(recFilters.energyRange) + '"></label>' +
-      '<label><span><input data-rec-filter="excludeUsed" type="checkbox"' + (recFilters.excludeUsed ? ' checked' : '') + '> Exclude used</span></label>' +
-      '<label>Genre<select data-rec-filter="genreMode">' +
+    return '<label class="toolbar-search">Search<input data-rec-filter="query" type="search" placeholder="title, artist, key, bpm" value="' + esc(recFilters.query) + '"></label>' +
+      '<label class="toolbar-num">BPM &plusmn;<input data-rec-filter="bpmRange" type="number" min="0" max="60" step="1" placeholder="Any" value="' + esc(recFilters.bpmRange) + '"></label>' +
+      '<label class="toolbar-num">Energy &plusmn;<input data-rec-filter="energyRange" type="number" min="0" max="8" step="0.25" placeholder="Any" value="' + esc(recFilters.energyRange) + '"></label>' +
+      '<label class="toolbar-check"><span><input data-rec-filter="sameKey" type="checkbox"' + (recFilters.sameKey ? ' checked' : '') + '> Key family</span></label>' +
+      '<label class="toolbar-check"><span><input data-rec-filter="excludeUsed" type="checkbox"' + (recFilters.excludeUsed ? ' checked' : '') + '> Exclude used</span></label>' +
+      '<label class="toolbar-select">Genre<select data-rec-filter="genreMode">' +
       optionHtml('any', 'Any', recFilters.genreMode) +
       optionHtml('same', 'Same', recFilters.genreMode) +
       optionHtml('different', 'Different', recFilters.genreMode) +
-      '</select></label>' +
-      '</div>';
+      '</select></label>';
   }
   function updateRecFiltersFromElement(el) {
     const key = el && el.getAttribute && el.getAttribute('data-rec-filter');
@@ -8438,6 +8623,33 @@ return Plotly;
     previewFormState.to_cue = '';
     scheduleSessionSave();
     renderAll();
+  }
+  // Unload a single deck (used by drag-off-the-deck), with undo.
+  function clearTransitionDeck(deck) {
+    const isFrom = deck === 'from';
+    const current = isFrom ? transitionFromIdx : transitionToIdx;
+    if (current === null) return;
+    const label = sequenceTrackLabel(current);
+    const snap = { from: transitionFromIdx, to: transitionToIdx, render: transitionRender, renderedState: transitionRenderedState };
+    resetTransitionRenderState();
+    previewFormState.from_cue = '';
+    previewFormState.to_cue = '';
+    if (isFrom) transitionFromIdx = null;
+    else transitionToIdx = null;
+    scheduleSessionSave();
+    renderAll();
+    showToast('Unloaded ' + (isFrom ? 'Track 1' : 'Track 2') + ' — "' + label + '".', {
+      undoGroup: 'deck',
+      onUndo: () => {
+        resetTransitionRenderState();
+        transitionFromIdx = snap.from;
+        transitionToIdx = snap.to;
+        transitionRender = snap.render;
+        transitionRenderedState = snap.renderedState;
+        scheduleSessionSave();
+        renderAll();
+      },
+    });
   }
   function clearTransitionPair() {
     transitionFromIdx = null;
@@ -8695,15 +8907,17 @@ return Plotly;
     });
     const fromPt = transitionFromIdx === null ? null : currentPoint(transitionFromIdx);
     const toPt = transitionToIdx === null ? null : currentPoint(transitionToIdx);
+    // Covers draw their own badge above the artwork, so blank plotly's centred labels.
+    const hideDotLabels = artworkMarkersEnabled();
     restyleTrace('Track 1', {
       x: [fromPt ? [fromPt[0]] : []],
       y: [fromPt ? [fromPt[1]] : []],
-      text: [fromPt ? ['T1'] : []],
+      text: [fromPt ? [hideDotLabels ? '' : 'T1'] : []],
     });
     restyleTrace('Track 2', {
       x: [toPt ? [toPt[0]] : []],
       y: [toPt ? [toPt[1]] : []],
-      text: [toPt ? ['T2'] : []],
+      text: [toPt ? [hideDotLabels ? '' : 'T2'] : []],
     });
     restyleTrace('Transition pair', {
       x: [fromPt && toPt ? [fromPt[0], toPt[0]] : []],
@@ -8721,7 +8935,7 @@ return Plotly;
       if (!pt) continue;
       pathX.push(pt[0]);
       pathY.push(pt[1]);
-      pathText.push(String(i + 1));
+      pathText.push(hideDotLabels ? '' : String(i + 1));
       pathCustom.push([idx]);
     }
     restyleTrace('Sequence path', {
@@ -8751,7 +8965,7 @@ return Plotly;
         linkY.push(src[1], dst[1], null);
         recX.push(dst[0]);
         recY.push(dst[1]);
-        recText.push(String(i + 1));
+        recText.push(hideDotLabels ? '' : String(i + 1));
         recCustom.push([Number(row.idx)]);
       });
     }
@@ -8848,7 +9062,6 @@ return Plotly;
     if (!Number.isFinite(fromSlot) || !Number.isFinite(toSlot)) return;
     if (fromSlot < 0 || fromSlot >= sequence.length || toSlot < 0 || toSlot >= sequence.length) return;
     if (fromSlot === toSlot) {
-      sequenceDragSlot = null;
       safeUi('sequence render', renderSequence);
       return;
     }
@@ -8861,7 +9074,6 @@ return Plotly;
       if (fromSlot < selectedSlot && selectedSlot <= toSlot) selectedSlot -= 1;
       else if (toSlot <= selectedSlot && selectedSlot < fromSlot) selectedSlot += 1;
     }
-    sequenceDragSlot = null;
     scheduleSessionSave();
     renderAll();
   }
@@ -8899,16 +9111,17 @@ return Plotly;
       return '<th ' + (cls ? 'class="' + cls + '" ' : '') + (title ? 'title="' + esc(title) + '" ' : '') + ariaSort + 'data-library-sort="' + esc(key) + '" data-sort-indicator="' + indicator + '">' +
         '<button type="button" class="th-sort" data-library-sort="' + esc(key) + '">' + label + '</button></th>';
     };
+    // Same shape as the recommendations table: one track cell on the left, the
+    // quantified columns on the right.
     let html = '<table><thead><tr>' +
       sortTh('title', 'Track') +
-      sortTh('artists', 'Artist') +
       sortTh('key', 'Key', 'short center') +
       sortTh('est_bpm', 'BPM', 'short center') +
-      sortTh('human_energy', 'Tagged<br>energy', 'short center wrap-head', 'Energy rating tagged in the library metadata (1-9). Used for scoring when Energy source is Tagged energy.') +
-      sortTh('glm_energy', 'Auto<br>energy', 'short center wrap-head', 'Energy estimated by a model. Continuous value that may not match the tag. Used for scoring when Energy source is Auto energy; falls back to the tag when missing.') +
-      sortTh('duration_seconds', 'Duration', 'short center') +
-      sortTh('raw_genre', 'Genre') +
-      '<th>Actions</th></tr></thead><tbody>';
+      sortTh('human_energy', 'Tagged', 'short center', 'Energy rating tagged in the library metadata (1-9). Used for scoring when Energy source is Tagged energy.') +
+      sortTh('glm_energy', 'Auto', 'short center', 'Energy estimated by a model. Continuous value that may not match the tag. Used for scoring when Energy source is Auto energy; falls back to the tag when missing.') +
+      sortTh('duration_seconds', 'Time', 'short center') +
+      sortTh('raw_genre', 'Genre', 'short center') +
+      '</tr></thead><tbody>';
     rows.forEach(r => {
       const rowClasses = [];
       if (Number(r.idx) === selectedIdx) rowClasses.push('selected-slot');
@@ -8917,25 +9130,25 @@ return Plotly;
       if (Number(r.idx) === previewAudioIdx) rowClasses.push(previewAudioPlaying ? 'now-playing' : 'now-playing-paused');
       const rowClass = rowClasses.length ? ' class="' + rowClasses.join(' ') + '"' : '';
       const titleAttr = [r.title, r.artists].filter(Boolean).join(' - ');
+      // Click the row to select and play it; drag it onto a deck card or a
+      // sequence slot to load or place it — no per-row controls needed.
       html += '<tr data-library-row-idx="' + r.idx + '"' + rowClass + '>' +
-        '<td class="library-title-cell" title="' + esc(titleAttr) + '"><div class="library-title-summary">' + artworkHtml(r) + '<span>' + esc(r.title) + '</span></div></td>' +
-        '<td>' + esc(r.artists) + '</td>' +
+        '<td class="library-title-cell" title="' + esc(titleAttr) + '">' +
+        trackSummaryHtml(r, { size: 'compact', showArt: true, showMeta: false }) + '</td>' +
         '<td class="center">' + keyHtml(r.key) + '</td>' +
         '<td class="center">' + roundedBpm(r) + '</td>' +
         '<td class="center">' + (Number.isFinite(Number(r.human_energy)) ? fmt(r.human_energy, 2) : '') + '</td>' +
         '<td class="center">' + (Number.isFinite(Number(r.glm_energy)) ? fmt(r.glm_energy, 2) : '') + '</td>' +
         '<td class="center">' + esc(durationText(r)) + '</td>' +
-        '<td>' + esc(rawGenre(r)) + '</td>' +
-        '<td><div class="library-actions">' +
-        rowPlayerHtml(r) +
-        '<button data-library-current="' + r.idx + '" title="Select this track (shows details and next-track recommendations)" aria-label="Select this track">Select</button>' +
-        actionSymbolButton('data-library-place="' + r.idx + '"', '+', 'Add to sequence', 'primary') +
-        actionSymbolButton('data-library-outgoing="' + r.idx + '"', 'T1', 'Set as Track 1', 'track-one') +
-        actionSymbolButton('data-library-incoming="' + r.idx + '"', 'T2', 'Set as Track 2', 'track-two') +
-        '</div></td></tr>';
+        '<td class="center">' + esc(rawGenre(r)) + '</td></tr>';
     });
     html += '</tbody></table>';
     els.libraryTable.innerHTML = html;
+    if (els.libraryCount) {
+      els.libraryCount.textContent = query
+        ? rows.length + ' of ' + records.length + ' tracks'
+        : records.length + ' tracks';
+    }
     updatePlayButtons();
     updateRowScrubbers();
   }
@@ -8952,9 +9165,11 @@ return Plotly;
       const r = idx === null ? null : byIdx.get(idx);
       const classes = [];
       if (selectedSlot === i) classes.push('selected-slot');
-      if (sequenceDragSlot === i) classes.push('drag-source');
       const cls = classes.length ? ' class="' + classes.join(' ') + '"' : '';
-      html += '<tr' + cls + ' data-sequence-drop-slot="' + i + '"><td class="num"><span class="sequence-drag-handle" draggable="true" data-sequence-drag-slot="' + i + '" title="Drag to reorder">↕</span> ' + (i + 1) + '</td><td>';
+      // Every slot is a drop target; a filled slot is also a drag source (drag it to
+      // another slot to reorder, to a deck to load it, or off the table to remove it).
+      html += '<tr' + cls + ' data-slot-drop="' + i + '"' + (r ? ' data-slot-drag="' + i + '"' : '') +
+        '><td class="num">' + (r ? '<span class="sequence-drag-handle" aria-hidden="true" title="Drag this row to reorder, onto a deck to load it, or off the table to remove it">↕</span> ' : '') + (i + 1) + '</td><td>';
       // Energy is its own column in this table — keep it out of the meta line.
       if (r) html += trackSummaryHtml(r, { size: 'compact', showArt: true, slot: i, showEnergy: false });
       else if (i < lastFilled) html += '<span class="warn" title="Gap: transition scores and CSV export bridge across this slot">empty — gap</span>';
@@ -8962,13 +9177,9 @@ return Plotly;
       const targetValue = Number(targetValues[i]);
       const targetInput = '<input class="target-edit" data-target-slot="' + i + '" type="number" min="1" max="9" step="0.5" placeholder="' + fmt(targets[i], 2) + '" value="' + (Number.isFinite(targetValue) ? fmt(targetValue, 2) : '') + '" aria-label="Target energy for slot ' + (i + 1) + '">';
       html += '</td><td class="target-col">' + targetInput + '</td><td class="num actual-col">' + (r ? fmt(energyOf(r), 2) : '') + '</td><td class="actions-col"><div class="table-actions">';
-      if (r) html += '<button class="play-button" data-play-idx="' + r.idx + '" aria-label="Play">▶</button> ';
       html += actionSymbolButton('data-seq-slot="' + i + '"', selectedSlot === i ? '●' : '○', selectedSlot === i ? 'Deselect slot' : 'Select slot', selectedSlot === i ? 'is-active' : '') + ' ';
       html += actionSymbolButton('data-move-slot-up="' + i + '"' + (i === 0 ? ' disabled' : ''), '↑', 'Move slot ' + (i + 1) + ' up') + ' ';
       html += actionSymbolButton('data-move-slot-down="' + i + '"' + (i === sequence.length - 1 ? ' disabled' : ''), '↓', 'Move slot ' + (i + 1) + ' down') + ' ';
-      if (selectedIdx !== null && canPlaceTrack(selectedIdx, i)) {
-        html += actionSymbolButton('data-place-slot="' + i + '"', r ? '⇄' : '+', r ? 'Replace with selected track' : 'Add selected track here', 'primary') + ' ';
-      }
       if (r) html += actionSymbolButton('data-remove-slot="' + i + '"', '−', 'Remove track from slot', 'danger');
       html += '</div></td></tr>';
     }
@@ -9184,7 +9395,7 @@ return Plotly;
     const idx = Number(record && record.idx);
     const meta = [energyMetaHtml(record, slot), esc(durationText(record))].filter(Boolean).join(' &sdot; ');
     return '<div class="diagnostic-waveform-card">' +
-      '<div class="diagnostic-waveform-head"><button class="play-button" data-play-idx="' + idx + '" data-play-mode="diagnostics" aria-label="Play">▶</button><b>' + esc(role) + ': ' + esc(record.title || 'Untitled') + '</b><span>' + meta + '</span></div>' +
+      '<div class="diagnostic-waveform-head"><b>' + esc(role) + ': ' + esc(record.title || 'Untitled') + '</b><span>' + meta + '</span></div>' +
       '<canvas class="diagnostic-waveform-canvas" data-diagnostic-waveform-idx="' + idx + '" height="96" aria-label="' + esc(role) + ' full waveform"></canvas>' +
       '</div>';
   }
@@ -9248,7 +9459,6 @@ return Plotly;
       const rankInfo = previous ? transitionRecommendationRank(previous.idx, current.idx, current.slot) : null;
       html += '<tr>' +
         '<td class="num">' + (current.slot + 1) + '</td>' +
-        '<td class="num"><div class="table-actions"><button class="play-button" data-play-idx="' + current.idx + '" data-play-mode="library" aria-label="Play">▶</button></div></td>' +
         '<td class="waveform-cell">' + rowWaveformScrubberHtml(record, { showTime: false }) + '</td>' +
         '<td>' + trackSummaryHtml(record, { size: 'compact', showArt: true, slot: current.slot }) +
           (previous ? '' : '<div class="muted">First track — no incoming transition</div>') +
@@ -9343,14 +9553,26 @@ return Plotly;
       '<span class="score-meter-track"><i style="width:' + (clamp(strength, 0, 1) * 100).toFixed(1) + '%"></i></span>' +
       '</div>';
   }
+  function restoreRecQueryFocus() {
+    const host = els.recommendationFilters || els.recommendationPanel;
+    const queryInput = host && host.querySelector('[data-rec-filter="query"]');
+    if (!queryInput) return;
+    queryInput.focus();
+    const n = String(queryInput.value || '').length;
+    try { queryInput.setSelectionRange(n, n); } catch (err) {}
+  }
   function renderRecommendations() {
     const restoreQueryFocus = document.activeElement
       && document.activeElement.getAttribute
       && document.activeElement.getAttribute('data-rec-filter') === 'query';
-    const filterbar = recommendationFilterHtml();
+    // The filter bar sits outside the scrolling panel, the same way the library
+    // search box sits above its table.
+    if (els.recommendationFilters) els.recommendationFilters.innerHTML = recommendationFilterHtml();
     const slot = targetSlot();
     if (slot < 0) {
-      els.recommendationPanel.innerHTML = filterbar + '<div class="muted" style="padding:10px;">Sequence is full. Select a slot to replace a track.</div>';
+      if (els.recommendationCount) els.recommendationCount.textContent = '';
+      els.recommendationPanel.innerHTML = '<div class="panel-empty">Sequence is full. Select a slot to replace a track.</div>';
+      if (restoreQueryFocus) restoreRecQueryFocus();
       return;
     }
     const ctx = recommendationContext(slot);
@@ -9372,32 +9594,33 @@ return Plotly;
     } else {
       anchorHtml = ' · scored from the target energy curve only (no source track)';
     }
-    let html = filterbar +
-      '<div class="muted" style="padding:8px 8px 0;">' +
+    // Counts live in the card header chip, like the library's; the note keeps the
+    // scoring context that has no equivalent on the library side.
+    if (els.recommendationCount) {
+      els.recommendationCount.textContent = prepared.query
+        ? prepared.matchedCount + ' of ' + prepared.allRows.length + ' match'
+        : 'Top ' + Math.min(25, prepared.matchedCount) + ' of ' + prepared.allRows.length;
+    }
+    let html =
+      '<div class="panel-note">' +
       (sequence[slot] === null ? 'Adding to slot <b>' : 'Replacing slot <b>') + (slot + 1) + '</b>' +
-      anchorHtml + '. ' +
-      (prepared.query
-        ? 'Showing <b>' + prepared.matchedCount + '</b> matches from <b>' + prepared.allRows.length + '</b> scored candidates' +
-          (prepared.pinnedOutsideQueryCount ? ', plus <b>' + prepared.pinnedOutsideQueryCount + '</b> pinned outside the search.' : '.')
-        : 'Showing top <b>' + Math.min(25, prepared.matchedCount) + '</b> of <b>' + prepared.allRows.length + '</b> scored candidates.') +
+      anchorHtml + '.' +
+      (prepared.query && prepared.pinnedOutsideQueryCount
+        ? ' Plus <b>' + prepared.pinnedOutsideQueryCount + '</b> pinned outside the search.'
+        : '') +
       '</div>' +
-      '<table><thead><tr>' + scoreTh('#', 'rank') +
-      '<th title="☆ pin candidate · + add to sequence (⇄ replace) · T1 / T2 set Track 1 / Track 2 · ▶ play preview">Actions</th>' +
-      '<th title="Green shows the listened region; the dashed amber line is the preview start cue. Click to seek.">Waveform</th><th>Track</th>' +
+      '<table><thead><tr>' + scoreTh('#', 'rank') + '<th>Track</th>' +
       '<th class="num" title="Final = Mix × Fit. Overall recommendation score. Hover a value for its Mix, Fit, and Loss parts.">Final</th>' + scoreTh('Fit', 'fit') +
       scoreTh('Style', 'style') + scoreTh('Tempo', 'tempo') + scoreTh('Groove', 'groove') + scoreTh('Key', 'key') +
       '</tr></thead><tbody>';
     rows.forEach((r, i) => {
       const isPinned = pinnedRecommendationIdxs.has(Number(r.idx));
-      html += '<tr' + (isPinned ? ' class="pinned-row"' : '') + '><td class="num">' + (isPinned ? '★ ' : '') + (r.globalRank === null ? '—' : (r.globalRank || (i + 1))) + '</td>' +
-        '<td><div class="table-actions">' +
-        actionSymbolButton('data-pin-rec-idx="' + r.idx + '"', isPinned ? '★' : '☆', isPinned ? 'Unpin candidate' : 'Pin candidate', isPinned ? 'pin-active' : 'pin-button') +
-        actionSymbolButton('data-append-idx="' + r.idx + '"', actionSymbol, actionLabel === 'Add' ? 'Add to sequence' : 'Replace slot ' + (slot + 1), 'primary') +
-        actionSymbolButton('data-library-outgoing="' + r.idx + '"', 'T1', 'Set as Track 1', 'track-one') +
-        actionSymbolButton('data-library-incoming="' + r.idx + '"', 'T2', 'Set as Track 2', 'track-two') +
-        '<button class="play-button" data-play-idx="' + r.idx + '" data-play-mode="library" aria-label="Play">▶</button>' +
-        '</div></td>' +
-        '<td class="waveform-cell">' + rowWaveformScrubberHtml(r, { showTime: false }) + '</td>' +
+      const rankText = r.globalRank === null ? '—' : String(r.globalRank || (i + 1));
+      // No Actions or Waveform column: the rank doubles as the pin toggle (clicking a
+      // button is excluded from the row's click-to-play), and the row itself plays / drags.
+      html += '<tr data-rec-row-idx="' + r.idx + '"' + (isPinned ? ' class="pinned-row"' : '') + '>' +
+        '<td class="num"><button type="button" class="rec-rank' + (isPinned ? ' pin-active' : '') + '" data-pin-rec-idx="' + r.idx + '" title="' + (isPinned ? 'Unpin this candidate' : 'Pin this candidate so it stays listed') + '" aria-label="' + (isPinned ? 'Unpin candidate' : 'Pin candidate') + '">' +
+        (isPinned ? '★' : '') + esc(rankText) + '</button></td>' +
         '<td>' + trackSummaryHtml(r, { size: 'compact', showArt: true, slot: r.slot ?? slot }) + '</td>' +
         recommendationMetricCell(r.finalScore, 'final', r.finalScore, 2, 'Final (Mix ' + (Number.isFinite(Number(r.baseline)) ? fmt(r.baseline, 2) : 'n/a') + ' × Fit ' + (Number.isFinite(Number(r.energyScore)) ? fmt(r.energyScore, 2) : 'n/a') + ', Loss ' + (Number.isFinite(Number(r.penalty)) ? fmt(r.penalty, 2) : 'n/a') + ')') +
         recommendationMetricCell(r.energyScore, 'energy', r.energyScore, 2, 'Energy fit score') +
@@ -9408,18 +9631,11 @@ return Plotly;
         '</tr>';
     });
     if (!rows.length) {
-      html += '<tr><td colspan="10" class="muted" style="padding:10px;">No recommendations match the current filters.</td></tr>';
+      html += '<tr><td colspan="8"><div class="panel-empty">No recommendations match the current filters.</div></td></tr>';
     }
     html += '</tbody></table>';
     els.recommendationPanel.innerHTML = html;
-    if (restoreQueryFocus) {
-      const queryInput = els.recommendationPanel.querySelector('[data-rec-filter="query"]');
-      if (queryInput) {
-        queryInput.focus();
-        const n = String(queryInput.value || '').length;
-        try { queryInput.setSelectionRange(n, n); } catch (err) {}
-      }
-    }
+    if (restoreQueryFocus) restoreRecQueryFocus();
     updatePlayButtons();
     updateRowScrubbers();
   }
@@ -9484,12 +9700,23 @@ return Plotly;
     const followsTail = from && lastFilledIdx !== null && Number(transitionFromIdx) === Number(lastFilledIdx);
     // The two deck cards are the single place the transition pair is shown: album art,
     // title, artist, meta and a per-deck play button (reuses the editor's deck-play handler).
+    // Each card is both a drop target (drag a track here to load it) and, when loaded,
+    // a drag source (drag the track off the card to unload it).
     const deckHtml = (cls, label, deck, record, noteHtml) =>
-      '<div class="transition-badge ' + cls + '">' +
+      '<div class="transition-badge ' + cls + (record ? ' deck-loaded' : '') + '"' +
+      ' data-deck-drop="' + deck + '"' + (record ? ' data-deck-drag="' + deck + '"' : '') +
+      ' title="' + (record ? 'Drag this track off the card to unload it' : 'Drag a track from the map or library here to load it as ' + label) + '">' +
       '<div class="deck-card-head"><b>' + label + '</b>' +
-      (record ? '<button type="button" class="deck-play play-button" data-transition-track-play="' + deck + '" aria-label="Play ' + label + '">▶</button>' : '') +
       '</div>' +
-      (record ? trackSummaryHtml(record, { size: 'compact', showArt: true }) : '<span class="muted">None selected</span>') +
+      (record
+        // Circular cover on its own row (spins while this deck's track plays),
+        // then the rest of the track detail in a small card underneath.
+        ? '<div class="deck-cover-row"><span class="deck-cover-disc" data-deck-cover="' + deck + '">' +
+            artworkHtml(record, 'deck-cover') +
+            '<i class="deck-cover-spindle" aria-hidden="true"></i>' +
+          '</span></div>' +
+          '<div class="deck-info-card">' + trackSummaryHtml(record, { size: 'compact', showArt: false }) + '</div>'
+        : '<span class="muted deck-empty-hint">Drop a track here</span>') +
       (noteHtml || '') +
       '</div>';
     els.transitionBadges.innerHTML =
@@ -9499,6 +9726,7 @@ return Plotly;
     // The detailed transition score lives in the Transition segment, not the deck cards.
     if (els.transitionScore) els.transitionScore.innerHTML = scoreHtml;
     safeUi('deck play buttons', updateTransitionTrackPlayButtons);
+    safeUi('deck cover spin', updateDeckCoverSpin);
   }
   function renderTransitionEditorHtml(from, to) {
     if (!from || !to) {
@@ -9542,7 +9770,6 @@ return Plotly;
       return '<div class="transition-overview-card ' + esc(deck) + '" data-transition-card="' + esc(deck) + '-overview">' +
         laneInfoHtml(deck) +
         '<div class="transition-overview-row">' +
-        '<button type="button" class="transition-track-play" data-transition-track-play="' + esc(deck) + '" aria-label="Play ' + esc(info.cfg.label) + '">▶</button>' +
         '<canvas class="transition-overview-canvas" data-transition-surface="overview" data-transition-deck="' + esc(deck) + '" height="76"></canvas>' +
         '</div>' +
         cueListHtml +
@@ -10425,10 +10652,6 @@ return Plotly;
     draggingEnergySlot = null;
   }
   function updateAppendControls() {
-    const slot = targetSlot();
-    const replacing = slot >= 0 && sequence[slot] !== null;
-    setActionButton(els.appendSelected, replacing ? '⇄' : '+', replacing ? 'Replace track in selected slot' : 'Add selected track to sequence', 'primary');
-    els.appendSelected.disabled = selectedIdx === null || !canPlaceTrack(selectedIdx, slot);
     const hasFilled = sequence.some(v => v !== null);
     const curveEdited = targetValues.some(v => Number(v) !== DEFAULT_TARGET_ENERGY);
     if (els.clearLast) els.clearLast.disabled = !hasFilled;
@@ -10438,10 +10661,12 @@ return Plotly;
     safeUi('map overlays', updatePacmapOverlays);
     safeUi('map static overlays', ensureMapEffectsLoop);
     safeUi('append controls', updateAppendControls);
-    // Right build column is always visible — render its pieces regardless of the active analysis tab.
+    // The right column only holds the sequence now, so it always renders.
     safeUi('sequence render', renderSequence);
-    safeUi('recommendations render', renderRecommendations);
-    if (activePane === 'library') safeUi('library render', renderLibrary);
+    if (activePane === 'library') {
+      safeUi('library render', renderLibrary);
+      safeUi('recommendations render', renderRecommendations);
+    }
     if (activePane === 'diagnostics') {
       safeUi('transition score render', renderCurrentTransitionScore);
       safeUi('transition diagnostics render', renderTransitionDiagnostics);
@@ -10466,22 +10691,168 @@ return Plotly;
       drawMiniMap();
     });
     safeUi('append controls', updateAppendControls);
-    // Right build column is always visible — always render sequence, recommendations,
-    // energy curve, and the transition preview regardless of the active analysis tab.
+    // The right column holds only the sequence + energy curve, so those always render.
     safeUi('sequence render', renderSequence);
-    safeUi('recommendations render', renderRecommendations);
     safeUi('energy curve render', renderEnergyCurve);
-    safeUi('transition preview render', renderTransitionPreview);
-    if (activePane === 'library') safeUi('library render', renderLibrary);
+    if (activePane === 'library') {
+      safeUi('library render', renderLibrary);
+      safeUi('recommendations render', renderRecommendations);
+    }
     if (activePane === 'diagnostics') {
       safeUi('transition score render', renderCurrentTransitionScore);
       safeUi('transition diagnostics render', renderTransitionDiagnostics);
     }
+    // renderTransitionPreview also fills #transition-score, so it must run whenever the
+    // pair changes — not only while the Transition pane is open.
+    safeUi('transition preview render', renderTransitionPreview);
     safeUi('transition badges render', renderTransitionBadges);
     safeUi('audio ui sync', syncAudioUi);
     if (els.settingsPopover && !els.settingsPopover.classList.contains('hidden')) {
       safeUi('settings render', renderSettingsPanel);
     }
+  }
+  // ---- Global track drag-and-drop -----------------------------------------
+  // One pointer-based system for every drag: map dots, library rows,
+  // recommendation rows, and the deck cards themselves (drag off = unload).
+  // Pointer events (not HTML5 DnD) so canvas-drawn map dots can be dragged and
+  // so the same code path works for mouse, pen and touch.
+  const DRAG_ACTIVATE_PX = 6;
+  let trackDrag = null;
+  function trackDragGhostEl() {
+    let ghost = document.getElementById('track-drag-ghost');
+    if (!ghost) {
+      ghost = document.createElement('div');
+      ghost.id = 'track-drag-ghost';
+      ghost.className = 'track-drag-ghost';
+      ghost.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(ghost);
+    }
+    return ghost;
+  }
+  function armTrackDrag(idx, { source, deck = null, slot = null, ev }) {
+    idx = Number(idx);
+    if (!Number.isFinite(idx) || !byIdx.has(idx)) return false;
+    trackDrag = {
+      idx,
+      source,
+      deck,
+      slot,
+      pointerId: ev.pointerId,
+      pointerType: ev.pointerType || 'mouse',
+      startX: ev.clientX,
+      startY: ev.clientY,
+      active: false,
+      target: null,
+    };
+    return true;
+  }
+  function activateTrackDrag() {
+    if (!trackDrag || trackDrag.active) return;
+    trackDrag.active = true;
+    const record = byIdx.get(trackDrag.idx);
+    const ghost = trackDragGhostEl();
+    ghost.innerHTML = record
+      ? artworkHtml(record) + '<span class="track-drag-ghost-title">' + esc(record.title || 'Untitled') + '</span>'
+      : '';
+    ghost.classList.add('visible');
+    document.body.classList.add('track-dragging');
+    if (trackDrag.deck) document.body.classList.add('track-dragging-from-deck');
+    document.querySelectorAll('[data-deck-drop]').forEach(el => el.classList.add('deck-drop-ready'));
+  }
+  // A drop target is either a deck ({kind:'deck', deck}) or a sequence slot
+  // ({kind:'slot', slot}); null means "dropped outside every target".
+  function trackDragTargetAt(ev) {
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    if (!el || !el.closest) return null;
+    const deckEl = el.closest('[data-deck-drop]');
+    if (deckEl) return { kind: 'deck', deck: deckEl.getAttribute('data-deck-drop') };
+    const slotEl = el.closest('[data-slot-drop]');
+    if (slotEl) {
+      const slot = Number(slotEl.getAttribute('data-slot-drop'));
+      if (Number.isFinite(slot)) return { kind: 'slot', slot };
+    }
+    return null;
+  }
+  function trackDragTargetKey(target) {
+    if (!target) return '';
+    return target.kind === 'deck' ? 'deck:' + target.deck : 'slot:' + target.slot;
+  }
+  function moveTrackDrag(ev) {
+    if (!trackDrag) return;
+    if (!trackDrag.active) {
+      const dx = Math.abs(Number(ev.clientX) - trackDrag.startX);
+      const dy = Math.abs(Number(ev.clientY) - trackDrag.startY);
+      if (dx + dy < DRAG_ACTIVATE_PX) return;
+      // On touch, let a mostly-vertical gesture stay a scroll instead of a drag.
+      if (trackDrag.pointerType === 'touch' && dy > dx) {
+        trackDrag = null;
+        return;
+      }
+      activateTrackDrag();
+    }
+    const ghost = trackDragGhostEl();
+    ghost.style.transform = 'translate3d(' + Math.round(ev.clientX + 12) + 'px,' + Math.round(ev.clientY + 12) + 'px,0)';
+    // Re-apply on every move, not only on change: a re-render can replace the deck
+    // cards or sequence rows mid-drag and the fresh elements would lose their highlight.
+    const target = trackDragTargetAt(ev);
+    trackDrag.target = target;
+    const overDeck = target && target.kind === 'deck' ? target.deck : null;
+    const overSlot = target && target.kind === 'slot' ? target.slot : null;
+    document.querySelectorAll('[data-deck-drop]').forEach(el => {
+      el.classList.add('deck-drop-ready');
+      el.classList.toggle('deck-drop-over', el.getAttribute('data-deck-drop') === overDeck);
+    });
+    document.querySelectorAll('[data-slot-drop]').forEach(el => {
+      el.classList.add('slot-drop-ready');
+      el.classList.toggle('slot-drop-over', Number(el.getAttribute('data-slot-drop')) === overSlot);
+    });
+    document.body.classList.toggle('track-drag-will-unload', !!(trackDrag.deck || trackDrag.slot !== null) && !target);
+    if (ev.cancelable) ev.preventDefault();
+  }
+  function clearTrackDragUi() {
+    const ghost = document.getElementById('track-drag-ghost');
+    if (ghost) {
+      ghost.classList.remove('visible');
+      ghost.innerHTML = '';
+    }
+    document.body.classList.remove('track-dragging', 'track-dragging-from-deck', 'track-drag-will-unload');
+    document.querySelectorAll('[data-deck-drop]').forEach(el => {
+      el.classList.remove('deck-drop-ready', 'deck-drop-over');
+    });
+    document.querySelectorAll('[data-slot-drop]').forEach(el => {
+      el.classList.remove('slot-drop-ready', 'slot-drop-over');
+    });
+  }
+  function finishTrackDrag(ev) {
+    if (!trackDrag) return false;
+    const drag = trackDrag;
+    trackDrag = null;
+    clearTrackDragUi();
+    if (!drag.active) return false;
+    const target = ev ? trackDragTargetAt(ev) : drag.target;
+    if (target && target.kind === 'deck') {
+      if (drag.deck === target.deck) return true;
+      // setTransitionEndpoint already clears the other deck when it held this same
+      // track, so dragging between decks moves rather than duplicates.
+      setTransitionEndpoint(target.deck === 'from' ? 'out' : 'in', drag.idx, { toggle: false });
+      return true;
+    }
+    if (target && target.kind === 'slot') {
+      if (drag.slot === target.slot) return true;
+      // Slot to slot is a reorder; anything else places the track into that slot.
+      if (drag.slot !== null) moveSequenceSlot(drag.slot, target.slot);
+      else appendTrack(drag.idx, { slot: target.slot });
+      return true;
+    }
+    // Dropped outside every target: a deck drag unloads, a slot drag removes.
+    if (drag.deck) clearTransitionDeck(drag.deck);
+    else if (drag.slot !== null) removeSlot(drag.slot);
+    return true;
+  }
+  function cancelTrackDrag() {
+    if (!trackDrag) return;
+    trackDrag = null;
+    clearTrackDragUi();
   }
   function downloadCsv() {
     const targets = targetCurve();
@@ -10523,9 +10894,6 @@ return Plotly;
     if (els.weightChroma) els.weightChroma.value = String((config.weights && config.weights.chroma) || 0.25);
     if (els.weightTempo) els.weightTempo.value = String((config.weights && config.weights.tempo) || 0.15);
   }
-  setActionButton(els.setOutgoing, 'T1', 'Set selected track as Track 1', 'track-one');
-  setActionButton(els.setIncoming, 'T2', 'Set selected track as Track 2', 'track-two');
-  setActionButton(els.clearTransition, '×', 'Clear transition pair', 'danger');
   if (els.settingsToggle) {
     els.settingsToggle.addEventListener('click', ev => {
       ev.stopPropagation();
@@ -10619,21 +10987,6 @@ return Plotly;
     ev.preventDefault();
     ev.stopPropagation();
   });
-  els.buildSegButtons.forEach(btn => btn.addEventListener('click', () => setBuildSegment(btn.getAttribute('data-build-seg'))));
-  const buildSegNav = document.querySelector('.build-segments');
-  if (buildSegNav) buildSegNav.addEventListener('keydown', ev => {
-    if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
-    const current = els.buildSegButtons.indexOf(document.activeElement);
-    if (current < 0) return;
-    const step = ev.key === 'ArrowRight' ? 1 : els.buildSegButtons.length - 1;
-    const next = els.buildSegButtons[(current + step) % els.buildSegButtons.length];
-    if (next) {
-      next.focus();
-      setBuildSegment(next.getAttribute('data-build-seg'));
-    }
-    ev.preventDefault();
-    ev.stopPropagation();
-  });
   els.sequenceLength.addEventListener('change', () => setSequenceLength(els.sequenceLength.value));
   els.energySource.addEventListener('change', renderAll);
   els.colorMode.addEventListener('change', () => {
@@ -10701,10 +11054,6 @@ return Plotly;
     els.simplex.addEventListener('pointerup', ev => { draggingSimplex = false; try { els.simplex.releasePointerCapture(ev.pointerId); } catch (err) {} });
     els.simplex.addEventListener('pointercancel', () => { draggingSimplex = false; });
   }
-  if (els.setOutgoing) els.setOutgoing.addEventListener('click', () => { if (selectedIdx !== null) setTransitionEndpoint('out', selectedIdx); });
-  if (els.setIncoming) els.setIncoming.addEventListener('click', () => { if (selectedIdx !== null) assignTrackTwo(selectedIdx); });
-  els.appendSelected.addEventListener('click', () => { if (selectedIdx !== null) appendTrack(selectedIdx); });
-  if (els.clearTransition) els.clearTransition.addEventListener('click', clearTransitionPair);
   els.clearLast.addEventListener('click', () => {
     let cleared = null;
     for (let i = sequence.length - 1; i >= 0; i -= 1) { if (sequence[i] !== null) { cleared = i; break; } }
@@ -10789,8 +11138,8 @@ return Plotly;
       waveformPointerActive = false;
     });
   }
-  if (els.globalToggle) {
-    els.globalToggle.addEventListener('click', () => {
+  if (els.globalNowPlaying) {
+    const toggleNowPlaying = () => {
       const record = currentAudioRecord();
       if (!record) return;
       if (previewAudioIdx === Number(record.idx) && previewAudioPlaying) {
@@ -10801,23 +11150,13 @@ return Plotly;
         ? Number(els.audio.currentTime || 0)
         : (rowScrubPositions.has(Number(record.idx)) ? rowScrubValue(record) : previewStart(record));
       playRecordAt(record, start, 'global');
-    });
-  }
-  if (els.globalScrub) {
-    const handleGlobalScrub = () => {
-      const record = currentAudioRecord();
-      if (!record) return;
-      const idx = Number(record.idx);
-      const value = Number(els.globalScrub.value || 0);
-      if (!Number.isFinite(idx) || !Number.isFinite(value)) return;
-      rowScrubPositions.set(idx, value);
-      if (previewAudioIdx === idx && els.audio) seekSharedAudio(value);
-      updateRowScrubbers();
-      updateGlobalPlayer();
-      drawMainWaveform();
     };
-    els.globalScrub.addEventListener('input', handleGlobalScrub);
-    els.globalScrub.addEventListener('change', handleGlobalScrub);
+    els.globalNowPlaying.addEventListener('click', toggleNowPlaying);
+    els.globalNowPlaying.addEventListener('keydown', ev => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault();
+      toggleNowPlaying();
+    });
   }
   if (els.globalVolume) {
     masterVolume = clamp(Number(els.globalVolume.value || masterVolume), 0, 1);
@@ -10885,60 +11224,101 @@ return Plotly;
   document.body.addEventListener('pointercancel', () => {
     rowWaveformPointerIdx = null;
   });
-  document.body.addEventListener('dragstart', ev => {
-    const slotValue = closestAttr(ev.target, 'data-sequence-drag-slot');
-    if (slotValue === null) return;
-    const slot = Number(slotValue);
-    if (!Number.isFinite(slot) || slot < 0 || slot >= sequence.length) return;
-    sequenceDragSlot = slot;
-    if (ev.dataTransfer) {
-      ev.dataTransfer.effectAllowed = 'move';
-      ev.dataTransfer.setData('text/plain', String(slot));
+
+  // Track drag sources outside the map: library rows, recommendation rows, deck cards.
+  document.body.addEventListener('pointerdown', ev => {
+    if (trackDrag || ev.button !== 0) return;
+    // Never hijack a real control, a text field, or an inline waveform scrubber.
+    if (closestEl(ev.target, 'button, a, input, select, textarea, label, canvas, [data-map-action]')) return;
+    const deckAttr = closestAttr(ev.target, 'data-deck-drag');
+    if (deckAttr !== null) {
+      const deckIdx = deckAttr === 'from' ? transitionFromIdx : transitionToIdx;
+      if (deckIdx !== null) armTrackDrag(deckIdx, { source: 'deck', deck: deckAttr, ev });
+      return;
     }
-    const row = closestEl(ev.target, '[data-sequence-drop-slot]');
-    if (row) row.classList.add('drag-source');
+    const slotAttr = closestAttr(ev.target, 'data-slot-drag');
+    if (slotAttr !== null) {
+      const slot = Number(slotAttr);
+      const slotIdx = Number.isFinite(slot) ? sequence[slot] : null;
+      if (slotIdx !== null && slotIdx !== undefined) armTrackDrag(slotIdx, { source: 'slot', slot, ev });
+      return;
+    }
+    const rowIdx = closestAttr(ev.target, 'data-library-row-idx') ?? closestAttr(ev.target, 'data-rec-row-idx');
+    if (rowIdx !== null) armTrackDrag(rowIdx, { source: 'table', ev });
   });
-  document.body.addEventListener('dragover', ev => {
-    const dropValue = closestAttr(ev.target, 'data-sequence-drop-slot');
-    if (dropValue === null || sequenceDragSlot === null) return;
-    ev.preventDefault();
-    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+  window.addEventListener('pointermove', ev => {
+    if (!trackDrag) return;
+    safeUi('track drag move', () => moveTrackDrag(ev));
+  }, { passive: false });
+  // Capture phase runs before element handlers, so only consume the pointerup once the
+  // drag actually activated. A press that never moved is left for the source's own
+  // handler (e.g. a map dot press turning back into a click) and cleaned up on bubble.
+  window.addEventListener('pointerup', ev => {
+    if (!trackDrag || !trackDrag.active) return;
+    const handled = safeUi('track drag drop', () => finishTrackDrag(ev), false);
+    if (handled) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+  }, true);
+  window.addEventListener('pointerup', () => {
+    if (trackDrag && !trackDrag.active) cancelTrackDrag();
   });
-  document.body.addEventListener('drop', ev => {
-    const dropValue = closestAttr(ev.target, 'data-sequence-drop-slot');
-    if (dropValue === null || sequenceDragSlot === null) return;
-    ev.preventDefault();
-    moveSequenceSlot(sequenceDragSlot, Number(dropValue));
-  });
-  document.body.addEventListener('dragend', () => {
-    if (sequenceDragSlot === null) return;
-    sequenceDragSlot = null;
-    document.querySelectorAll('.sequence-list .drag-source').forEach(row => row.classList.remove('drag-source'));
-  });
+  window.addEventListener('pointercancel', () => cancelTrackDrag());
+  window.addEventListener('blur', () => cancelTrackDrag());
+  document.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape' && trackDrag) {
+      cancelTrackDrag();
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+  }, true);
+
   window.addEventListener('resize', () => setTimeout(() => safeUi('energy curve resize', () => { if (window.Plotly && els.energyCurve) Plotly.Plots.resize(els.energyCurve); }), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('main waveform draw', drawMainWaveform), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('library waveform draw', drawLibraryWaveforms), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('transition editor draw', drawTransitionEditor), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('mini map draw', drawMiniMap), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('webgl map resize', () => { if (webglMap) webglMap.resize(); }), 30));
+  // The map is a flexible row now (it splits the left column with the weights panel),
+  // so follow the pane's own size changes, not just window resizes.
+  if (window.ResizeObserver) {
+    const pane = plotPaneEl();
+    if (pane) {
+      let mapResizeFrame = null;
+      let lastPaneSize = '';
+      new ResizeObserver(entries => {
+        const box = entries && entries[0] ? entries[0].contentRect : pane.getBoundingClientRect();
+        const key = Math.round(box.width) + 'x' + Math.round(box.height);
+        // Ignore repeat notifications for a size we already handled, so redrawing can
+        // never feed back into another resize.
+        if (key === lastPaneSize) return;
+        lastPaneSize = key;
+        if (mapResizeFrame) clearTimeout(mapResizeFrame);
+        mapResizeFrame = setTimeout(() => {
+          mapResizeFrame = null;
+          safeUi('map pane resize', () => {
+            if (webglMap) webglMap.resize();
+            if (!usingWebglMap() && window.Plotly && plot) Plotly.Plots.resize(plot);
+            drawMiniMap();
+            ensureMapEffectsLoop();
+          });
+        }, 80);
+      }).observe(pane);
+    }
+  }
   // Flush any debounced session write before the page goes away so the last edit is not lost.
   window.addEventListener('pagehide', () => safeUi('session flush', flushSessionSave));
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') safeUi('session flush', flushSessionSave); });
 
   document.body.addEventListener('click', ev => {
-    const appendIdx = closestAttr(ev.target, 'data-append-idx');
     const removeSlotValue = closestAttr(ev.target, 'data-remove-slot');
     const seqSlotValue = closestAttr(ev.target, 'data-seq-slot');
-    const placeSlotValue = closestAttr(ev.target, 'data-place-slot');
     const moveSlotUp = closestAttr(ev.target, 'data-move-slot-up');
     const moveSlotDown = closestAttr(ev.target, 'data-move-slot-down');
     const playButton = closestEl(ev.target, '[data-play-idx]');
     const playIdx = playButton ? playButton.getAttribute('data-play-idx') : null;
     const playMode = playButton ? (playButton.getAttribute('data-play-mode') || 'point') : 'point';
-    const libraryCurrent = closestAttr(ev.target, 'data-library-current');
-    const libraryOutgoing = closestAttr(ev.target, 'data-library-outgoing');
-    const libraryIncoming = closestAttr(ev.target, 'data-library-incoming');
-    const libraryPlace = closestAttr(ev.target, 'data-library-place');
     const librarySortKey = closestAttr(ev.target, 'data-library-sort');
     const previewAction = closestAttr(ev.target, 'data-preview-action');
     const transitionTrackPlay = closestAttr(ev.target, 'data-transition-track-play');
@@ -10998,7 +11378,6 @@ return Plotly;
       if (focusTarget) focusTarget.focus();
       return;
     }
-    if (appendIdx !== null) appendTrack(Number(appendIdx));
     if (removeSlotValue !== null) removeSlot(Number(removeSlotValue));
     if (seqSlotValue !== null) {
       const slot = Number(seqSlotValue);
@@ -11006,12 +11385,26 @@ return Plotly;
       scheduleSessionSave();
       renderAll();
     }
-    if (placeSlotValue !== null && selectedIdx !== null) { appendTrack(selectedIdx, { slot: Number(placeSlotValue) }); }
     if (playIdx !== null) toggleTrackPreview(Number(playIdx), { mode: playMode });
-    if (libraryCurrent !== null) setCurrentTrack(Number(libraryCurrent));
-    if (libraryOutgoing !== null) setTransitionEndpoint('out', Number(libraryOutgoing), { toggle: false });
-    if (libraryIncoming !== null) assignTrackTwo(Number(libraryIncoming));
-    if (libraryPlace !== null) appendTrack(Number(libraryPlace));
+    // There are no play buttons any more: clicking a track plays / pauses it.
+    // (The row waveform has its own pointerdown seek-and-play handler.)
+    if (playIdx === null && pinRecIdx === null && seqSlotValue === null
+        && !closestEl(ev.target, 'button, a, input, select, textarea, label, canvas')) {
+      const deckCover = closestAttr(ev.target, 'data-deck-cover');
+      if (deckCover !== null) {
+        toggleTransitionTrackPreview(deckCover);
+      } else {
+        const rowIdx = closestAttr(ev.target, 'data-library-row-idx') ?? closestAttr(ev.target, 'data-rec-row-idx');
+        const slotDrag = closestAttr(ev.target, 'data-slot-drag');
+        if (rowIdx !== null) {
+          setCurrentTrack(Number(rowIdx));
+          toggleTrackPreview(Number(rowIdx), { mode: 'library' });
+        } else if (slotDrag !== null) {
+          const slotIdx = sequence[Number(slotDrag)];
+          if (slotIdx !== null && slotIdx !== undefined) toggleTrackPreview(Number(slotIdx), { mode: 'library' });
+        }
+      }
+    }
     if (previewAction === 'swap') swapTransitionPair();
     if (previewAction === 'clear') clearTransitionPair();
     if (previewAction === 'render') renderBackendTransition();
@@ -11160,9 +11553,54 @@ return Plotly;
       handleMapBlankClick();
     });
   }
+
+  // Map dots are canvas/SVG drawn, so dragging one starts from a capture-phase
+  // pointerdown on the plot pane: hit-test first, and only when a dot is under the
+  // pointer do we claim the gesture (otherwise map pan/zoom keeps working). Claiming
+  // it also blocks Plotly's mousedown pan, so a no-move press is turned back into a
+  // normal select/double-click here.
+  const plotPaneForDrag = plotPaneEl();
+  if (plotPaneForDrag) {
+    let mapPressIdx = null;
+    let mapPressAt = 0;
+    plotPaneForDrag.addEventListener('pointerdown', ev => {
+      // Always clear first: a press released outside the pane never reaches the
+      // pointerup handler below, so a stale idx must not survive into the next press.
+      mapPressIdx = null;
+      if (trackDrag || ev.button !== 0) return;
+      if (closestEl(ev.target, 'button, a, input, select, [data-map-action], .map-mini-map, .mini-map-toggle')) return;
+      const idx = nearestTrackPointIdx(ev, 16);
+      if (idx === null) return;
+      if (!armTrackDrag(idx, { source: 'map', ev })) return;
+      mapPressIdx = idx;
+      // Stop the renderers' own pan handlers from also claiming this press.
+      ev.stopPropagation();
+    }, true);
+    plotPaneForDrag.addEventListener('mousedown', ev => {
+      if (mapPressIdx === null) return;
+      ev.stopPropagation();
+      ev.preventDefault();
+    }, true);
+    plotPaneForDrag.addEventListener('pointerup', ev => {
+      if (mapPressIdx === null) return;
+      const idx = mapPressIdx;
+      mapPressIdx = null;
+      // A press that never became a drag is a click (or a double-click) on the dot.
+      if (!trackDrag || trackDrag.active) return;
+      cancelTrackDrag();
+      const now = Date.now();
+      const isDouble = (now - mapPressAt) < 400;
+      mapPressAt = now;
+      safeUi('map dot press', () => {
+        if (isDouble) assignTransitionFromDoubleClick(idx);
+        else handleMapTrackClick(idx, ev);
+      });
+      ev.stopPropagation();
+    }, true);
+  }
+
   restoreSession();
   setActivePane('explore', { render: false });
-  setBuildSegment(appSetting('build_segment', 'sequence'), { persist: false });
   renderAll();
 })();
 </script>

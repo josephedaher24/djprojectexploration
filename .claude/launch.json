@@ -4,8 +4,15 @@
     {
       "name": "sequence-builder-app",
       "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "djprojectexploration-sequence-builder-app", "--pacmap-preset", "presets/pacmap/warren.json", "--port", "8771"],
+      "runtimeArgs": ["run", "djprojectexploration-sequence-builder-app", "--pacmap-preset", "presets/pacmap/warren.json"],
+      "autoPort": true,
       "port": 8771
+    },
+    {
+      "name": "musicTrail",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "musicTrail", "--", "--port", "5280", "--strictPort"],
+      "port": 5280
     }
   ]
 }

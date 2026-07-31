@@ -18,7 +18,6 @@
     click_to_play: true,
     mini_map_collapsed: false,
     side_settings_open: false,
-    build_segment: 'sequence',
   }, appSettings.defaults || {});
   appSettings.current = Object.assign({}, appSettings.defaults, appSettings.current || {});
   appSettings.behavior = Object.assign({
@@ -74,12 +73,9 @@
   let sequenceLength = Number(config.default_length || 10);
   let sequence = Array.from({ length: sequenceLength }, () => null);
   let targetValues = Array.from({ length: sequenceLength }, () => DEFAULT_TARGET_ENERGY);
-  let sequenceDragSlot = null;
   let draggingEnergySlot = null;
   let currentPoints = [];
   let activePane = 'explore';
-  const BUILD_SEGMENTS = ['sequence', 'recommend', 'transition'];
-  let activeBuildSegment = 'sequence';
   let transitionFromIdx = null;
   let transitionToIdx = null;
   let webglMap = null;
@@ -182,26 +178,22 @@
       explore: document.getElementById('pane-explore'),
       library: document.getElementById('pane-library'),
       diagnostics: document.getElementById('pane-diagnostics'),
+      transition: document.getElementById('pane-transition'),
     },
     transitionBadges: document.getElementById('transition-badges'),
     transitionScore: document.getElementById('transition-score'),
-    buildSegButtons: Array.from(document.querySelectorAll('[data-build-seg]')),
-    buildSegPanels: Array.from(document.querySelectorAll('[data-build-seg-panel]')),
     transitionPreview: document.getElementById('transition-preview-panel'),
-    setOutgoing: document.getElementById('set-outgoing'),
-    setIncoming: document.getElementById('set-incoming'),
-    songPopover: document.getElementById('song-popover'),
     audio: document.getElementById('track-audio'),
-    songPlayerStatus: document.getElementById('song-player-status'),
     songWaveform: document.getElementById('song-waveform'),
-    appendSelected: document.getElementById('append-selected'),
-    clearTransition: document.getElementById('clear-transition'),
     clearLast: document.getElementById('clear-last'),
     resetSequence: document.getElementById('reset-sequence'),
     downloadSequence: document.getElementById('download-sequence'),
     energyCurve: document.getElementById('energy-curve'),
     sequenceList: document.getElementById('sequence-list'),
     recommendationPanel: document.getElementById('recommendation-panel'),
+    recommendationFilters: document.getElementById('recommendation-filters'),
+    recommendationCount: document.getElementById('recommendation-count'),
+    libraryCount: document.getElementById('library-count'),
     transitionDiagnostics: document.getElementById('transition-diagnostics'),
     currentTransitionScore: document.getElementById('current-transition-score'),
     mapEffects: document.getElementById('map-effects-canvas'),
@@ -219,8 +211,7 @@
     globalArt: document.getElementById('global-art'),
     globalTitle: document.getElementById('global-title'),
     globalArtist: document.getElementById('global-artist'),
-    globalToggle: document.getElementById('global-toggle'),
-    globalScrub: document.getElementById('global-scrub'),
+    globalNowPlaying: document.getElementById('global-nowplaying'),
     globalVolume: document.getElementById('global-volume'),
     globalVolumeButton: document.getElementById('global-volume-button'),
     globalTime: document.getElementById('global-time'),
@@ -399,7 +390,15 @@
         helpKeyHtml('1', 'Set the selected track as Track 1.'),
         helpKeyHtml('2', 'Set the selected track as Track 2 (assign Track 1 first).'),
         helpKeyHtml('hover', 'Show preview without changing selection.'),
-        helpKeyHtml('Esc', 'Close open panels.'),
+        helpKeyHtml('Esc', 'Close open panels, or cancel a drag in progress.'),
+      ]) +
+      helpCardHtml('Drag and drop', [
+        helpKeyHtml('→ deck', 'Drag a map dot, library row, recommendation row or sequence row onto the Track 1 / Track 2 card to load it there.'),
+        helpKeyHtml('→ slot', 'Drag any track onto a sequence slot to place it there (replacing whatever is in that slot).'),
+        helpKeyHtml('slot → slot', 'Drag a sequence row onto another slot to reorder.'),
+        helpKeyHtml('drag out', 'Drag a track off its deck card or sequence row and drop it anywhere else to unload / remove it (with undo).'),
+        helpKeyHtml('Esc', 'Cancel the drag before dropping.'),
+        helpKeyHtml('1 / 2', 'Keyboard equivalent: load the selected track into Track 1 / Track 2.'),
       ]) +
       helpCardHtml('Sequence workflow', [
         helpKeyHtml('+ / ⇄', 'Add the selected track to the target slot (⇄ replaces a filled slot) and make it Track 1; a message shows what changed, with undo.'),
@@ -1296,13 +1295,14 @@
       esc(durationText(record)),
     ].filter(Boolean).join(' &sdot; ');
   }
-  function trackSummaryHtml(record, { size='compact', showArt=true, slot=null, showEnergy=true, showResidual=true } = {}) {
+  function trackSummaryHtml(record, { size='compact', showArt=true, slot=null, showEnergy=true, showResidual=true, showMeta=true } = {}) {
     record = canonicalRecord(record);
     if (!record) return '<span class="muted">None selected</span>';
+    // showMeta=false when the surrounding table already has columns for these values.
     const body =
       '<div class="track-title">' + esc(record.title) + '</div>' +
       '<div class="track-artist muted">' + esc(record.artists) + '</div>' +
-      '<div class="track-meta-line muted">' + trackMetaHtml(record, { slot, showEnergy, showResidual }) + '</div>';
+      (showMeta ? '<div class="track-meta-line muted">' + trackMetaHtml(record, { slot, showEnergy, showResidual }) + '</div>' : '');
     if (!showArt) return body;
     return '<div class="track-summary ' + esc(size) + '">' + artworkHtml(record) + '<div>' + body + '</div></div>';
   }
@@ -1604,37 +1604,21 @@
       setTimeout(() => Plotly.Plots.resize(plot), 30);
       setTimeout(ensureMapEffectsLoop, 40);
     }
-    // Energy curve and transition editor live in the always-visible right column,
-    // so keep them sized/drawn whenever the analysis view changes width.
+    // The energy curve is in the always-visible right column, so resize it whenever
+    // the analysis column changes width.
     if (window.Plotly && els.energyCurve) {
       setTimeout(() => Plotly.Plots.resize(els.energyCurve), 30);
     }
-    setTimeout(() => safeUi('transition editor draw', requestTransitionEditorDraw), 40);
+    // Recommendations and the transition editor now live in their own panes and draw
+    // at zero size while hidden — redraw once their pane becomes visible.
+    if (activePane === 'library') {
+      setTimeout(() => safeUi('recommendation scrubbers', updateRowScrubbers), 40);
+    }
+    if (activePane === 'transition') {
+      setTimeout(() => safeUi('transition editor bind', bindTransitionEditor), 30);
+      setTimeout(() => safeUi('transition editor draw', requestTransitionEditorDraw), 50);
+    }
     if (render) setTimeout(() => safeUi('pane render', renderAll), 0);
-  }
-  function setBuildSegment(seg, { persist=true } = {}) {
-    activeBuildSegment = BUILD_SEGMENTS.indexOf(seg) >= 0 ? seg : 'sequence';
-    els.buildSegButtons.forEach(btn => {
-      const active = btn.getAttribute('data-build-seg') === activeBuildSegment;
-      btn.classList.toggle('active', active);
-      btn.setAttribute('aria-selected', active ? 'true' : 'false');
-      btn.setAttribute('tabindex', active ? '0' : '-1');
-    });
-    els.buildSegPanels.forEach(panel => {
-      panel.classList.toggle('hidden', panel.getAttribute('data-build-seg-panel') !== activeBuildSegment);
-    });
-    if (persist) setAppSetting('build_segment', activeBuildSegment);
-    // Canvas/Plotly content renders at zero size while its panel is hidden, so
-    // size/redraw the active segment's visuals once it becomes visible.
-    if (activeBuildSegment === 'sequence' && window.Plotly && els.energyCurve) {
-      setTimeout(() => safeUi('energy curve resize', () => Plotly.Plots.resize(els.energyCurve)), 20);
-    }
-    if (activeBuildSegment === 'recommend') {
-      setTimeout(() => safeUi('recommendation scrubbers', updateRowScrubbers), 20);
-    }
-    if (activeBuildSegment === 'transition') {
-      setTimeout(() => safeUi('transition editor draw', requestTransitionEditorDraw), 20);
-    }
   }
   function timeText(seconds) {
     const n = Number(seconds);
@@ -1680,14 +1664,6 @@
       (showTime ? '<span class="scrub-time" data-library-time-idx="' + record.idx + '">' + esc(timeText(value)) + ' / ' + esc(durationText(record)) + '</span>' : '') +
       '</div>';
   }
-  function rowPlayerHtml(record) {
-    record = canonicalRecord(record);
-    if (!record) return '';
-    return '<div class="row-player">' +
-      '<button class="play-button" data-play-idx="' + record.idx + '" data-play-mode="library" aria-label="Play">▶</button>' +
-      rowWaveformScrubberHtml(record) +
-      '</div>';
-  }
   function currentAudioRecord() {
     if (previewAudioIdx !== null && byIdx.has(Number(previewAudioIdx))) return byIdx.get(Number(previewAudioIdx));
     if (selectedIdx !== null && byIdx.has(Number(selectedIdx))) return byIdx.get(Number(selectedIdx));
@@ -1731,18 +1707,11 @@
         ? '<span>' + esc(record.artists || '') + '</span><span class="global-meta-line">' + trackMetaHtml(record, { slot: relevantResidualSlot(record) }) + '</span>'
         : '';
     }
-    if (els.globalToggle) {
-      els.globalToggle.disabled = !hasRecord;
-      els.globalToggle.textContent = playing ? '⏸' : '▶';
-      els.globalToggle.setAttribute('aria-label', playing ? 'Pause' : 'Play');
-      els.globalToggle.setAttribute('title', playing ? 'Pause' : 'Play');
-    }
-    if (els.globalScrub) {
-      const max = Number.isFinite(duration) && duration > 0 ? duration : 1;
-      els.globalScrub.disabled = !hasRecord;
-      els.globalScrub.max = String(max);
-      els.globalScrub.value = String(clamp(current || 0, 0, max));
-      setRangeProgress(els.globalScrub, current || 0, max);
+    if (els.globalNowPlaying) {
+      els.globalNowPlaying.classList.toggle('is-playing', !!playing);
+      els.globalNowPlaying.classList.toggle('is-empty', !hasRecord);
+      els.globalNowPlaying.setAttribute('aria-label', playing ? 'Pause the current track' : 'Play the current track');
+      els.globalNowPlaying.setAttribute('title', playing ? 'Click to pause' : 'Click to play');
     }
     if (els.globalTime) els.globalTime.textContent = timeText(current || 0) + ' / ' + timeText(duration);
   }
@@ -1758,12 +1727,6 @@
     const record = previewAudioIdx === null ? (selectedIdx === null ? null : byIdx.get(selectedIdx)) : byIdx.get(previewAudioIdx);
     const duration = audioDuration(record);
     const current = els.audio && Number.isFinite(Number(els.audio.currentTime)) ? Number(els.audio.currentTime) : 0;
-    if (els.songPlayerStatus) {
-      const activeWaveform = selectedIdx !== null && waveformState.idx === selectedIdx ? waveformState : null;
-      if (activeWaveform && activeWaveform.loading) els.songPlayerStatus.textContent = 'Loading waveform';
-      else if (activeWaveform && activeWaveform.error) els.songPlayerStatus.textContent = activeWaveform.error;
-      else els.songPlayerStatus.textContent = selectedIdx === null ? 'Preview' : 'Full track preview';
-    }
     document.querySelectorAll('[data-library-time-idx]').forEach(el => {
       const idx = Number(el.getAttribute('data-library-time-idx'));
       const row = byIdx.get(idx);
@@ -1787,11 +1750,22 @@
       button.setAttribute('aria-label', (active ? 'Pause ' : 'Play ') + (info && info.cfg ? info.cfg.label : 'track'));
     });
   }
+  // The deck cover spins whenever that deck's track is the one playing, no matter
+  // where playback was started from.
+  function updateDeckCoverSpin() {
+    document.querySelectorAll('[data-deck-cover]').forEach(el => {
+      const deck = el.getAttribute('data-deck-cover');
+      const idx = deck === 'from' ? transitionFromIdx : transitionToIdx;
+      const spinning = idx !== null && previewAudioIdx === Number(idx) && previewAudioPlaying;
+      el.classList.toggle('spinning', spinning);
+    });
+  }
   function syncAudioUi() {
     previewAudioPlaying = !!(els.audio && !els.audio.paused && !els.audio.ended);
     updatePlayButtons();
     updateRowScrubbers();
     updateTransitionTrackPlayButtons();
+    updateDeckCoverSpin();
     updateGlobalPlayer();
     drawMainWaveform();
   }
@@ -1865,7 +1839,7 @@
     syncAudioUi();
   }
   function hideSongPopover({ stopAudio=true } = {}) {
-    if (els.songPopover) els.songPopover.classList.add('hidden');
+    // The map preview panel is gone; only the audio side of this still matters.
     if (stopAudio && previewAudioContext === 'main') stopSharedAudio({ clear: false });
     updatePlayButtons();
   }
@@ -1888,9 +1862,8 @@
     if (render) renderSelectionOnly();
   }
   function showSongPopover(record, { autoplay=true } = {}) {
-    if (!els.songPopover || !record) return;
-    els.songPopover.classList.remove('hidden');
-    // Track identity (art/title/artist/meta) is shown by the bottom player bar.
+    if (!record) return;
+    // Identity and waveform both live in the bottom player bar now.
     loadMainWaveform(record);
     const start = previewStart(record);
     if (autoplay) {
@@ -2231,7 +2204,8 @@
   function drawMainWaveform() {
     const canvas = els.songWaveform;
     if (!canvas) return;
-    const record = selectedIdx === null ? null : byIdx.get(selectedIdx);
+    // The waveform lives in the player bar now: it follows whatever the bar shows.
+    const record = currentAudioRecord();
     const rect = canvas.getBoundingClientRect();
     const widthCss = Math.max(1, rect.width || canvas.clientWidth || 320);
     const heightCss = Math.max(1, rect.height || 54);
@@ -2250,7 +2224,7 @@
     if (!record) {
       ctx.fillStyle = '#64748b';
       ctx.font = '12px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-      ctx.fillText('Select a track', 12, Math.round(heightCss / 2) + 4);
+      ctx.fillText('Click a track to preview', 12, Math.round(heightCss / 2) + 4);
       return;
     }
     const duration = audioDuration(record);
@@ -2452,8 +2426,8 @@
     }
   }
   function seekMainWaveformFromEvent(ev, shouldPlay=true) {
-    if (selectedIdx === null || !els.songWaveform) return;
-    const record = byIdx.get(selectedIdx);
+    if (!els.songWaveform) return;
+    const record = currentAudioRecord();
     const duration = audioDuration(record);
     if (!record || !Number.isFinite(duration) || duration <= 0) return;
     const rect = els.songWaveform.getBoundingClientRect();
@@ -3311,6 +3285,9 @@
   }
   function drawWebglStaticOverlays(ctx) {
     if (!usingWebglMap()) return;
+    // With album covers on, the artwork layer already draws the ring and the index
+    // badge above each cover — drawing these too would just stack labels on top.
+    if (artworkMarkersEnabled()) return;
     const hoverMatchesSelection = hoveredIdx !== null && (
       hoveredIdx === selectedIdx ||
       hoveredIdx === transitionFromIdx ||
@@ -3336,7 +3313,7 @@
       });
     }
   }
-  const ARTWORK_MARKER_SIZE = 26;
+  const ARTWORK_MARKER_SIZE = 46;
   const artworkMarkerImages = new Map();
   function artworkMarkerThumb(uri) {
     if (!uri) return null;
@@ -3384,34 +3361,78 @@
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
-    if (!artworkMarkersEnabled() || usingWebglMap() || !plot) return;
+    // Works for both renderers: plotPointPx projects via the WebGL view or plotly axes.
+    if (!artworkMarkersEnabled()) return;
+    if (!usingWebglMap() && !plot) return;
     const radius = ARTWORK_MARKER_SIZE / 2 - 1;
-    const margin = radius + 2;
-    const seqIdxSet = new Set(sequence.filter(v => v !== null));
-    const recIdxSet = new Set((recRows || []).map(row => Number(row.idx)));
+    const margin = radius + 4;
+    const seqSlotByIdx = new Map();
+    sequence.forEach((v, slot) => { if (v !== null) seqSlotByIdx.set(Number(v), slot + 1); });
+    const recRankByIdx = new Map();
+    (recRows || []).forEach((row, i) => { recRankByIdx.set(Number(row.idx), i + 1); });
     const hiddenGenres = hiddenGenreNames();
-    ctx.lineWidth = 2;
     records.forEach(record => {
-      if (!record || !record.artwork_uri) return;
+      if (!record) return;
       if (recordGenreHidden(record, hiddenGenres)) return;
       const idx = Number(record.idx);
       const p = plotPointPx(currentPoint(idx));
       if (!p || p.x < -margin || p.y < -margin || p.x > rect.width + margin || p.y > rect.height + margin) return;
-      const thumb = artworkMarkerThumb(record.artwork_uri);
-      if (!thumb) return;
-      ctx.drawImage(thumb, p.x - radius, p.y - radius, radius * 2, radius * 2);
+      // Edge colour marks state first, then genre.
       let ring;
-      if (idx === transitionFromIdx) ring = roleColors.track1;
-      else if (idx === transitionToIdx) ring = roleColors.track2;
+      let label = '';
+      if (idx === transitionFromIdx) { ring = roleColors.track1; label = 'T1'; }
+      else if (idx === transitionToIdx) { ring = roleColors.track2; label = 'T2'; }
+      else if (seqSlotByIdx.has(idx)) { ring = roleColors.sequence; label = String(seqSlotByIdx.get(idx)); }
+      else if (recRankByIdx.has(idx)) { ring = roleColors.recommendation; label = String(recRankByIdx.get(idx)); }
       else if (idx === selectedIdx || idx === hoveredIdx) ring = roleColors.selected;
-      else if (seqIdxSet.has(idx)) ring = roleColors.sequence;
-      else if (recIdxSet.has(idx)) ring = roleColors.recommendation;
       else ring = genreMarkerColor(record.genre || record.raw_genre);
+      if (idx === selectedIdx || idx === hoveredIdx) ring = roleColors.selected;
+      const thumb = artworkMarkerThumb(record.artwork_uri);
+      ctx.save();
+      if (thumb) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(thumb, p.x - radius, p.y - radius, radius * 2, radius * 2);
+        ctx.restore();
+        ctx.save();
+      } else {
+        // No artwork for this track: keep a filled dot so every track still reads.
+        ctx.fillStyle = 'rgba(15,23,42,.9)';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Dark inner hairline keeps light covers readable, then the coloured edge.
+      ctx.strokeStyle = 'rgba(8,12,24,.85)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius - 1.2, 0, Math.PI * 2);
+      ctx.stroke();
       ctx.strokeStyle = ring;
+      ctx.lineWidth = 3.2;
       ctx.beginPath();
       ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.restore();
+      // Badge is stacked on top of the cover (z order), centred on the marker.
+      if (label) drawArtworkBadge(ctx, p.x, p.y, label, ring);
     });
+  }
+  // No plate behind the number: just outlined text so the cover stays visible.
+  function drawArtworkBadge(ctx, x, y, label, color) {
+    ctx.save();
+    ctx.font = '900 16px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.miterLimit = 2;
+    ctx.strokeStyle = 'rgba(6,10,20,.95)';
+    ctx.lineWidth = 4;
+    ctx.strokeText(label, x, y + 0.5);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(label, x, y + 0.5);
+    ctx.restore();
   }
   function drawMapEffectsFrame(time) {
     mapEffectsFrame = null;
@@ -3562,19 +3583,18 @@
     const n = Number(m[1]);
     return Number.isFinite(n) ? n : null;
   }
+  // Rendered into #recommendation-filters, which is itself the toolbar element.
   function recommendationFilterHtml() {
-    return '<div class="recommendation-filterbar">' +
-      '<label class="recommendation-search">Search<input data-rec-filter="query" type="search" placeholder="title, artist, genre, key, bpm, energy" value="' + esc(recFilters.query) + '"></label>' +
-      '<label><span><input data-rec-filter="sameKey" type="checkbox"' + (recFilters.sameKey ? ' checked' : '') + '> Key family</span></label>' +
-      '<label>BPM +/-<input data-rec-filter="bpmRange" type="number" min="0" max="60" step="1" placeholder="Any" value="' + esc(recFilters.bpmRange) + '"></label>' +
-      '<label>Energy +/-<input data-rec-filter="energyRange" type="number" min="0" max="8" step="0.25" placeholder="Any" value="' + esc(recFilters.energyRange) + '"></label>' +
-      '<label><span><input data-rec-filter="excludeUsed" type="checkbox"' + (recFilters.excludeUsed ? ' checked' : '') + '> Exclude used</span></label>' +
-      '<label>Genre<select data-rec-filter="genreMode">' +
+    return '<label class="toolbar-search">Search<input data-rec-filter="query" type="search" placeholder="title, artist, key, bpm" value="' + esc(recFilters.query) + '"></label>' +
+      '<label class="toolbar-num">BPM &plusmn;<input data-rec-filter="bpmRange" type="number" min="0" max="60" step="1" placeholder="Any" value="' + esc(recFilters.bpmRange) + '"></label>' +
+      '<label class="toolbar-num">Energy &plusmn;<input data-rec-filter="energyRange" type="number" min="0" max="8" step="0.25" placeholder="Any" value="' + esc(recFilters.energyRange) + '"></label>' +
+      '<label class="toolbar-check"><span><input data-rec-filter="sameKey" type="checkbox"' + (recFilters.sameKey ? ' checked' : '') + '> Key family</span></label>' +
+      '<label class="toolbar-check"><span><input data-rec-filter="excludeUsed" type="checkbox"' + (recFilters.excludeUsed ? ' checked' : '') + '> Exclude used</span></label>' +
+      '<label class="toolbar-select">Genre<select data-rec-filter="genreMode">' +
       optionHtml('any', 'Any', recFilters.genreMode) +
       optionHtml('same', 'Same', recFilters.genreMode) +
       optionHtml('different', 'Different', recFilters.genreMode) +
-      '</select></label>' +
-      '</div>';
+      '</select></label>';
   }
   function updateRecFiltersFromElement(el) {
     const key = el && el.getAttribute && el.getAttribute('data-rec-filter');
@@ -3801,6 +3821,33 @@
     previewFormState.to_cue = '';
     scheduleSessionSave();
     renderAll();
+  }
+  // Unload a single deck (used by drag-off-the-deck), with undo.
+  function clearTransitionDeck(deck) {
+    const isFrom = deck === 'from';
+    const current = isFrom ? transitionFromIdx : transitionToIdx;
+    if (current === null) return;
+    const label = sequenceTrackLabel(current);
+    const snap = { from: transitionFromIdx, to: transitionToIdx, render: transitionRender, renderedState: transitionRenderedState };
+    resetTransitionRenderState();
+    previewFormState.from_cue = '';
+    previewFormState.to_cue = '';
+    if (isFrom) transitionFromIdx = null;
+    else transitionToIdx = null;
+    scheduleSessionSave();
+    renderAll();
+    showToast('Unloaded ' + (isFrom ? 'Track 1' : 'Track 2') + ' — "' + label + '".', {
+      undoGroup: 'deck',
+      onUndo: () => {
+        resetTransitionRenderState();
+        transitionFromIdx = snap.from;
+        transitionToIdx = snap.to;
+        transitionRender = snap.render;
+        transitionRenderedState = snap.renderedState;
+        scheduleSessionSave();
+        renderAll();
+      },
+    });
   }
   function clearTransitionPair() {
     transitionFromIdx = null;
@@ -4058,15 +4105,17 @@
     });
     const fromPt = transitionFromIdx === null ? null : currentPoint(transitionFromIdx);
     const toPt = transitionToIdx === null ? null : currentPoint(transitionToIdx);
+    // Covers draw their own badge above the artwork, so blank plotly's centred labels.
+    const hideDotLabels = artworkMarkersEnabled();
     restyleTrace('Track 1', {
       x: [fromPt ? [fromPt[0]] : []],
       y: [fromPt ? [fromPt[1]] : []],
-      text: [fromPt ? ['T1'] : []],
+      text: [fromPt ? [hideDotLabels ? '' : 'T1'] : []],
     });
     restyleTrace('Track 2', {
       x: [toPt ? [toPt[0]] : []],
       y: [toPt ? [toPt[1]] : []],
-      text: [toPt ? ['T2'] : []],
+      text: [toPt ? [hideDotLabels ? '' : 'T2'] : []],
     });
     restyleTrace('Transition pair', {
       x: [fromPt && toPt ? [fromPt[0], toPt[0]] : []],
@@ -4084,7 +4133,7 @@
       if (!pt) continue;
       pathX.push(pt[0]);
       pathY.push(pt[1]);
-      pathText.push(String(i + 1));
+      pathText.push(hideDotLabels ? '' : String(i + 1));
       pathCustom.push([idx]);
     }
     restyleTrace('Sequence path', {
@@ -4114,7 +4163,7 @@
         linkY.push(src[1], dst[1], null);
         recX.push(dst[0]);
         recY.push(dst[1]);
-        recText.push(String(i + 1));
+        recText.push(hideDotLabels ? '' : String(i + 1));
         recCustom.push([Number(row.idx)]);
       });
     }
@@ -4211,7 +4260,6 @@
     if (!Number.isFinite(fromSlot) || !Number.isFinite(toSlot)) return;
     if (fromSlot < 0 || fromSlot >= sequence.length || toSlot < 0 || toSlot >= sequence.length) return;
     if (fromSlot === toSlot) {
-      sequenceDragSlot = null;
       safeUi('sequence render', renderSequence);
       return;
     }
@@ -4224,7 +4272,6 @@
       if (fromSlot < selectedSlot && selectedSlot <= toSlot) selectedSlot -= 1;
       else if (toSlot <= selectedSlot && selectedSlot < fromSlot) selectedSlot += 1;
     }
-    sequenceDragSlot = null;
     scheduleSessionSave();
     renderAll();
   }
@@ -4262,16 +4309,17 @@
       return '<th ' + (cls ? 'class="' + cls + '" ' : '') + (title ? 'title="' + esc(title) + '" ' : '') + ariaSort + 'data-library-sort="' + esc(key) + '" data-sort-indicator="' + indicator + '">' +
         '<button type="button" class="th-sort" data-library-sort="' + esc(key) + '">' + label + '</button></th>';
     };
+    // Same shape as the recommendations table: one track cell on the left, the
+    // quantified columns on the right.
     let html = '<table><thead><tr>' +
       sortTh('title', 'Track') +
-      sortTh('artists', 'Artist') +
       sortTh('key', 'Key', 'short center') +
       sortTh('est_bpm', 'BPM', 'short center') +
-      sortTh('human_energy', 'Tagged<br>energy', 'short center wrap-head', 'Energy rating tagged in the library metadata (1-9). Used for scoring when Energy source is Tagged energy.') +
-      sortTh('glm_energy', 'Auto<br>energy', 'short center wrap-head', 'Energy estimated by a model. Continuous value that may not match the tag. Used for scoring when Energy source is Auto energy; falls back to the tag when missing.') +
-      sortTh('duration_seconds', 'Duration', 'short center') +
-      sortTh('raw_genre', 'Genre') +
-      '<th>Actions</th></tr></thead><tbody>';
+      sortTh('human_energy', 'Tagged', 'short center', 'Energy rating tagged in the library metadata (1-9). Used for scoring when Energy source is Tagged energy.') +
+      sortTh('glm_energy', 'Auto', 'short center', 'Energy estimated by a model. Continuous value that may not match the tag. Used for scoring when Energy source is Auto energy; falls back to the tag when missing.') +
+      sortTh('duration_seconds', 'Time', 'short center') +
+      sortTh('raw_genre', 'Genre', 'short center') +
+      '</tr></thead><tbody>';
     rows.forEach(r => {
       const rowClasses = [];
       if (Number(r.idx) === selectedIdx) rowClasses.push('selected-slot');
@@ -4280,25 +4328,25 @@
       if (Number(r.idx) === previewAudioIdx) rowClasses.push(previewAudioPlaying ? 'now-playing' : 'now-playing-paused');
       const rowClass = rowClasses.length ? ' class="' + rowClasses.join(' ') + '"' : '';
       const titleAttr = [r.title, r.artists].filter(Boolean).join(' - ');
+      // Click the row to select and play it; drag it onto a deck card or a
+      // sequence slot to load or place it — no per-row controls needed.
       html += '<tr data-library-row-idx="' + r.idx + '"' + rowClass + '>' +
-        '<td class="library-title-cell" title="' + esc(titleAttr) + '"><div class="library-title-summary">' + artworkHtml(r) + '<span>' + esc(r.title) + '</span></div></td>' +
-        '<td>' + esc(r.artists) + '</td>' +
+        '<td class="library-title-cell" title="' + esc(titleAttr) + '">' +
+        trackSummaryHtml(r, { size: 'compact', showArt: true, showMeta: false }) + '</td>' +
         '<td class="center">' + keyHtml(r.key) + '</td>' +
         '<td class="center">' + roundedBpm(r) + '</td>' +
         '<td class="center">' + (Number.isFinite(Number(r.human_energy)) ? fmt(r.human_energy, 2) : '') + '</td>' +
         '<td class="center">' + (Number.isFinite(Number(r.glm_energy)) ? fmt(r.glm_energy, 2) : '') + '</td>' +
         '<td class="center">' + esc(durationText(r)) + '</td>' +
-        '<td>' + esc(rawGenre(r)) + '</td>' +
-        '<td><div class="library-actions">' +
-        rowPlayerHtml(r) +
-        '<button data-library-current="' + r.idx + '" title="Select this track (shows details and next-track recommendations)" aria-label="Select this track">Select</button>' +
-        actionSymbolButton('data-library-place="' + r.idx + '"', '+', 'Add to sequence', 'primary') +
-        actionSymbolButton('data-library-outgoing="' + r.idx + '"', 'T1', 'Set as Track 1', 'track-one') +
-        actionSymbolButton('data-library-incoming="' + r.idx + '"', 'T2', 'Set as Track 2', 'track-two') +
-        '</div></td></tr>';
+        '<td class="center">' + esc(rawGenre(r)) + '</td></tr>';
     });
     html += '</tbody></table>';
     els.libraryTable.innerHTML = html;
+    if (els.libraryCount) {
+      els.libraryCount.textContent = query
+        ? rows.length + ' of ' + records.length + ' tracks'
+        : records.length + ' tracks';
+    }
     updatePlayButtons();
     updateRowScrubbers();
   }
@@ -4315,9 +4363,11 @@
       const r = idx === null ? null : byIdx.get(idx);
       const classes = [];
       if (selectedSlot === i) classes.push('selected-slot');
-      if (sequenceDragSlot === i) classes.push('drag-source');
       const cls = classes.length ? ' class="' + classes.join(' ') + '"' : '';
-      html += '<tr' + cls + ' data-sequence-drop-slot="' + i + '"><td class="num"><span class="sequence-drag-handle" draggable="true" data-sequence-drag-slot="' + i + '" title="Drag to reorder">↕</span> ' + (i + 1) + '</td><td>';
+      // Every slot is a drop target; a filled slot is also a drag source (drag it to
+      // another slot to reorder, to a deck to load it, or off the table to remove it).
+      html += '<tr' + cls + ' data-slot-drop="' + i + '"' + (r ? ' data-slot-drag="' + i + '"' : '') +
+        '><td class="num">' + (r ? '<span class="sequence-drag-handle" aria-hidden="true" title="Drag this row to reorder, onto a deck to load it, or off the table to remove it">↕</span> ' : '') + (i + 1) + '</td><td>';
       // Energy is its own column in this table — keep it out of the meta line.
       if (r) html += trackSummaryHtml(r, { size: 'compact', showArt: true, slot: i, showEnergy: false });
       else if (i < lastFilled) html += '<span class="warn" title="Gap: transition scores and CSV export bridge across this slot">empty — gap</span>';
@@ -4325,13 +4375,9 @@
       const targetValue = Number(targetValues[i]);
       const targetInput = '<input class="target-edit" data-target-slot="' + i + '" type="number" min="1" max="9" step="0.5" placeholder="' + fmt(targets[i], 2) + '" value="' + (Number.isFinite(targetValue) ? fmt(targetValue, 2) : '') + '" aria-label="Target energy for slot ' + (i + 1) + '">';
       html += '</td><td class="target-col">' + targetInput + '</td><td class="num actual-col">' + (r ? fmt(energyOf(r), 2) : '') + '</td><td class="actions-col"><div class="table-actions">';
-      if (r) html += '<button class="play-button" data-play-idx="' + r.idx + '" aria-label="Play">▶</button> ';
       html += actionSymbolButton('data-seq-slot="' + i + '"', selectedSlot === i ? '●' : '○', selectedSlot === i ? 'Deselect slot' : 'Select slot', selectedSlot === i ? 'is-active' : '') + ' ';
       html += actionSymbolButton('data-move-slot-up="' + i + '"' + (i === 0 ? ' disabled' : ''), '↑', 'Move slot ' + (i + 1) + ' up') + ' ';
       html += actionSymbolButton('data-move-slot-down="' + i + '"' + (i === sequence.length - 1 ? ' disabled' : ''), '↓', 'Move slot ' + (i + 1) + ' down') + ' ';
-      if (selectedIdx !== null && canPlaceTrack(selectedIdx, i)) {
-        html += actionSymbolButton('data-place-slot="' + i + '"', r ? '⇄' : '+', r ? 'Replace with selected track' : 'Add selected track here', 'primary') + ' ';
-      }
       if (r) html += actionSymbolButton('data-remove-slot="' + i + '"', '−', 'Remove track from slot', 'danger');
       html += '</div></td></tr>';
     }
@@ -4547,7 +4593,7 @@
     const idx = Number(record && record.idx);
     const meta = [energyMetaHtml(record, slot), esc(durationText(record))].filter(Boolean).join(' &sdot; ');
     return '<div class="diagnostic-waveform-card">' +
-      '<div class="diagnostic-waveform-head"><button class="play-button" data-play-idx="' + idx + '" data-play-mode="diagnostics" aria-label="Play">▶</button><b>' + esc(role) + ': ' + esc(record.title || 'Untitled') + '</b><span>' + meta + '</span></div>' +
+      '<div class="diagnostic-waveform-head"><b>' + esc(role) + ': ' + esc(record.title || 'Untitled') + '</b><span>' + meta + '</span></div>' +
       '<canvas class="diagnostic-waveform-canvas" data-diagnostic-waveform-idx="' + idx + '" height="96" aria-label="' + esc(role) + ' full waveform"></canvas>' +
       '</div>';
   }
@@ -4611,7 +4657,6 @@
       const rankInfo = previous ? transitionRecommendationRank(previous.idx, current.idx, current.slot) : null;
       html += '<tr>' +
         '<td class="num">' + (current.slot + 1) + '</td>' +
-        '<td class="num"><div class="table-actions"><button class="play-button" data-play-idx="' + current.idx + '" data-play-mode="library" aria-label="Play">▶</button></div></td>' +
         '<td class="waveform-cell">' + rowWaveformScrubberHtml(record, { showTime: false }) + '</td>' +
         '<td>' + trackSummaryHtml(record, { size: 'compact', showArt: true, slot: current.slot }) +
           (previous ? '' : '<div class="muted">First track — no incoming transition</div>') +
@@ -4706,14 +4751,26 @@
       '<span class="score-meter-track"><i style="width:' + (clamp(strength, 0, 1) * 100).toFixed(1) + '%"></i></span>' +
       '</div>';
   }
+  function restoreRecQueryFocus() {
+    const host = els.recommendationFilters || els.recommendationPanel;
+    const queryInput = host && host.querySelector('[data-rec-filter="query"]');
+    if (!queryInput) return;
+    queryInput.focus();
+    const n = String(queryInput.value || '').length;
+    try { queryInput.setSelectionRange(n, n); } catch (err) {}
+  }
   function renderRecommendations() {
     const restoreQueryFocus = document.activeElement
       && document.activeElement.getAttribute
       && document.activeElement.getAttribute('data-rec-filter') === 'query';
-    const filterbar = recommendationFilterHtml();
+    // The filter bar sits outside the scrolling panel, the same way the library
+    // search box sits above its table.
+    if (els.recommendationFilters) els.recommendationFilters.innerHTML = recommendationFilterHtml();
     const slot = targetSlot();
     if (slot < 0) {
-      els.recommendationPanel.innerHTML = filterbar + '<div class="muted" style="padding:10px;">Sequence is full. Select a slot to replace a track.</div>';
+      if (els.recommendationCount) els.recommendationCount.textContent = '';
+      els.recommendationPanel.innerHTML = '<div class="panel-empty">Sequence is full. Select a slot to replace a track.</div>';
+      if (restoreQueryFocus) restoreRecQueryFocus();
       return;
     }
     const ctx = recommendationContext(slot);
@@ -4735,32 +4792,33 @@
     } else {
       anchorHtml = ' · scored from the target energy curve only (no source track)';
     }
-    let html = filterbar +
-      '<div class="muted" style="padding:8px 8px 0;">' +
+    // Counts live in the card header chip, like the library's; the note keeps the
+    // scoring context that has no equivalent on the library side.
+    if (els.recommendationCount) {
+      els.recommendationCount.textContent = prepared.query
+        ? prepared.matchedCount + ' of ' + prepared.allRows.length + ' match'
+        : 'Top ' + Math.min(25, prepared.matchedCount) + ' of ' + prepared.allRows.length;
+    }
+    let html =
+      '<div class="panel-note">' +
       (sequence[slot] === null ? 'Adding to slot <b>' : 'Replacing slot <b>') + (slot + 1) + '</b>' +
-      anchorHtml + '. ' +
-      (prepared.query
-        ? 'Showing <b>' + prepared.matchedCount + '</b> matches from <b>' + prepared.allRows.length + '</b> scored candidates' +
-          (prepared.pinnedOutsideQueryCount ? ', plus <b>' + prepared.pinnedOutsideQueryCount + '</b> pinned outside the search.' : '.')
-        : 'Showing top <b>' + Math.min(25, prepared.matchedCount) + '</b> of <b>' + prepared.allRows.length + '</b> scored candidates.') +
+      anchorHtml + '.' +
+      (prepared.query && prepared.pinnedOutsideQueryCount
+        ? ' Plus <b>' + prepared.pinnedOutsideQueryCount + '</b> pinned outside the search.'
+        : '') +
       '</div>' +
-      '<table><thead><tr>' + scoreTh('#', 'rank') +
-      '<th title="☆ pin candidate · + add to sequence (⇄ replace) · T1 / T2 set Track 1 / Track 2 · ▶ play preview">Actions</th>' +
-      '<th title="Green shows the listened region; the dashed amber line is the preview start cue. Click to seek.">Waveform</th><th>Track</th>' +
+      '<table><thead><tr>' + scoreTh('#', 'rank') + '<th>Track</th>' +
       '<th class="num" title="Final = Mix × Fit. Overall recommendation score. Hover a value for its Mix, Fit, and Loss parts.">Final</th>' + scoreTh('Fit', 'fit') +
       scoreTh('Style', 'style') + scoreTh('Tempo', 'tempo') + scoreTh('Groove', 'groove') + scoreTh('Key', 'key') +
       '</tr></thead><tbody>';
     rows.forEach((r, i) => {
       const isPinned = pinnedRecommendationIdxs.has(Number(r.idx));
-      html += '<tr' + (isPinned ? ' class="pinned-row"' : '') + '><td class="num">' + (isPinned ? '★ ' : '') + (r.globalRank === null ? '—' : (r.globalRank || (i + 1))) + '</td>' +
-        '<td><div class="table-actions">' +
-        actionSymbolButton('data-pin-rec-idx="' + r.idx + '"', isPinned ? '★' : '☆', isPinned ? 'Unpin candidate' : 'Pin candidate', isPinned ? 'pin-active' : 'pin-button') +
-        actionSymbolButton('data-append-idx="' + r.idx + '"', actionSymbol, actionLabel === 'Add' ? 'Add to sequence' : 'Replace slot ' + (slot + 1), 'primary') +
-        actionSymbolButton('data-library-outgoing="' + r.idx + '"', 'T1', 'Set as Track 1', 'track-one') +
-        actionSymbolButton('data-library-incoming="' + r.idx + '"', 'T2', 'Set as Track 2', 'track-two') +
-        '<button class="play-button" data-play-idx="' + r.idx + '" data-play-mode="library" aria-label="Play">▶</button>' +
-        '</div></td>' +
-        '<td class="waveform-cell">' + rowWaveformScrubberHtml(r, { showTime: false }) + '</td>' +
+      const rankText = r.globalRank === null ? '—' : String(r.globalRank || (i + 1));
+      // No Actions or Waveform column: the rank doubles as the pin toggle (clicking a
+      // button is excluded from the row's click-to-play), and the row itself plays / drags.
+      html += '<tr data-rec-row-idx="' + r.idx + '"' + (isPinned ? ' class="pinned-row"' : '') + '>' +
+        '<td class="num"><button type="button" class="rec-rank' + (isPinned ? ' pin-active' : '') + '" data-pin-rec-idx="' + r.idx + '" title="' + (isPinned ? 'Unpin this candidate' : 'Pin this candidate so it stays listed') + '" aria-label="' + (isPinned ? 'Unpin candidate' : 'Pin candidate') + '">' +
+        (isPinned ? '★' : '') + esc(rankText) + '</button></td>' +
         '<td>' + trackSummaryHtml(r, { size: 'compact', showArt: true, slot: r.slot ?? slot }) + '</td>' +
         recommendationMetricCell(r.finalScore, 'final', r.finalScore, 2, 'Final (Mix ' + (Number.isFinite(Number(r.baseline)) ? fmt(r.baseline, 2) : 'n/a') + ' × Fit ' + (Number.isFinite(Number(r.energyScore)) ? fmt(r.energyScore, 2) : 'n/a') + ', Loss ' + (Number.isFinite(Number(r.penalty)) ? fmt(r.penalty, 2) : 'n/a') + ')') +
         recommendationMetricCell(r.energyScore, 'energy', r.energyScore, 2, 'Energy fit score') +
@@ -4771,18 +4829,11 @@
         '</tr>';
     });
     if (!rows.length) {
-      html += '<tr><td colspan="10" class="muted" style="padding:10px;">No recommendations match the current filters.</td></tr>';
+      html += '<tr><td colspan="8"><div class="panel-empty">No recommendations match the current filters.</div></td></tr>';
     }
     html += '</tbody></table>';
     els.recommendationPanel.innerHTML = html;
-    if (restoreQueryFocus) {
-      const queryInput = els.recommendationPanel.querySelector('[data-rec-filter="query"]');
-      if (queryInput) {
-        queryInput.focus();
-        const n = String(queryInput.value || '').length;
-        try { queryInput.setSelectionRange(n, n); } catch (err) {}
-      }
-    }
+    if (restoreQueryFocus) restoreRecQueryFocus();
     updatePlayButtons();
     updateRowScrubbers();
   }
@@ -4847,12 +4898,23 @@
     const followsTail = from && lastFilledIdx !== null && Number(transitionFromIdx) === Number(lastFilledIdx);
     // The two deck cards are the single place the transition pair is shown: album art,
     // title, artist, meta and a per-deck play button (reuses the editor's deck-play handler).
+    // Each card is both a drop target (drag a track here to load it) and, when loaded,
+    // a drag source (drag the track off the card to unload it).
     const deckHtml = (cls, label, deck, record, noteHtml) =>
-      '<div class="transition-badge ' + cls + '">' +
+      '<div class="transition-badge ' + cls + (record ? ' deck-loaded' : '') + '"' +
+      ' data-deck-drop="' + deck + '"' + (record ? ' data-deck-drag="' + deck + '"' : '') +
+      ' title="' + (record ? 'Drag this track off the card to unload it' : 'Drag a track from the map or library here to load it as ' + label) + '">' +
       '<div class="deck-card-head"><b>' + label + '</b>' +
-      (record ? '<button type="button" class="deck-play play-button" data-transition-track-play="' + deck + '" aria-label="Play ' + label + '">▶</button>' : '') +
       '</div>' +
-      (record ? trackSummaryHtml(record, { size: 'compact', showArt: true }) : '<span class="muted">None selected</span>') +
+      (record
+        // Circular cover on its own row (spins while this deck's track plays),
+        // then the rest of the track detail in a small card underneath.
+        ? '<div class="deck-cover-row"><span class="deck-cover-disc" data-deck-cover="' + deck + '">' +
+            artworkHtml(record, 'deck-cover') +
+            '<i class="deck-cover-spindle" aria-hidden="true"></i>' +
+          '</span></div>' +
+          '<div class="deck-info-card">' + trackSummaryHtml(record, { size: 'compact', showArt: false }) + '</div>'
+        : '<span class="muted deck-empty-hint">Drop a track here</span>') +
       (noteHtml || '') +
       '</div>';
     els.transitionBadges.innerHTML =
@@ -4862,6 +4924,7 @@
     // The detailed transition score lives in the Transition segment, not the deck cards.
     if (els.transitionScore) els.transitionScore.innerHTML = scoreHtml;
     safeUi('deck play buttons', updateTransitionTrackPlayButtons);
+    safeUi('deck cover spin', updateDeckCoverSpin);
   }
   function renderTransitionEditorHtml(from, to) {
     if (!from || !to) {
@@ -4905,7 +4968,6 @@
       return '<div class="transition-overview-card ' + esc(deck) + '" data-transition-card="' + esc(deck) + '-overview">' +
         laneInfoHtml(deck) +
         '<div class="transition-overview-row">' +
-        '<button type="button" class="transition-track-play" data-transition-track-play="' + esc(deck) + '" aria-label="Play ' + esc(info.cfg.label) + '">▶</button>' +
         '<canvas class="transition-overview-canvas" data-transition-surface="overview" data-transition-deck="' + esc(deck) + '" height="76"></canvas>' +
         '</div>' +
         cueListHtml +
@@ -5788,10 +5850,6 @@
     draggingEnergySlot = null;
   }
   function updateAppendControls() {
-    const slot = targetSlot();
-    const replacing = slot >= 0 && sequence[slot] !== null;
-    setActionButton(els.appendSelected, replacing ? '⇄' : '+', replacing ? 'Replace track in selected slot' : 'Add selected track to sequence', 'primary');
-    els.appendSelected.disabled = selectedIdx === null || !canPlaceTrack(selectedIdx, slot);
     const hasFilled = sequence.some(v => v !== null);
     const curveEdited = targetValues.some(v => Number(v) !== DEFAULT_TARGET_ENERGY);
     if (els.clearLast) els.clearLast.disabled = !hasFilled;
@@ -5801,10 +5859,12 @@
     safeUi('map overlays', updatePacmapOverlays);
     safeUi('map static overlays', ensureMapEffectsLoop);
     safeUi('append controls', updateAppendControls);
-    // Right build column is always visible — render its pieces regardless of the active analysis tab.
+    // The right column only holds the sequence now, so it always renders.
     safeUi('sequence render', renderSequence);
-    safeUi('recommendations render', renderRecommendations);
-    if (activePane === 'library') safeUi('library render', renderLibrary);
+    if (activePane === 'library') {
+      safeUi('library render', renderLibrary);
+      safeUi('recommendations render', renderRecommendations);
+    }
     if (activePane === 'diagnostics') {
       safeUi('transition score render', renderCurrentTransitionScore);
       safeUi('transition diagnostics render', renderTransitionDiagnostics);
@@ -5829,22 +5889,168 @@
       drawMiniMap();
     });
     safeUi('append controls', updateAppendControls);
-    // Right build column is always visible — always render sequence, recommendations,
-    // energy curve, and the transition preview regardless of the active analysis tab.
+    // The right column holds only the sequence + energy curve, so those always render.
     safeUi('sequence render', renderSequence);
-    safeUi('recommendations render', renderRecommendations);
     safeUi('energy curve render', renderEnergyCurve);
-    safeUi('transition preview render', renderTransitionPreview);
-    if (activePane === 'library') safeUi('library render', renderLibrary);
+    if (activePane === 'library') {
+      safeUi('library render', renderLibrary);
+      safeUi('recommendations render', renderRecommendations);
+    }
     if (activePane === 'diagnostics') {
       safeUi('transition score render', renderCurrentTransitionScore);
       safeUi('transition diagnostics render', renderTransitionDiagnostics);
     }
+    // renderTransitionPreview also fills #transition-score, so it must run whenever the
+    // pair changes — not only while the Transition pane is open.
+    safeUi('transition preview render', renderTransitionPreview);
     safeUi('transition badges render', renderTransitionBadges);
     safeUi('audio ui sync', syncAudioUi);
     if (els.settingsPopover && !els.settingsPopover.classList.contains('hidden')) {
       safeUi('settings render', renderSettingsPanel);
     }
+  }
+  // ---- Global track drag-and-drop -----------------------------------------
+  // One pointer-based system for every drag: map dots, library rows,
+  // recommendation rows, and the deck cards themselves (drag off = unload).
+  // Pointer events (not HTML5 DnD) so canvas-drawn map dots can be dragged and
+  // so the same code path works for mouse, pen and touch.
+  const DRAG_ACTIVATE_PX = 6;
+  let trackDrag = null;
+  function trackDragGhostEl() {
+    let ghost = document.getElementById('track-drag-ghost');
+    if (!ghost) {
+      ghost = document.createElement('div');
+      ghost.id = 'track-drag-ghost';
+      ghost.className = 'track-drag-ghost';
+      ghost.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(ghost);
+    }
+    return ghost;
+  }
+  function armTrackDrag(idx, { source, deck = null, slot = null, ev }) {
+    idx = Number(idx);
+    if (!Number.isFinite(idx) || !byIdx.has(idx)) return false;
+    trackDrag = {
+      idx,
+      source,
+      deck,
+      slot,
+      pointerId: ev.pointerId,
+      pointerType: ev.pointerType || 'mouse',
+      startX: ev.clientX,
+      startY: ev.clientY,
+      active: false,
+      target: null,
+    };
+    return true;
+  }
+  function activateTrackDrag() {
+    if (!trackDrag || trackDrag.active) return;
+    trackDrag.active = true;
+    const record = byIdx.get(trackDrag.idx);
+    const ghost = trackDragGhostEl();
+    ghost.innerHTML = record
+      ? artworkHtml(record) + '<span class="track-drag-ghost-title">' + esc(record.title || 'Untitled') + '</span>'
+      : '';
+    ghost.classList.add('visible');
+    document.body.classList.add('track-dragging');
+    if (trackDrag.deck) document.body.classList.add('track-dragging-from-deck');
+    document.querySelectorAll('[data-deck-drop]').forEach(el => el.classList.add('deck-drop-ready'));
+  }
+  // A drop target is either a deck ({kind:'deck', deck}) or a sequence slot
+  // ({kind:'slot', slot}); null means "dropped outside every target".
+  function trackDragTargetAt(ev) {
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    if (!el || !el.closest) return null;
+    const deckEl = el.closest('[data-deck-drop]');
+    if (deckEl) return { kind: 'deck', deck: deckEl.getAttribute('data-deck-drop') };
+    const slotEl = el.closest('[data-slot-drop]');
+    if (slotEl) {
+      const slot = Number(slotEl.getAttribute('data-slot-drop'));
+      if (Number.isFinite(slot)) return { kind: 'slot', slot };
+    }
+    return null;
+  }
+  function trackDragTargetKey(target) {
+    if (!target) return '';
+    return target.kind === 'deck' ? 'deck:' + target.deck : 'slot:' + target.slot;
+  }
+  function moveTrackDrag(ev) {
+    if (!trackDrag) return;
+    if (!trackDrag.active) {
+      const dx = Math.abs(Number(ev.clientX) - trackDrag.startX);
+      const dy = Math.abs(Number(ev.clientY) - trackDrag.startY);
+      if (dx + dy < DRAG_ACTIVATE_PX) return;
+      // On touch, let a mostly-vertical gesture stay a scroll instead of a drag.
+      if (trackDrag.pointerType === 'touch' && dy > dx) {
+        trackDrag = null;
+        return;
+      }
+      activateTrackDrag();
+    }
+    const ghost = trackDragGhostEl();
+    ghost.style.transform = 'translate3d(' + Math.round(ev.clientX + 12) + 'px,' + Math.round(ev.clientY + 12) + 'px,0)';
+    // Re-apply on every move, not only on change: a re-render can replace the deck
+    // cards or sequence rows mid-drag and the fresh elements would lose their highlight.
+    const target = trackDragTargetAt(ev);
+    trackDrag.target = target;
+    const overDeck = target && target.kind === 'deck' ? target.deck : null;
+    const overSlot = target && target.kind === 'slot' ? target.slot : null;
+    document.querySelectorAll('[data-deck-drop]').forEach(el => {
+      el.classList.add('deck-drop-ready');
+      el.classList.toggle('deck-drop-over', el.getAttribute('data-deck-drop') === overDeck);
+    });
+    document.querySelectorAll('[data-slot-drop]').forEach(el => {
+      el.classList.add('slot-drop-ready');
+      el.classList.toggle('slot-drop-over', Number(el.getAttribute('data-slot-drop')) === overSlot);
+    });
+    document.body.classList.toggle('track-drag-will-unload', !!(trackDrag.deck || trackDrag.slot !== null) && !target);
+    if (ev.cancelable) ev.preventDefault();
+  }
+  function clearTrackDragUi() {
+    const ghost = document.getElementById('track-drag-ghost');
+    if (ghost) {
+      ghost.classList.remove('visible');
+      ghost.innerHTML = '';
+    }
+    document.body.classList.remove('track-dragging', 'track-dragging-from-deck', 'track-drag-will-unload');
+    document.querySelectorAll('[data-deck-drop]').forEach(el => {
+      el.classList.remove('deck-drop-ready', 'deck-drop-over');
+    });
+    document.querySelectorAll('[data-slot-drop]').forEach(el => {
+      el.classList.remove('slot-drop-ready', 'slot-drop-over');
+    });
+  }
+  function finishTrackDrag(ev) {
+    if (!trackDrag) return false;
+    const drag = trackDrag;
+    trackDrag = null;
+    clearTrackDragUi();
+    if (!drag.active) return false;
+    const target = ev ? trackDragTargetAt(ev) : drag.target;
+    if (target && target.kind === 'deck') {
+      if (drag.deck === target.deck) return true;
+      // setTransitionEndpoint already clears the other deck when it held this same
+      // track, so dragging between decks moves rather than duplicates.
+      setTransitionEndpoint(target.deck === 'from' ? 'out' : 'in', drag.idx, { toggle: false });
+      return true;
+    }
+    if (target && target.kind === 'slot') {
+      if (drag.slot === target.slot) return true;
+      // Slot to slot is a reorder; anything else places the track into that slot.
+      if (drag.slot !== null) moveSequenceSlot(drag.slot, target.slot);
+      else appendTrack(drag.idx, { slot: target.slot });
+      return true;
+    }
+    // Dropped outside every target: a deck drag unloads, a slot drag removes.
+    if (drag.deck) clearTransitionDeck(drag.deck);
+    else if (drag.slot !== null) removeSlot(drag.slot);
+    return true;
+  }
+  function cancelTrackDrag() {
+    if (!trackDrag) return;
+    trackDrag = null;
+    clearTrackDragUi();
   }
   function downloadCsv() {
     const targets = targetCurve();
@@ -5886,9 +6092,6 @@
     if (els.weightChroma) els.weightChroma.value = String((config.weights && config.weights.chroma) || 0.25);
     if (els.weightTempo) els.weightTempo.value = String((config.weights && config.weights.tempo) || 0.15);
   }
-  setActionButton(els.setOutgoing, 'T1', 'Set selected track as Track 1', 'track-one');
-  setActionButton(els.setIncoming, 'T2', 'Set selected track as Track 2', 'track-two');
-  setActionButton(els.clearTransition, '×', 'Clear transition pair', 'danger');
   if (els.settingsToggle) {
     els.settingsToggle.addEventListener('click', ev => {
       ev.stopPropagation();
@@ -5982,21 +6185,6 @@
     ev.preventDefault();
     ev.stopPropagation();
   });
-  els.buildSegButtons.forEach(btn => btn.addEventListener('click', () => setBuildSegment(btn.getAttribute('data-build-seg'))));
-  const buildSegNav = document.querySelector('.build-segments');
-  if (buildSegNav) buildSegNav.addEventListener('keydown', ev => {
-    if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
-    const current = els.buildSegButtons.indexOf(document.activeElement);
-    if (current < 0) return;
-    const step = ev.key === 'ArrowRight' ? 1 : els.buildSegButtons.length - 1;
-    const next = els.buildSegButtons[(current + step) % els.buildSegButtons.length];
-    if (next) {
-      next.focus();
-      setBuildSegment(next.getAttribute('data-build-seg'));
-    }
-    ev.preventDefault();
-    ev.stopPropagation();
-  });
   els.sequenceLength.addEventListener('change', () => setSequenceLength(els.sequenceLength.value));
   els.energySource.addEventListener('change', renderAll);
   els.colorMode.addEventListener('change', () => {
@@ -6064,10 +6252,6 @@
     els.simplex.addEventListener('pointerup', ev => { draggingSimplex = false; try { els.simplex.releasePointerCapture(ev.pointerId); } catch (err) {} });
     els.simplex.addEventListener('pointercancel', () => { draggingSimplex = false; });
   }
-  if (els.setOutgoing) els.setOutgoing.addEventListener('click', () => { if (selectedIdx !== null) setTransitionEndpoint('out', selectedIdx); });
-  if (els.setIncoming) els.setIncoming.addEventListener('click', () => { if (selectedIdx !== null) assignTrackTwo(selectedIdx); });
-  els.appendSelected.addEventListener('click', () => { if (selectedIdx !== null) appendTrack(selectedIdx); });
-  if (els.clearTransition) els.clearTransition.addEventListener('click', clearTransitionPair);
   els.clearLast.addEventListener('click', () => {
     let cleared = null;
     for (let i = sequence.length - 1; i >= 0; i -= 1) { if (sequence[i] !== null) { cleared = i; break; } }
@@ -6152,8 +6336,8 @@
       waveformPointerActive = false;
     });
   }
-  if (els.globalToggle) {
-    els.globalToggle.addEventListener('click', () => {
+  if (els.globalNowPlaying) {
+    const toggleNowPlaying = () => {
       const record = currentAudioRecord();
       if (!record) return;
       if (previewAudioIdx === Number(record.idx) && previewAudioPlaying) {
@@ -6164,23 +6348,13 @@
         ? Number(els.audio.currentTime || 0)
         : (rowScrubPositions.has(Number(record.idx)) ? rowScrubValue(record) : previewStart(record));
       playRecordAt(record, start, 'global');
-    });
-  }
-  if (els.globalScrub) {
-    const handleGlobalScrub = () => {
-      const record = currentAudioRecord();
-      if (!record) return;
-      const idx = Number(record.idx);
-      const value = Number(els.globalScrub.value || 0);
-      if (!Number.isFinite(idx) || !Number.isFinite(value)) return;
-      rowScrubPositions.set(idx, value);
-      if (previewAudioIdx === idx && els.audio) seekSharedAudio(value);
-      updateRowScrubbers();
-      updateGlobalPlayer();
-      drawMainWaveform();
     };
-    els.globalScrub.addEventListener('input', handleGlobalScrub);
-    els.globalScrub.addEventListener('change', handleGlobalScrub);
+    els.globalNowPlaying.addEventListener('click', toggleNowPlaying);
+    els.globalNowPlaying.addEventListener('keydown', ev => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault();
+      toggleNowPlaying();
+    });
   }
   if (els.globalVolume) {
     masterVolume = clamp(Number(els.globalVolume.value || masterVolume), 0, 1);
@@ -6248,60 +6422,101 @@
   document.body.addEventListener('pointercancel', () => {
     rowWaveformPointerIdx = null;
   });
-  document.body.addEventListener('dragstart', ev => {
-    const slotValue = closestAttr(ev.target, 'data-sequence-drag-slot');
-    if (slotValue === null) return;
-    const slot = Number(slotValue);
-    if (!Number.isFinite(slot) || slot < 0 || slot >= sequence.length) return;
-    sequenceDragSlot = slot;
-    if (ev.dataTransfer) {
-      ev.dataTransfer.effectAllowed = 'move';
-      ev.dataTransfer.setData('text/plain', String(slot));
+
+  // Track drag sources outside the map: library rows, recommendation rows, deck cards.
+  document.body.addEventListener('pointerdown', ev => {
+    if (trackDrag || ev.button !== 0) return;
+    // Never hijack a real control, a text field, or an inline waveform scrubber.
+    if (closestEl(ev.target, 'button, a, input, select, textarea, label, canvas, [data-map-action]')) return;
+    const deckAttr = closestAttr(ev.target, 'data-deck-drag');
+    if (deckAttr !== null) {
+      const deckIdx = deckAttr === 'from' ? transitionFromIdx : transitionToIdx;
+      if (deckIdx !== null) armTrackDrag(deckIdx, { source: 'deck', deck: deckAttr, ev });
+      return;
     }
-    const row = closestEl(ev.target, '[data-sequence-drop-slot]');
-    if (row) row.classList.add('drag-source');
+    const slotAttr = closestAttr(ev.target, 'data-slot-drag');
+    if (slotAttr !== null) {
+      const slot = Number(slotAttr);
+      const slotIdx = Number.isFinite(slot) ? sequence[slot] : null;
+      if (slotIdx !== null && slotIdx !== undefined) armTrackDrag(slotIdx, { source: 'slot', slot, ev });
+      return;
+    }
+    const rowIdx = closestAttr(ev.target, 'data-library-row-idx') ?? closestAttr(ev.target, 'data-rec-row-idx');
+    if (rowIdx !== null) armTrackDrag(rowIdx, { source: 'table', ev });
   });
-  document.body.addEventListener('dragover', ev => {
-    const dropValue = closestAttr(ev.target, 'data-sequence-drop-slot');
-    if (dropValue === null || sequenceDragSlot === null) return;
-    ev.preventDefault();
-    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+  window.addEventListener('pointermove', ev => {
+    if (!trackDrag) return;
+    safeUi('track drag move', () => moveTrackDrag(ev));
+  }, { passive: false });
+  // Capture phase runs before element handlers, so only consume the pointerup once the
+  // drag actually activated. A press that never moved is left for the source's own
+  // handler (e.g. a map dot press turning back into a click) and cleaned up on bubble.
+  window.addEventListener('pointerup', ev => {
+    if (!trackDrag || !trackDrag.active) return;
+    const handled = safeUi('track drag drop', () => finishTrackDrag(ev), false);
+    if (handled) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+  }, true);
+  window.addEventListener('pointerup', () => {
+    if (trackDrag && !trackDrag.active) cancelTrackDrag();
   });
-  document.body.addEventListener('drop', ev => {
-    const dropValue = closestAttr(ev.target, 'data-sequence-drop-slot');
-    if (dropValue === null || sequenceDragSlot === null) return;
-    ev.preventDefault();
-    moveSequenceSlot(sequenceDragSlot, Number(dropValue));
-  });
-  document.body.addEventListener('dragend', () => {
-    if (sequenceDragSlot === null) return;
-    sequenceDragSlot = null;
-    document.querySelectorAll('.sequence-list .drag-source').forEach(row => row.classList.remove('drag-source'));
-  });
+  window.addEventListener('pointercancel', () => cancelTrackDrag());
+  window.addEventListener('blur', () => cancelTrackDrag());
+  document.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape' && trackDrag) {
+      cancelTrackDrag();
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+  }, true);
+
   window.addEventListener('resize', () => setTimeout(() => safeUi('energy curve resize', () => { if (window.Plotly && els.energyCurve) Plotly.Plots.resize(els.energyCurve); }), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('main waveform draw', drawMainWaveform), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('library waveform draw', drawLibraryWaveforms), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('transition editor draw', drawTransitionEditor), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('mini map draw', drawMiniMap), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('webgl map resize', () => { if (webglMap) webglMap.resize(); }), 30));
+  // The map is a flexible row now (it splits the left column with the weights panel),
+  // so follow the pane's own size changes, not just window resizes.
+  if (window.ResizeObserver) {
+    const pane = plotPaneEl();
+    if (pane) {
+      let mapResizeFrame = null;
+      let lastPaneSize = '';
+      new ResizeObserver(entries => {
+        const box = entries && entries[0] ? entries[0].contentRect : pane.getBoundingClientRect();
+        const key = Math.round(box.width) + 'x' + Math.round(box.height);
+        // Ignore repeat notifications for a size we already handled, so redrawing can
+        // never feed back into another resize.
+        if (key === lastPaneSize) return;
+        lastPaneSize = key;
+        if (mapResizeFrame) clearTimeout(mapResizeFrame);
+        mapResizeFrame = setTimeout(() => {
+          mapResizeFrame = null;
+          safeUi('map pane resize', () => {
+            if (webglMap) webglMap.resize();
+            if (!usingWebglMap() && window.Plotly && plot) Plotly.Plots.resize(plot);
+            drawMiniMap();
+            ensureMapEffectsLoop();
+          });
+        }, 80);
+      }).observe(pane);
+    }
+  }
   // Flush any debounced session write before the page goes away so the last edit is not lost.
   window.addEventListener('pagehide', () => safeUi('session flush', flushSessionSave));
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') safeUi('session flush', flushSessionSave); });
 
   document.body.addEventListener('click', ev => {
-    const appendIdx = closestAttr(ev.target, 'data-append-idx');
     const removeSlotValue = closestAttr(ev.target, 'data-remove-slot');
     const seqSlotValue = closestAttr(ev.target, 'data-seq-slot');
-    const placeSlotValue = closestAttr(ev.target, 'data-place-slot');
     const moveSlotUp = closestAttr(ev.target, 'data-move-slot-up');
     const moveSlotDown = closestAttr(ev.target, 'data-move-slot-down');
     const playButton = closestEl(ev.target, '[data-play-idx]');
     const playIdx = playButton ? playButton.getAttribute('data-play-idx') : null;
     const playMode = playButton ? (playButton.getAttribute('data-play-mode') || 'point') : 'point';
-    const libraryCurrent = closestAttr(ev.target, 'data-library-current');
-    const libraryOutgoing = closestAttr(ev.target, 'data-library-outgoing');
-    const libraryIncoming = closestAttr(ev.target, 'data-library-incoming');
-    const libraryPlace = closestAttr(ev.target, 'data-library-place');
     const librarySortKey = closestAttr(ev.target, 'data-library-sort');
     const previewAction = closestAttr(ev.target, 'data-preview-action');
     const transitionTrackPlay = closestAttr(ev.target, 'data-transition-track-play');
@@ -6361,7 +6576,6 @@
       if (focusTarget) focusTarget.focus();
       return;
     }
-    if (appendIdx !== null) appendTrack(Number(appendIdx));
     if (removeSlotValue !== null) removeSlot(Number(removeSlotValue));
     if (seqSlotValue !== null) {
       const slot = Number(seqSlotValue);
@@ -6369,12 +6583,26 @@
       scheduleSessionSave();
       renderAll();
     }
-    if (placeSlotValue !== null && selectedIdx !== null) { appendTrack(selectedIdx, { slot: Number(placeSlotValue) }); }
     if (playIdx !== null) toggleTrackPreview(Number(playIdx), { mode: playMode });
-    if (libraryCurrent !== null) setCurrentTrack(Number(libraryCurrent));
-    if (libraryOutgoing !== null) setTransitionEndpoint('out', Number(libraryOutgoing), { toggle: false });
-    if (libraryIncoming !== null) assignTrackTwo(Number(libraryIncoming));
-    if (libraryPlace !== null) appendTrack(Number(libraryPlace));
+    // There are no play buttons any more: clicking a track plays / pauses it.
+    // (The row waveform has its own pointerdown seek-and-play handler.)
+    if (playIdx === null && pinRecIdx === null && seqSlotValue === null
+        && !closestEl(ev.target, 'button, a, input, select, textarea, label, canvas')) {
+      const deckCover = closestAttr(ev.target, 'data-deck-cover');
+      if (deckCover !== null) {
+        toggleTransitionTrackPreview(deckCover);
+      } else {
+        const rowIdx = closestAttr(ev.target, 'data-library-row-idx') ?? closestAttr(ev.target, 'data-rec-row-idx');
+        const slotDrag = closestAttr(ev.target, 'data-slot-drag');
+        if (rowIdx !== null) {
+          setCurrentTrack(Number(rowIdx));
+          toggleTrackPreview(Number(rowIdx), { mode: 'library' });
+        } else if (slotDrag !== null) {
+          const slotIdx = sequence[Number(slotDrag)];
+          if (slotIdx !== null && slotIdx !== undefined) toggleTrackPreview(Number(slotIdx), { mode: 'library' });
+        }
+      }
+    }
     if (previewAction === 'swap') swapTransitionPair();
     if (previewAction === 'clear') clearTransitionPair();
     if (previewAction === 'render') renderBackendTransition();
@@ -6523,8 +6751,53 @@
       handleMapBlankClick();
     });
   }
+
+  // Map dots are canvas/SVG drawn, so dragging one starts from a capture-phase
+  // pointerdown on the plot pane: hit-test first, and only when a dot is under the
+  // pointer do we claim the gesture (otherwise map pan/zoom keeps working). Claiming
+  // it also blocks Plotly's mousedown pan, so a no-move press is turned back into a
+  // normal select/double-click here.
+  const plotPaneForDrag = plotPaneEl();
+  if (plotPaneForDrag) {
+    let mapPressIdx = null;
+    let mapPressAt = 0;
+    plotPaneForDrag.addEventListener('pointerdown', ev => {
+      // Always clear first: a press released outside the pane never reaches the
+      // pointerup handler below, so a stale idx must not survive into the next press.
+      mapPressIdx = null;
+      if (trackDrag || ev.button !== 0) return;
+      if (closestEl(ev.target, 'button, a, input, select, [data-map-action], .map-mini-map, .mini-map-toggle')) return;
+      const idx = nearestTrackPointIdx(ev, 16);
+      if (idx === null) return;
+      if (!armTrackDrag(idx, { source: 'map', ev })) return;
+      mapPressIdx = idx;
+      // Stop the renderers' own pan handlers from also claiming this press.
+      ev.stopPropagation();
+    }, true);
+    plotPaneForDrag.addEventListener('mousedown', ev => {
+      if (mapPressIdx === null) return;
+      ev.stopPropagation();
+      ev.preventDefault();
+    }, true);
+    plotPaneForDrag.addEventListener('pointerup', ev => {
+      if (mapPressIdx === null) return;
+      const idx = mapPressIdx;
+      mapPressIdx = null;
+      // A press that never became a drag is a click (or a double-click) on the dot.
+      if (!trackDrag || trackDrag.active) return;
+      cancelTrackDrag();
+      const now = Date.now();
+      const isDouble = (now - mapPressAt) < 400;
+      mapPressAt = now;
+      safeUi('map dot press', () => {
+        if (isDouble) assignTransitionFromDoubleClick(idx);
+        else handleMapTrackClick(idx, ev);
+      });
+      ev.stopPropagation();
+    }, true);
+  }
+
   restoreSession();
   setActivePane('explore', { render: false });
-  setBuildSegment(appSetting('build_segment', 'sequence'), { persist: false });
   renderAll();
 })();

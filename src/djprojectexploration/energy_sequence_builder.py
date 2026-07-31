@@ -657,8 +657,9 @@ def _build_plot(records: list[dict[str, Any]], coords: np.ndarray, *, plot_div_i
 
     fig.update_layout(
         title={"text": "", "x": 0.5, "xanchor": "center"},
+        # No fixed height: the app lays the map out as a flexible row so it splits the
+        # left column with the scoring-weights panel below it (config responsive=True).
         autosize=True,
-        height=650,
         dragmode="pan",
         hoverdistance=30,
         margin={"t": 10, "r": 10, "b": 72, "l": 10},

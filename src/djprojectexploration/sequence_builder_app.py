@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
 import sys
 import threading
 import time
@@ -37,6 +38,17 @@ from djprojectexploration.transition_workbench import DEFAULT_TRACKLISTS, Transi
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8770
+
+
+def _default_port() -> int:
+    """Honour $PORT so a preview harness can hand us a free port."""
+    raw = os.environ.get("PORT", "").strip()
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return DEFAULT_PORT
 
 LOADING_HTML = """<!doctype html>
 <html lang="en">
@@ -326,7 +338,12 @@ def serve_sequence_builder_app(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run a local served DJ sequence builder app.")
     parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=_default_port(),
+        help="Port to serve on. Defaults to $PORT when set, otherwise %d." % DEFAULT_PORT,
+    )
     parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
     parser.add_argument("--mix", action="append", dest="mix_slugs", default=None, help="Mix slug to include; repeatable.")
     parser.add_argument("--tracklist", action="append", type=Path, default=None, help="Tracklist CSV to include; repeatable.")
