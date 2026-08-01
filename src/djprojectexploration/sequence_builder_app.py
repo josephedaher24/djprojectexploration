@@ -68,7 +68,7 @@ LOADING_HTML = """<!doctype html>
 <body>
 <div class="box">
   <div class="spinner" id="spinner"></div>
-  <div>Preparing the track library &mdash; first launch computes map layouts and can take a minute.</div>
+  <div>Preparing the track library &mdash; layouts are cached, so this is only slow after a settings or data change.</div>
   <div class="elapsed"><span id="elapsed">__ELAPSED__</span>s elapsed</div>
   <div class="error" id="error"></div>
   <div class="hint" id="hint">Retry: restart the server, then reload this page.</div>

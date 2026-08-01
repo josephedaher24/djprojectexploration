@@ -15,3 +15,4 @@ data/deam_valence_arousal/*.json
 data/maest_embeddings/*.json
 data/chroma_embeddings/*.json
 /playground/output
+data/cache/

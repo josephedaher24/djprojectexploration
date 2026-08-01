@@ -182,6 +182,8 @@
     },
     transitionBadges: document.getElementById('transition-badges'),
     transitionScore: document.getElementById('transition-score'),
+    transitionScoreSection: document.getElementById('transition-score-section'),
+    transitionScoreCount: document.getElementById('transition-score-count'),
     transitionPreview: document.getElementById('transition-preview-panel'),
     audio: document.getElementById('track-audio'),
     songWaveform: document.getElementById('song-waveform'),
@@ -191,11 +193,20 @@
     energyCurve: document.getElementById('energy-curve'),
     sequenceList: document.getElementById('sequence-list'),
     recommendationPanel: document.getElementById('recommendation-panel'),
+    viewportGuard: document.getElementById('viewport-guard'),
+    viewportGuardMin: document.getElementById('viewport-guard-min'),
+    viewportGuardCurrent: document.getElementById('viewport-guard-current'),
     recommendationFilters: document.getElementById('recommendation-filters'),
     recommendationCount: document.getElementById('recommendation-count'),
     libraryCount: document.getElementById('library-count'),
     transitionDiagnostics: document.getElementById('transition-diagnostics'),
     currentTransitionScore: document.getElementById('current-transition-score'),
+    diagScoresCount: document.getElementById('diag-scores-count'),
+    diagFocusedCount: document.getElementById('diag-focused-count'),
+    diagEmbedding: document.getElementById('diag-embedding'),
+    diagEmbeddingBody: document.getElementById('diagnostic-embedding-body'),
+    diagWaveforms: document.getElementById('diag-waveforms'),
+    diagWaveformBody: document.getElementById('diagnostic-waveform-body'),
     mapEffects: document.getElementById('map-effects-canvas'),
     mapArtwork: document.getElementById('map-artwork-canvas'),
     webglMap: document.getElementById('webgl-map-canvas'),
@@ -1024,8 +1035,8 @@
     canvas.addEventListener('dblclick', ev => {
       if (!usingWebglMap()) return;
       const idx = hitTest(ev);
-      if (idx !== null) assignTransitionFromDoubleClick(idx);
-      else handlePlotDoubleClick(false);
+      // Double click no longer loads Track 1 - decks are drag-only.
+      if (idx === null) handlePlotDoubleClick(false);
       ev.preventDefault();
       ev.stopPropagation();
     });
@@ -1252,7 +1263,9 @@
     record = canonicalRecord(record);
     const extra = cls ? ' ' + cls : '';
     if (record && record.artwork_uri) {
-      return '<img class="art-thumb' + extra + '" src="' + esc(record.artwork_uri) + '" alt="">';
+      // draggable="false": an <img> is natively draggable, so without this the browser
+      // starts its own image drag and the card's pointer drag never gets the gesture.
+      return '<img class="art-thumb' + extra + '" src="' + esc(record.artwork_uri) + '" alt="" draggable="false">';
     }
     return '<div class="art-thumb art-placeholder' + extra + '">art</div>';
   }
@@ -1693,7 +1706,7 @@
     if (els.globalArt) {
       if (record && record.artwork_uri) {
         els.globalArt.className = 'global-art';
-        els.globalArt.innerHTML = '<img src="' + esc(record.artwork_uri) + '" alt="">';
+        els.globalArt.innerHTML = '<img src="' + esc(record.artwork_uri) + '" alt="" draggable="false">';
       } else {
         els.globalArt.className = 'global-art art-placeholder';
         els.globalArt.textContent = '';
@@ -3681,6 +3694,41 @@
     }
     return used;
   }
+  // ---- Track 1 / Track 2 are a VIEW of two adjacent sequence slots -----------
+  // They are never independent state, so the decks cannot drift out of sync with the
+  // sequence.  Track 1 is the anchor slot, Track 2 the slot after it, and the anchor
+  // follows the selected slot (falling back to slot 1).  Loading a deck therefore
+  // means writing into its slot, and unloading means clearing that slot.
+  function deckAnchorSlot() {
+    const last = Math.max(0, sequence.length - 2);
+    if (selectedSlot !== null && Number.isFinite(Number(selectedSlot))) {
+      return clamp(Math.round(Number(selectedSlot)), 0, last);
+    }
+    return 0;
+  }
+  function deckSlotFor(deck) {
+    return deckAnchorSlot() + (deck === 'from' ? 0 : 1);
+  }
+  function slotTrackIdx(slot) {
+    if (!Number.isFinite(slot) || slot < 0 || slot >= sequence.length) return null;
+    const v = sequence[slot];
+    return v === undefined ? null : v;
+  }
+  // Recomputes the pair from (sequence, selectedSlot).  Called at the top of every
+  // renderAll, which is the one thing every mutation path already goes through.
+  function syncDecksToSequence() {
+    const anchor = deckAnchorSlot();
+    const from = slotTrackIdx(anchor);
+    const to = slotTrackIdx(anchor + 1);
+    if (from === transitionFromIdx && to === transitionToIdx) return false;
+    transitionFromIdx = from;
+    transitionToIdx = to;
+    // The pair changed, so any rendered transition and its cue picks are stale.
+    resetTransitionRenderState();
+    previewFormState.from_cue = '';
+    previewFormState.to_cue = '';
+    return true;
+  }
   function nextEmptySlot() {
     if (selectedSlot !== null && selectedSlot >= 0 && selectedSlot < sequence.length && sequence[selectedSlot] === null) return selectedSlot;
     const i = sequence.findIndex(v => v === null);
@@ -3737,56 +3785,15 @@
     if (!Number.isFinite(idx) || !byIdx.has(idx) || slot < 0) return false;
     return !selectedIndicesExcept(slot).has(idx);
   }
-  function setTransitionEndpoint(kind, idx, { toggle=true } = {}) {
-    idx = Number(idx);
-    if (!Number.isFinite(idx) || !byIdx.has(idx)) return;
-    let nextFrom = transitionFromIdx;
-    let nextTo = transitionToIdx;
-    if (kind === 'out') {
-      nextFrom = toggle && transitionFromIdx === idx ? null : idx;
-      if (nextTo === idx) nextTo = null;
-    } else {
-      nextTo = toggle && transitionToIdx === idx ? null : idx;
-      if (nextFrom === idx) nextFrom = null;
-    }
-    if (nextFrom === transitionFromIdx && nextTo === transitionToIdx) return;
-    resetTransitionRenderState();
-    previewFormState.from_cue = '';
-    previewFormState.to_cue = '';
-    transitionFromIdx = nextFrom;
-    transitionToIdx = nextTo;
-    scheduleSessionSave();
-    renderAll();
-  }
-  function assignTrackTwo(idx) {
-    idx = Number(idx);
-    if (!Number.isFinite(idx) || !byIdx.has(idx)) return;
-    if (transitionFromIdx === null) {
-      showToast('Assign Track 1 first — Track 2 is the destination of a transition.', { tone: 'warn' });
-      return;
-    }
-    if (Number(transitionFromIdx) === idx) {
-      showToast('Track 2 must be a different track than Track 1.', { tone: 'warn' });
-      return;
-    }
-    setTransitionEndpoint('in', idx, { toggle: false });
-  }
-  function assignTransitionFromDoubleClick(idx) {
-    idx = Number(idx);
-    if (!Number.isFinite(idx) || !byIdx.has(idx)) return;
-    const now = Date.now();
-    if (lastPointDoubleClickIdx === idx && (now - lastPointDoubleClickMs) < 900) return;
-    lastPointDoubleClickIdx = idx;
-    lastPointDoubleClickMs = now;
-    setTransitionEndpoint('out', idx, { toggle: true });
-  }
+  // setTransitionEndpoint / assignTrackTwo / assignTransitionFromDoubleClick are gone:
+  // the decks are a view of two sequence slots now, so the only way to load one is to
+  // drop a track on it (which writes the slot) - see finishTrackDrag.
   function handlePlotDoubleClick(fromPoint=false) {
     const now = Date.now();
     if ((now - lastPointDoubleClickMs) < 900) return false;
-    if (fromPoint && lastClickedIdx !== null && (now - lastClickMs) < 800) {
-      assignTransitionFromDoubleClick(lastClickedIdx);
-      return false;
-    }
+    // Double-clicking a map dot used to load Track 1.  Decks are drag-only now, so a
+    // double click on empty map space just resets the pair's slots.
+    if (fromPoint) return false;
     if (transitionFromIdx !== null || transitionToIdx !== null) clearTransitionPair();
     return false;
   }
@@ -3800,7 +3807,6 @@
     lastClickedIdx = idx;
     lastClickMs = now;
     selectTrack(idx);
-    if (isDouble) assignTransitionFromDoubleClick(idx);
   }
   function handleMapBlankClick() {
     const clearRequestTime = Date.now();
@@ -3812,46 +3818,52 @@
       clearCurrentTrackSelection();
     }, 650);
   }
+  // Swaps the two bound slots, not two loose variables - the sequence is the source
+  // of truth and the decks re-derive from it.
   function swapTransitionPair() {
-    const oldFrom = transitionFromIdx;
-    transitionFromIdx = transitionToIdx;
-    transitionToIdx = oldFrom;
+    const a = deckAnchorSlot();
+    const b = a + 1;
+    if (b >= sequence.length) return;
+    const tmp = sequence[a];
+    sequence[a] = sequence[b];
+    sequence[b] = tmp;
     resetTransitionRenderState();
     previewFormState.from_cue = '';
     previewFormState.to_cue = '';
     scheduleSessionSave();
     renderAll();
   }
-  // Unload a single deck (used by drag-off-the-deck), with undo.
+  // Unload a deck = clear the sequence slot it is bound to (used by drag-off-the-deck).
   function clearTransitionDeck(deck) {
     const isFrom = deck === 'from';
-    const current = isFrom ? transitionFromIdx : transitionToIdx;
+    const slot = deckSlotFor(deck);
+    const current = slotTrackIdx(slot);
     if (current === null) return;
     const label = sequenceTrackLabel(current);
-    const snap = { from: transitionFromIdx, to: transitionToIdx, render: transitionRender, renderedState: transitionRenderedState };
+    const snap = sequenceSnapshot();
     resetTransitionRenderState();
     previewFormState.from_cue = '';
     previewFormState.to_cue = '';
-    if (isFrom) transitionFromIdx = null;
-    else transitionToIdx = null;
+    sequence[slot] = null;
     scheduleSessionSave();
     renderAll();
-    showToast('Unloaded ' + (isFrom ? 'Track 1' : 'Track 2') + ' — "' + label + '".', {
+    showToast('Unloaded ' + (isFrom ? 'Track 1' : 'Track 2') + ' — "' + label + '" (slot ' + (slot + 1) + ').', {
       undoGroup: 'deck',
-      onUndo: () => {
-        resetTransitionRenderState();
-        transitionFromIdx = snap.from;
-        transitionToIdx = snap.to;
-        transitionRender = snap.render;
-        transitionRenderedState = snap.renderedState;
-        scheduleSessionSave();
-        renderAll();
-      },
+      onUndo: () => restoreSequenceSnapshot(snap),
     });
   }
   function clearTransitionPair() {
-    transitionFromIdx = null;
-    transitionToIdx = null;
+    const snap = sequenceSnapshot();
+    const a = deckAnchorSlot();
+    const hadPair = slotTrackIdx(a) !== null || slotTrackIdx(a + 1) !== null;
+    sequence[a] = null;
+    if (a + 1 < sequence.length) sequence[a + 1] = null;
+    if (hadPair) {
+      showToast('Cleared slots ' + (a + 1) + ' and ' + (a + 2) + '.', {
+        undoGroup: 'sequence',
+        onUndo: () => restoreSequenceSnapshot(snap),
+      });
+    }
     lastClickedIdx = null;
     lastClickMs = 0;
     lastPointDoubleClickMs = 0;
@@ -4211,9 +4223,9 @@
     const clearedTrackTwo = transitionToIdx !== null;
     const discardedRender = transitionRender !== null;
     sequence[slot] = idx;
+    // Decks follow the selected slot now, so placing a track no longer force-loads
+    // it into Track 1; the selection is what moves the pair.
     selectedSlot = null;
-    transitionFromIdx = idx;
-    transitionToIdx = null;
     resetTransitionRenderState();
     previewFormState.from_cue = '';
     previewFormState.to_cue = '';
@@ -4357,7 +4369,7 @@
     let html = gapSlots.length
       ? '<div class="sequence-gap-warning warn">Gap at slot' + (gapSlots.length > 1 ? 's' : '') + ' ' + gapSlots.join(', ') + ' — scores bridge across ' + (gapSlots.length > 1 ? 'them' : 'it') + '.</div>'
       : '';
-    html += '<table><thead><tr><th class="num slot-col">Slot</th><th>Track</th><th class="target-col">Target</th><th class="num actual-col" title="Energy of the track placed in this slot — compare with the Target column">Track<br>energy</th><th class="actions-col"></th></tr></thead><tbody>';
+    html += '<table><thead><tr><th class="num slot-col">Slot</th><th>Track</th><th class="target-col">Target</th><th class="num actual-col" title="Energy of the track placed in this slot — compare with the Target column">Track<br>energy</th></tr></thead><tbody>';
     for (let i = 0; i < sequence.length; i += 1) {
       const idx = sequence[i];
       const r = idx === null ? null : byIdx.get(idx);
@@ -4367,19 +4379,21 @@
       // Every slot is a drop target; a filled slot is also a drag source (drag it to
       // another slot to reorder, to a deck to load it, or off the table to remove it).
       html += '<tr' + cls + ' data-slot-drop="' + i + '"' + (r ? ' data-slot-drag="' + i + '"' : '') +
-        '><td class="num">' + (r ? '<span class="sequence-drag-handle" aria-hidden="true" title="Drag this row to reorder, onto a deck to load it, or off the table to remove it">↕</span> ' : '') + (i + 1) + '</td><td>';
+        '><td class="num">' + (r ? '<span class="sequence-drag-handle" aria-hidden="true" title="Drag this row to reorder, onto a deck to load it, or off the table to remove it">↕</span>' : '') +
+        // The slot number doubles as the select toggle, the way the rank cell doubles
+        // as the pin toggle in the recommendations table.  Everything else on the row
+        // (reorder, remove, load onto a deck) is a drag gesture, so there are no buttons.
+        '<button type="button" class="slot-select' + (selectedSlot === i ? ' is-active' : '') + '" data-seq-slot="' + i + '"' +
+        ' aria-pressed="' + (selectedSlot === i ? 'true' : 'false') + '"' +
+        ' title="' + (selectedSlot === i ? 'Deselect slot ' + (i + 1) : 'Select slot ' + (i + 1) + ' — recommendations are scored for it') + '"' +
+        ' aria-label="' + (selectedSlot === i ? 'Deselect slot ' + (i + 1) : 'Select slot ' + (i + 1)) + '">' + (i + 1) + '</button></td><td>';
       // Energy is its own column in this table — keep it out of the meta line.
       if (r) html += trackSummaryHtml(r, { size: 'compact', showArt: true, slot: i, showEnergy: false });
       else if (i < lastFilled) html += '<span class="warn" title="Gap: transition scores and CSV export bridge across this slot">empty — gap</span>';
       else html += '<span class="muted">empty</span>';
       const targetValue = Number(targetValues[i]);
       const targetInput = '<input class="target-edit" data-target-slot="' + i + '" type="number" min="1" max="9" step="0.5" placeholder="' + fmt(targets[i], 2) + '" value="' + (Number.isFinite(targetValue) ? fmt(targetValue, 2) : '') + '" aria-label="Target energy for slot ' + (i + 1) + '">';
-      html += '</td><td class="target-col">' + targetInput + '</td><td class="num actual-col">' + (r ? fmt(energyOf(r), 2) : '') + '</td><td class="actions-col"><div class="table-actions">';
-      html += actionSymbolButton('data-seq-slot="' + i + '"', selectedSlot === i ? '●' : '○', selectedSlot === i ? 'Deselect slot' : 'Select slot', selectedSlot === i ? 'is-active' : '') + ' ';
-      html += actionSymbolButton('data-move-slot-up="' + i + '"' + (i === 0 ? ' disabled' : ''), '↑', 'Move slot ' + (i + 1) + ' up') + ' ';
-      html += actionSymbolButton('data-move-slot-down="' + i + '"' + (i === sequence.length - 1 ? ' disabled' : ''), '↓', 'Move slot ' + (i + 1) + ' down') + ' ';
-      if (r) html += actionSymbolButton('data-remove-slot="' + i + '"', '−', 'Remove track from slot', 'danger');
-      html += '</div></td></tr>';
+      html += '</td><td class="target-col">' + targetInput + '</td><td class="num actual-col">' + (r ? fmt(energyOf(r), 2) : '') + '</td></tr>';
     }
     html += '</tbody></table>';
     els.sequenceList.innerHTML = html;
@@ -4603,16 +4617,19 @@
       diagnosticWaveformCardHtml(to, 'Track 2', slot) +
       '</div>';
   }
-  function transitionFocusHtml(from, to, score, slot) {
+  function transitionFocusHtml(score) {
     // The pair itself is always on screen in the right column's Track 1 / Track 2
-    // cards, so this deep-dive view only labels the slot and goes straight to detail.
-    return '<div class="diagnostic-subhead">Slot ' + (slot + 1) + (score && score.missing ? ' <span class="warn">missing direct similarity row</span>' : '') + '</div>' +
+    // cards, and the slot now lives in this card's head chip, so the body is only the
+    // score breakdown. The embedding and waveform comparisons are sibling cards on the
+    // pane, filled by renderCurrentTransitionScore.
+    // The note is emitted first so it stays full-bleed against the card border.
+    return (score && score.missing
+        ? '<div class="panel-note"><span class="warn">Missing direct similarity row for this pair.</span></div>'
+        : '') +
+      '<div class="panel-body">' +
       scoreSummaryBarsHtml(score) +
       featureBarsHtml(score) +
-      '<div class="focused-transition-section">' + diagnosticEmbeddingComparisonHtml(from, to) + '</div>' +
-      '<div class="focused-transition-waveforms"><h3>Full track waveforms</h3>' +
-      '<div class="diagnostic-subhead">Click or drag either waveform to play and scrub the full track.</div>' +
-      diagnosticWaveformComparisonHtml(from, to, slot) + '</div>';
+      '</div>';
   }
   const SCORE_TIPS = {
     final: 'Final = Mix × Fit. Overall recommendation score.',
@@ -4634,7 +4651,7 @@
       if (sequence[i] !== null) filled.push({ slot: i, idx: Number(sequence[i]) });
     }
     if (!filled.length) {
-      return '<section class="diagnostic-card wide sequence-score-card"><div class="muted">Add tracks to inspect sequence transition scores.</div></section>';
+      return '<div class="panel-empty">Add tracks to inspect sequence transition scores.</div>';
     }
 
     const metricCell = (value, cls, strength=value, label='') =>
@@ -4644,8 +4661,11 @@
     const rankCell = rankInfo =>
       '<td class="num recommendation-score-cell">' + (rankInfo ? rankMeterHtml(rankInfo) : '<span class="muted">—</span>') + '</td>';
 
-    let html = '<section class="diagnostic-card wide sequence-score-card"><div class="diagnostic-table-wrap"><table><thead><tr>' +
-      '<th class="num">Slot</th><th class="num">Actions</th><th title="Green shows the listened region; the dashed amber line is the preview start cue. Click to seek.">Waveform</th><th>Track</th>' +
+    let html = '<table><thead><tr>' +
+      // No Actions column: the rows have not emitted an actions cell for a while, so
+      // this header left every body cell sitting one column to the left of its
+      // heading and squeezed one column to 0 width.
+      '<th class="num">Slot</th><th title="Green shows the listened region; the dashed amber line is the preview start cue. Click to seek.">Waveform</th><th>Track</th>' +
       scoreTh('Rank', 'rank') + scoreTh('Final', 'final') + scoreTh('Mix', 'mix') + scoreTh('Fit', 'fit') + scoreTh('Loss', 'loss') +
       scoreTh('Style', 'style') + scoreTh('Tempo', 'tempo') + scoreTh('Groove', 'groove') + scoreTh('Key', 'key') +
       '</tr></thead><tbody>';
@@ -4673,34 +4693,52 @@
         (previous ? metricCell(score.keyScore, 'harmonic', score.keyScore, 'Harmonic score') : emptyMetricCell()) +
         '</tr>';
     });
-    html += '</tbody></table></div></section>';
+    html += '</tbody></table>';
     return html;
   }
   function renderCurrentTransitionScore() {
     if (!els.currentTransitionScore) return;
     const from = transitionFromIdx === null ? null : byIdx.get(transitionFromIdx);
     const to = transitionToIdx === null ? null : byIdx.get(transitionToIdx);
-    if (!from || !to) {
+    const paired = !!(from && to);
+    // The Embedding Comparison and Full Track Waveforms cards state the same
+    // precondition as this one, so they hide themselves instead of repeating
+    // "assign both tracks" three times down the pane.
+    if (els.diagEmbedding) els.diagEmbedding.hidden = !paired;
+    if (els.diagWaveforms) els.diagWaveforms.hidden = !paired;
+    if (!paired) {
       const ctx = recommendationContext();
       const source = ctx.sourceIdx === null ? null : byIdx.get(Number(ctx.sourceIdx));
-      // Pair state is always shown by the right column's Track 1 / Track 2 cards.
+      if (els.diagFocusedCount) els.diagFocusedCount.textContent = '';
+      // Pair state is always shown by the right column's Track 1 / Track 2 cards, so
+      // the note just names the scoring source and the blocker stays a single line.
       els.currentTransitionScore.innerHTML =
-        '<div class="diagnostic-subhead">Assign both tracks (press 1 or 2 on a selected track, or use the T1 / T2 row buttons) to see the full transition breakdown.</div>' +
         (source
-          ? '<div class="diagnostic-subhead">Recommendations are scored from:</div>' + trackSummaryHtml(source, { size: 'compact', showArt: true })
-          : '');
+          ? '<div class="panel-note">Recommendations are scored from <b>' + esc(source.title || 'Untitled') + '</b>.</div>'
+          : '') +
+        '<div class="panel-empty">Assign Track 1 and Track 2 (press 1 or 2 on a selected track, or use the T1 / T2 row buttons) to see the full transition breakdown.</div>';
+      if (els.diagEmbeddingBody) els.diagEmbeddingBody.innerHTML = '';
+      if (els.diagWaveformBody) els.diagWaveformBody.innerHTML = '';
       return;
     }
     const slot = Math.max(0, targetSlot());
     const score = scoreTransition(transitionFromIdx, transitionToIdx, slot);
-    els.currentTransitionScore.innerHTML = transitionFocusHtml(from, to, score, slot);
+    if (els.diagFocusedCount) els.diagFocusedCount.textContent = 'Slot ' + (slot + 1);
+    els.currentTransitionScore.innerHTML = transitionFocusHtml(score);
+    if (els.diagEmbeddingBody) els.diagEmbeddingBody.innerHTML = diagnosticEmbeddingComparisonHtml(from, to);
+    if (els.diagWaveformBody) els.diagWaveformBody.innerHTML = diagnosticWaveformComparisonHtml(from, to, slot);
   }
   function renderTransitionDiagnostics() {
     if (!els.transitionDiagnostics) return;
-    let html = '<div class="diagnostics-grid">';
-    html += sequenceTransitionTableHtml();
-    html += '</div>';
-    els.transitionDiagnostics.innerHTML = html;
+    // The card body is the scrollport now, so the table goes in flush: no grid
+    // wrapper, no inner card, no second scroll box.
+    els.transitionDiagnostics.innerHTML = sequenceTransitionTableHtml();
+    if (els.diagScoresCount) {
+      const filled = sequence.reduce((n, value) => n + (value === null ? 0 : 1), 0);
+      els.diagScoresCount.textContent = filled === 0
+        ? ''
+        : filled + ' slots · ' + Math.max(0, filled - 1) + ' scored';
+    }
     updatePlayButtons();
     updateRowScrubbers();
   }
@@ -4848,16 +4886,19 @@
     const slot = targetSlot();
     if (slot >= 0) traces.push({ x: [slot + 1], y: [targets[slot]], type: 'scatter', mode: 'markers', name: 'Next slot', marker: { size: 14, color: '#f59e0b', symbol: 'x' } });
     Plotly.react('energy-curve', traces, {
-      title: { text: 'Drag target points to edit the energy curve', font: { size: 13, color: '#e5e7eb' } },
-      margin: { t: 48, r: 20, b: 46, l: 48 },
+      // No in-plot title or axis titles: the card head says "Energy Curve", the hint is
+      // a .panel-note above, and the ticks speak for themselves.  That chrome was 94px
+      // of margin, leaving only 32px of plot to draw 9 energy levels in.
+      margin: { t: 8, r: 12, b: 20, l: 26 },
       template: 'plotly_dark',
       paper_bgcolor: '#111827',
       plot_bgcolor: '#111827',
       font: { color: '#e5e7eb' },
       dragmode: false,
-      xaxis: { title: 'Sequence slot', dtick: 1, range: [0.5, sequence.length + 0.5], fixedrange: true, gridcolor: '#263244', zerolinecolor: '#263244' },
-      yaxis: { title: 'Energy', range: [0.5, 9.5], fixedrange: true, tickmode: 'array', tickvals: ENERGY_AXIS_TICKS, ticktext: ENERGY_AXIS_TICKS.map(String), gridcolor: '#263244', zerolinecolor: '#263244' },
-      legend: { orientation: 'h', x: 0, y: -0.24, xanchor: 'left', yanchor: 'top' }
+      xaxis: { dtick: 1, range: [0.5, sequence.length + 0.5], fixedrange: true, gridcolor: '#263244', zerolinecolor: '#263244', tickfont: { size: 10 } },
+      yaxis: { range: [0.5, 9.5], fixedrange: true, tickmode: 'array', tickvals: ENERGY_AXIS_TICKS, ticktext: ENERGY_AXIS_TICKS.map(String), gridcolor: '#263244', zerolinecolor: '#263244', tickfont: { size: 10 } },
+      // Legend floats inside the plot's top-right corner so it costs no vertical margin.
+      legend: { orientation: 'h', x: 1, y: 1, xanchor: 'right', yanchor: 'top', font: { size: 10 }, bgcolor: 'rgba(17,24,39,.72)', borderwidth: 0 }
     }, { displayModeBar: false, scrollZoom: false, doubleClick: false, responsive: true });
   }
   function renderTransitionBadges() {
@@ -4867,8 +4908,10 @@
     // No pair: stay empty. The transition editor already shows one progressive
     // "assign Track 1/2" message in the same panel — do not repeat it here.
     let scoreHtml = '';
+    let scoreChip = '';
     if (from && to) {
       const slot = Math.max(0, targetSlot());
+      scoreChip = 'Slot ' + (slot + 1);
       const score = scoreTransition(transitionFromIdx, transitionToIdx, slot);
       const rankInfo = transitionRecommendationRank(transitionFromIdx, transitionToIdx, slot);
       const meterRows = [
@@ -4881,8 +4924,9 @@
         ['Loss', Number.isFinite(Number(score.penalty)) ? -Number(score.penalty) : NaN, 'penalty', score.penalty, 'Energy score loss', 'loss'],
         ['Rank #', rankInfo, 'rank', NaN, 'Recommendation rank', 'rank'],
       ];
+      // The card owns the frame and .panel-body owns the padding, so the meter
+      // list is the whole body — no private wrapper box.
       scoreHtml =
-        '<div class="transition-mini-score">' +
         '<div class="transition-mini-meter-list">' +
         meterRows.map(row =>
           '<div class="transition-mini-meter-row"><span title="' + esc(SCORE_TIPS[row[5]] || '') + '">' + esc(row[0]) + '</span>' +
@@ -4891,7 +4935,6 @@
             : scoreMeterHtml(row[1], row[2], row[3], 2, row[4], { forceValues: true })) +
           '</div>'
         ).join('') +
-        '</div>' +
         '</div>';
     }
     const lastFilledIdx = sequence.reduce((acc, v) => v !== null ? v : acc, null);
@@ -4907,15 +4950,16 @@
       '<div class="deck-card-head"><b>' + label + '</b>' +
       '</div>' +
       (record
-        // Circular cover on its own row (spins while this deck's track plays),
-        // then the rest of the track detail in a small card underneath.
+        // The circular cover IS the card: the label and the track detail float over
+        // it on the z-axis (see .deck-card-head / .deck-info-card) so neither takes
+        // a row of its own.  The note rides inside the bottom overlay for the same
+        // reason - as a sibling it would stretch the card back out.
         ? '<div class="deck-cover-row"><span class="deck-cover-disc" data-deck-cover="' + deck + '">' +
             artworkHtml(record, 'deck-cover') +
-            '<i class="deck-cover-spindle" aria-hidden="true"></i>' +
           '</span></div>' +
-          '<div class="deck-info-card">' + trackSummaryHtml(record, { size: 'compact', showArt: false }) + '</div>'
-        : '<span class="muted deck-empty-hint">Drop a track here</span>') +
-      (noteHtml || '') +
+          '<div class="deck-info-card">' + trackSummaryHtml(record, { size: 'compact', showArt: false }) +
+            (noteHtml || '') + '</div>'
+        : '<span class="muted deck-empty-hint">Drop a track here</span>' + (noteHtml || '')) +
       '</div>';
     els.transitionBadges.innerHTML =
       deckHtml('out', 'Track 1', 'from', from,
@@ -4923,6 +4967,11 @@
       deckHtml('in', 'Track 2', 'to', to, '');
     // The detailed transition score lives in the Transition segment, not the deck cards.
     if (els.transitionScore) els.transitionScore.innerHTML = scoreHtml;
+    // No scored pair: hide the whole card rather than leave an empty titled shell
+    // (this replaces the old `.transition-score:empty { display:none }`). The
+    // workbench card keeps the single "assign Track 1 and Track 2" message.
+    if (els.transitionScoreSection) els.transitionScoreSection.hidden = !scoreHtml;
+    if (els.transitionScoreCount) els.transitionScoreCount.textContent = scoreChip;
     safeUi('deck play buttons', updateTransitionTrackPlayButtons);
     safeUi('deck cover spin', updateDeckCoverSpin);
   }
@@ -4931,7 +4980,7 @@
       let msg = 'Assign Track 1 and Track 2 to render a transition preview.';
       if (from && !to) msg = 'Track 1 is set — now assign Track 2.';
       else if (!from && to) msg = 'Track 2 is set — now assign Track 1.';
-      return '<div class="transition-editor"><div class="transition-editor-empty">' + esc(msg) + '</div></div>';
+      return '<div class="panel-empty">' + esc(msg) + '</div>';
     }
     const pitchValues = [-3, -2, -1, 0, 1, 2, 3];
     const laneInfoHtml = deck => {
@@ -4987,13 +5036,10 @@
         '</aside>' +
         '</div>';
     };
+    // The snap toggle and the timing hint are static card chrome now
+    // (#transition-workbench-section's .panel-toolbar and .panel-note), so the
+    // editor renders only its stage and bindTransitionEditor binds the checkbox once.
     return '<div class="transition-editor">' +
-      '<div class="transition-editor-head">' +
-      '<div class="transition-editor-tools">' +
-      '<label><input id="transition-snap-to-beat" type="checkbox"' + (transitionSnapToBeat ? ' checked' : '') + '> Snap to beat</label>' +
-      '</div>' +
-      '</div>' +
-      '<div class="transition-editor-hint">Drag a transition lane or overview window to shift timing. Cue markers can be clicked directly; snap locks movement to beats.</div>' +
       '<div class="transition-native-stage">' +
       overviewHtml('from') +
       '<div class="transition-window-stack">' + sectionHtml('from') + transitionTransportHtml() + sectionHtml('to') + '</div>' +
@@ -5441,14 +5487,14 @@
     if (config.app_mode) {
       if (!appLoadStarted) loadAppRuntime();
       if (appOptions && appOptions.error) {
-        controlsHtml = '<div class="warn" style="margin-top:14px;">Could not load render controls from the server.<br>' +
+        controlsHtml = '<div class="panel-empty warn">Could not load render controls from the server.<br>' +
           '<span class="muted">' + esc(appOptions.error) + '</span><br>' +
           '<button type="button" data-preview-action="retry-load" style="margin-top:8px;">Retry</button></div>';
       } else if (!appLoadDone) {
-        controlsHtml = '<div class="muted" style="margin-top:14px;">Loading render controls...</div>';
+        controlsHtml = '<div class="panel-empty">Loading render controls...</div>';
       } else if (!from || !to) {
         controlsHtml = transitionRenderWarn && transitionRenderMessage
-          ? '<div class="warn" style="margin-top:14px;">' + esc(transitionRenderMessage) + '</div>'
+          ? '<div class="panel-empty warn">' + esc(transitionRenderMessage) + '</div>'
           : '';
       } else {
         const presets = (appOptions.presets || ['auto']);
@@ -5458,12 +5504,16 @@
         const renderStatus = transitionRenderStatusInfo();
         controlsHtml =
           '<div class="transition-settings-panel">' +
-          '<section class="preview-render-section"><h3>Render Controls</h3><div class="preview-render-grid preview-timing-grid">' +
+          '<section class="build-subsection" aria-label="Timing">' +
+          '<div class="build-section-head"><span class="build-section-title">Timing</span></div>' +
+          '<div class="panel-body"><div class="preview-render-grid preview-timing-grid">' +
           numericInput('overlap_bars', 'Overlap (bars)', previewFormState.overlap_bars, 1, 64, 1, 'Length of the blended region where both tracks play, in bars') +
           numericInput('front_padding_bars', 'Front pad (bars)', previewFormState.front_padding_bars, 0, 16, 1, 'Bars of Track 1 audio kept before the overlap starts') +
           numericInput('back_padding_bars', 'Back pad (bars)', previewFormState.back_padding_bars, 0, 16, 1, 'Bars of Track 2 audio kept after the overlap ends') +
-          '</div></section>' +
-          '<section class="preview-render-section"><h3>Transition FX</h3><div class="preview-mode-controls">' +
+          '</div></div></section>' +
+          '<section class="build-subsection" aria-label="Transition FX">' +
+          '<div class="build-section-head"><span class="build-section-title">Transition FX</span></div>' +
+          '<div class="panel-body"><div class="preview-mode-controls">' +
           selectInput('preset', 'Preset', presets, previewFormState.preset) +
           selectInput('volume_mode', 'Volume', volumeModes, previewFormState.volume_mode) +
           selectInput('eq_mode', 'EQ', eqModes, previewFormState.eq_mode) +
@@ -5473,8 +5523,10 @@
           '<span class="fx-item"><span class="fx-icon" aria-hidden="true">VOL</span><span class="fx-line volume"></span>Volume line</span>' +
           '<span class="fx-item"><span class="fx-icon" aria-hidden="true">EQ</span><span class="fx-line eq"></span>EQ line</span>' +
           '<span class="fx-item"><span class="fx-icon" aria-hidden="true">FLT</span><span class="fx-line filter"></span>Filter line</span>' +
-          '</div></section>' +
-          '<div class="preview-render-actions">' +
+          '</div></div></section>' +
+          '<section class="build-subsection" aria-label="Render">' +
+          '<div class="build-section-head"><span class="build-section-title">Render</span></div>' +
+          '<div class="panel-body preview-render-actions">' +
           '<div class="preview-actions">' +
           '<button id="transition-render-button" type="button" class="primary" data-preview-action="render" onclick="return window.__djRenderTransition ? window.__djRenderTransition(event) : false;"' + (transitionRenderPending ? ' disabled' : '') + '>' +
           (transitionRenderPending ? 'Rendering...' : (transitionRender && previewSettingsDirty() ? 'Render again' : 'Render transition')) +
@@ -5484,7 +5536,7 @@
           '</div>' +
           transitionLoadingHtml(transitionRenderPending) +
           '<div id="transition-render-status" class="preview-status' + (renderStatus.warn ? ' warn' : '') + '">' + esc(renderStatus.text) + '</div>' +
-          '</div>' +
+          '</div></section>' +
           '</div>';
       }
     } else {
@@ -5497,7 +5549,7 @@
     const editorHtml = safeUi(
       'transition editor render',
       () => renderTransitionEditorHtml(from, to),
-      '<div class="transition-editor"><div class="transition-editor-empty warn">Transition editor failed to render. Other app controls remain available.</div></div>'
+      '<div class="panel-empty warn">Transition editor failed to render. Other app controls remain available.</div>'
     );
     // The pair, the render state and the rendered duration are already on screen
     // (deck cards, status line, transport time) — the topbar only carries the WAV link.
@@ -5876,6 +5928,8 @@
     }
   }
   function renderAll() {
+    // Decks are derived from the sequence: resolve them before anything reads them.
+    safeUi('deck sync', syncDecksToSequence);
     safeUi('weight labels', updateWeightLabels);
     safeUi('map coordinates', () => {
       syncMapRenderer({ render: false });
@@ -6030,9 +6084,12 @@
     const target = ev ? trackDragTargetAt(ev) : drag.target;
     if (target && target.kind === 'deck') {
       if (drag.deck === target.deck) return true;
-      // setTransitionEndpoint already clears the other deck when it held this same
-      // track, so dragging between decks moves rather than duplicates.
-      setTransitionEndpoint(target.deck === 'from' ? 'out' : 'in', drag.idx, { toggle: false });
+      // A deck is a window onto a sequence slot, so loading one means placing the
+      // track into that slot.  Deck-to-deck is a swap of the two bound slots.
+      if (drag.deck) { swapTransitionPair(); return true; }
+      const slot = deckSlotFor(target.deck);
+      if (drag.slot !== null) moveSequenceSlot(drag.slot, slot);
+      else appendTrack(drag.idx, { slot });
       return true;
     }
     if (target && target.kind === 'slot') {
@@ -6144,11 +6201,11 @@
       setSettingsPanelOpen(false);
       toggleHelpPanel();
       ev.preventDefault();
-    } else if (key === '1') {
-      if (selectedIdx !== null) setTransitionEndpoint('out', selectedIdx, { toggle: false });
-      ev.preventDefault();
-    } else if (key === '2') {
-      if (selectedIdx !== null) assignTrackTwo(selectedIdx);
+    } else if (key === '1' || key === '2') {
+      // Decks are loaded by dragging only; 1 / 2 used to assign them directly.
+      if (selectedIdx !== null) {
+        showToast('Drag a track onto Track 1 / Track 2 to load it.', { tone: 'warn' });
+      }
       ev.preventDefault();
     } else if (key === '-' || key === '_') {
       handleMapAction('zoom-out');
@@ -6472,6 +6529,25 @@
     }
   }, true);
 
+  // ---- Desktop-only guard --------------------------------------------------
+  // Tablet and phone layouts are no longer maintained, so a window smaller than the
+  // supported size gets this notice instead of a silently broken page.  There is no
+  // way past it: the layout underneath genuinely does not hold together below this
+  // size, so offering an override would only hand back the broken page.
+  const VIEWPORT_MIN_W = 1100;
+  const VIEWPORT_MIN_H = 560;
+  function updateViewportGuard() {
+    const guard = els.viewportGuard;
+    if (!guard) return;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (els.viewportGuardMin) els.viewportGuardMin.textContent = VIEWPORT_MIN_W + ' \u00d7 ' + VIEWPORT_MIN_H;
+    if (els.viewportGuardCurrent) els.viewportGuardCurrent.textContent = Math.round(w) + ' \u00d7 ' + Math.round(h);
+    guard.hidden = w >= VIEWPORT_MIN_W && h >= VIEWPORT_MIN_H;
+  }
+  window.addEventListener('resize', () => safeUi('viewport guard', updateViewportGuard));
+  safeUi('viewport guard', updateViewportGuard);
+
   window.addEventListener('resize', () => setTimeout(() => safeUi('energy curve resize', () => { if (window.Plotly && els.energyCurve) Plotly.Plots.resize(els.energyCurve); }), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('main waveform draw', drawMainWaveform), 30));
   window.addEventListener('resize', () => setTimeout(() => safeUi('library waveform draw', drawLibraryWaveforms), 30));
@@ -6510,10 +6586,7 @@
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') safeUi('session flush', flushSessionSave); });
 
   document.body.addEventListener('click', ev => {
-    const removeSlotValue = closestAttr(ev.target, 'data-remove-slot');
     const seqSlotValue = closestAttr(ev.target, 'data-seq-slot');
-    const moveSlotUp = closestAttr(ev.target, 'data-move-slot-up');
-    const moveSlotDown = closestAttr(ev.target, 'data-move-slot-down');
     const playButton = closestEl(ev.target, '[data-play-idx]');
     const playIdx = playButton ? playButton.getAttribute('data-play-idx') : null;
     const playMode = playButton ? (playButton.getAttribute('data-play-mode') || 'point') : 'point';
@@ -6560,23 +6633,6 @@
       const sortButton = document.querySelector('.th-sort[data-library-sort="' + librarySortKey + '"]');
       if (sortButton) sortButton.focus();
     }
-    if (moveSlotUp !== null) {
-      const slot = Number(moveSlotUp);
-      moveSequenceSlot(slot, slot - 1);
-      const focusTarget = document.querySelector('[data-move-slot-up="' + (slot - 1) + '"]:not([disabled])')
-        || document.querySelector('[data-move-slot-down="' + (slot - 1) + '"]:not([disabled])');
-      if (focusTarget) focusTarget.focus();
-      return;
-    }
-    if (moveSlotDown !== null) {
-      const slot = Number(moveSlotDown);
-      moveSequenceSlot(slot, slot + 1);
-      const focusTarget = document.querySelector('[data-move-slot-down="' + (slot + 1) + '"]:not([disabled])')
-        || document.querySelector('[data-move-slot-up="' + (slot + 1) + '"]:not([disabled])');
-      if (focusTarget) focusTarget.focus();
-      return;
-    }
-    if (removeSlotValue !== null) removeSlot(Number(removeSlotValue));
     if (seqSlotValue !== null) {
       const slot = Number(seqSlotValue);
       selectedSlot = selectedSlot === slot ? null : slot;
@@ -6724,10 +6780,7 @@
     plot.on('plotly_doubleclick', () => {
       if (usingWebglMap()) return false;
       if ((Date.now() - lastPointDoubleClickMs) < 900) return false;
-      if (lastClickedIdx !== null && (Date.now() - lastClickMs) < 720) {
-        assignTransitionFromDoubleClick(lastClickedIdx);
-        return false;
-      }
+      if (lastClickedIdx !== null && (Date.now() - lastClickMs) < 720) return false;
       if (transitionFromIdx !== null || transitionToIdx !== null) clearTransitionPair();
       return false;
     });
@@ -6790,8 +6843,8 @@
       const isDouble = (now - mapPressAt) < 400;
       mapPressAt = now;
       safeUi('map dot press', () => {
-        if (isDouble) assignTransitionFromDoubleClick(idx);
-        else handleMapTrackClick(idx, ev);
+        // A second click is just a re-select; it no longer loads a deck.
+        handleMapTrackClick(idx, ev);
       });
       ev.stopPropagation();
     }, true);

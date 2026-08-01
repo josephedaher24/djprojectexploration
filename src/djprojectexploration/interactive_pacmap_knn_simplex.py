@@ -22,6 +22,7 @@ from djprojectexploration.interactive_visualization_common import (
     _normalize_distance_matrix,
     resolve_tracklist_sources,
 )
+from djprojectexploration.layout_cache import cached_layouts
 from djprojectexploration.multimodal_compatibility import (
     _build_harmonic_kernel,
     _pairwise_cosine_similarity_matrix,
@@ -537,6 +538,10 @@ def _compute_pacmap_knn_simplex_layouts(
     return layouts
 
 
+# Cached on its keyword arguments + a transitive hash of every djprojectexploration
+# function it reaches. Keep this function pure in its kwargs: if it ever reads an
+# env var, a module global, or mutable state, the cache goes silently stale.
+@cached_layouts
 def _compute_pacmap_knn_4way_layouts(
     *,
     X_reference: np.ndarray,

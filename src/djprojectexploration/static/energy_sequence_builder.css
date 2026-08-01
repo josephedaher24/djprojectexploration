@@ -1,18 +1,45 @@
   :root { color-scheme: dark; --bg:#0b1020; --panel:#111827; --panel2:#151f32; --line:#2d374c; --ink:#e5e7eb; --muted:#9ca3af; --accent:#14b8a6; --accent2:#f59e0b; --warn:#fb923c; --track1:#38bdf8; --track2:#c084fc; --recommendation:#34d399; --sequence:#fb923c; --pin:#fbbf24; --slot:#94a3b8; }
-  body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 18px; padding-bottom: 0; color: var(--ink); background: var(--bg); }
+  /* Column layout with a real height: .builder then flexes into the leftover space,
+     so the gap below it is the same 18px margin as every other edge.  The old
+     `height: calc(100vh - 100px)` hardcoded a header size that no longer matched and
+     left ~34px of dead space at the bottom. */
+  /* The page is the two-column grid: header and the analysis column stack in column 1
+     while the right column spans BOTH rows, so it starts level with the title instead
+     of below the header.  Height is computed, so the gap under it is the same 18px
+     margin as every other edge. */
+  body { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 18px; padding-bottom: 0; height: calc(100vh - 36px); display: grid; grid-template-columns: minmax(0, 1fr) clamp(380px, 34vw, 500px); grid-template-rows: auto minmax(0, 1fr); gap: 10px 14px; color: var(--ink); background: var(--bg); }
   .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   :focus-visible { outline:2px solid #2dd4bf; outline-offset:2px; box-shadow:0 0 0 5px rgba(45,212,191,.16); }
   input[type="range"]:focus-visible { outline-offset:4px; box-shadow:none; }
-  .app-header { position:relative; display:flex; align-items:center; justify-content:space-between; gap:14px; margin:0 0 14px; }
+  /* Images are natively draggable; that native drag would win over the app's own
+     pointer-based track drag (grabbing a deck cover dragged the picture out instead
+     of the card).  The draggable="false" attribute covers Firefox, this covers WebKit. */
+  img { -webkit-user-drag:none; user-select:none; }
+  .app-header { position:relative; grid-column:1; grid-row:1; margin:0; }
+  .app-header-main { min-width:0; display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; }
   h1 { font-size: 24px; margin: 0; }
   h2 { font-size: 15px; margin: 0 0 8px; }
-  .builder { margin-top: 14px; height: calc(100vh - 100px); min-height:520px; display:grid; grid-template-rows: minmax(0, 1fr) auto; gap:12px; }
-  .app-body { min-height:0; display:grid; grid-template-columns: minmax(0, 1fr) clamp(380px, 34vw, 500px); grid-template-rows: minmax(0, 1fr); gap:14px; align-items:stretch; }
-  .analysis-column { min-width:0; min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; padding-right:3px; }
+  /* The player lives inside the left column now, so the builder is a single row and
+     the right column runs the full height of the app area. */
+  .builder { grid-column:1; grid-row:2; margin:0; min-height:0; display:grid; grid-template-rows: minmax(0, 1fr); gap:12px; }
+  .app-body { min-height:0; display:grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-items:stretch; }
+  /* Tab row on top, the active pane in the middle (the only part that scrolls), and
+     the preview player docked to the bottom edge. */
+  .analysis-column { min-width:0; min-height:0; display:grid; grid-template-rows:minmax(0,1fr) auto; gap:10px; overflow:hidden; padding-right:3px; }
+  .analysis-column > .pane.active { min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; padding-right:3px; }
+  /* Tabs sit at the right-hand end of their row. */
+  .analysis-column > .global-player { align-self:end; }
   .analysis-column .pane { min-height:0; }
-  .build-column { min-width:0; min-height:0; display:grid; grid-template-rows: auto minmax(0, 1fr); gap:10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); padding:10px; }
+  .build-column { grid-column:2; grid-row:1 / -1; min-width:0; min-height:0; display:grid; grid-template-rows: auto minmax(0, 1fr); gap:10px; border:1px solid var(--line); border-radius:9px; background:var(--panel2); padding:10px; }
   .build-top { display:grid; gap:10px; }
-  .build-scroll { min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; padding-right:3px; }
+  /* Energy curve keeps its natural height; the sequence card takes the rest and
+     scrolls INSIDE itself.  Previously the whole column scrolled while the sequence
+     list was sized to its full content, so the list was not a scroll container at
+     all - there was nothing under the pointer for the wheel to move, and its
+     overscroll-behavior:contain stopped the wheel chaining out to the column. */
+  .build-scroll { min-height:0; display:grid; grid-template-rows:auto minmax(150px, 1fr); gap:10px; align-content:stretch; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; padding-right:3px; }
+  .build-scroll > .sequence-section { min-height:0; display:grid; grid-template-rows:auto minmax(0, 1fr); }
+  .build-scroll > .build-section:first-child { min-height:0; }
   .build-section { border:1px solid var(--line); border-radius:7px; background:var(--panel); overflow:hidden; }
   .build-section-title { font-size:12px; font-weight:700; color:#dbeafe; letter-spacing:.02em; }
   .build-section-head { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:8px 10px; border-bottom:1px solid var(--line); }
@@ -37,18 +64,20 @@
   .panel-note b { color:#cbd5e1; font-weight:700; }
   .panel-empty { padding:14px 10px; color:var(--muted); font-size:12px; text-align:center; }
   .build-section > #energy-curve, .build-section > .recommendation-panel, .build-section > .library-table, .build-section > .transition-preview-panel { border:0; border-radius:0; }
-  .sequence-head-controls { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  /* Icon buttons rather than labels, so the whole row fits on the title's line and
+     hugs the right edge instead of wrapping underneath it. */
+  .sequence-head-controls { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; margin-left:auto; }
   /* The old rule set flex-direction without ever setting display, so it was inert
      against `label { display:grid }` (line 222) and "Length" stacked above its input.
      inline-flex is the actual fix; the buttons get the same 28px control box. */
   .sequence-length-label { display:inline-flex; flex-direction:row; align-items:center; gap:6px; color:var(--muted); font-size:11px; }
   .sequence-length-label input { width:56px; box-sizing:border-box; }
   .sequence-head-controls button { min-height:28px; padding:5px 8px; border-radius:5px; font-size:11px; }
+  .seq-icon-button { width:28px; min-width:28px; height:28px; display:inline-grid; place-items:center; padding:0; line-height:1; font-size:14px; }
   .sequence-head-controls button.danger { color:#fecaca; border-color:#4b2630; }
   .sequence-head-controls button.danger:hover { border-color:#fb7185; }
   .sequence-section > .sequence-list { border:0; }
   .transition-score { min-width:0; }
-  .transition-score:empty { display:none; }
   .app-nav-tools { display:flex; align-items:center; gap:8px; position:relative; }
   .pane-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
   .tab-button { border: 1px solid var(--line); background: var(--panel); color: var(--muted); border-radius: 6px; padding: 6px 10px; }
@@ -142,12 +171,17 @@
   .side-settings > .control-grid, .side-settings > .misc-control-grid { border-left:0; border-right:0; border-bottom:0; }
   .sequence-length-row { grid-template-columns:1fr; }
   .transition-badges { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .transition-badge { border: 1px solid var(--line); background: var(--panel); padding: 8px; border-radius: 6px; min-height: 48px; min-width:0; overflow:hidden; }
+  /* The circular cover IS the card.  The Track 1/2 label and the track detail are
+     stacked over it on the z-axis instead of taking rows of their own, so the card is
+     exactly as tall as the cover (it was cover + head + info before). */
+  .transition-badge { position:relative; aspect-ratio:1 / 1; border: 1px solid var(--line); background: var(--panel); padding: 0; border-radius: 8px; min-height: 48px; min-width:0; overflow:hidden; }
   .transition-badge b { color: var(--ink); font-size: 11px; }
-  .deck-card-head { display:flex; align-items:center; justify-content:space-between; gap:6px; margin-bottom:5px; }
+  .deck-card-head { position:absolute; z-index:3; top:0; left:0; right:0; display:flex; align-items:center; justify-content:space-between; gap:6px; margin:0; padding:7px 9px 14px;
+    background:linear-gradient(to bottom, rgba(6,10,20,.86) 0%, rgba(6,10,20,.45) 55%, rgba(6,10,20,0) 100%);
+    text-shadow:0 1px 3px rgba(0,0,0,.9); pointer-events:none; }
   /* ---- Global track drag-and-drop ---- */
   .transition-badge[data-deck-drag] { cursor:grab; }
-  .deck-empty-hint { font-size:11px; font-style:italic; }
+  .deck-empty-hint { position:absolute; inset:0; display:grid; place-items:center; padding:0 10px; text-align:center; font-size:11px; font-style:italic; }
   .transition-badge.deck-drop-ready { border-style:dashed; border-color:#3f5170; }
   .transition-badge.deck-drop-over { border-style:solid; border-color:#2dd4bf; background:#12312e; box-shadow:0 0 0 2px rgba(45,212,191,.28) inset; }
   .transition-badge.out.deck-drop-over { border-color:var(--track1); box-shadow:inset 3px 0 0 var(--track1), 0 0 0 2px rgba(56,189,248,.3) inset; }
@@ -166,12 +200,11 @@
   .deck-actions-row button { padding:4px 9px; font-size:11px; }
   .deck-actions-row button.danger { color:#fecaca; border-color:#4b2630; }
   .deck-actions-row button.danger:hover { border-color:#fb7185; }
-  .deck-cover-row { display:block; padding:8px 0 9px; }
+  .deck-cover-row { display:block; padding:0; height:100%; }
   /* The disc spans the full card width — diameter follows the card, always a circle. */
-  .deck-cover-disc { position:relative; display:block; width:100%; aspect-ratio:1 / 1; border-radius:50%; }
+  .deck-cover-disc { position:relative; display:block; width:100%; height:100%; aspect-ratio:1 / 1; border-radius:50%; }
   .deck-cover-disc .deck-cover { width:100%; height:100%; border-radius:50%; object-fit:cover; display:block; background:#0f172a; box-shadow:0 6px 18px rgba(0,0,0,.42); }
   .deck-cover-disc .art-placeholder { display:grid; place-items:center; color:var(--muted); font-size:11px; }
-  .deck-cover-spindle { position:absolute; left:50%; top:50%; width:16px; height:16px; margin:-8px 0 0 -8px; border-radius:50%; background:#0b1020; box-shadow:0 0 0 2px rgba(148,163,184,.5) inset; pointer-events:none; z-index:2; }
   /* Clicking the cover plays / pauses that deck — no play button. */
   .deck-cover-disc { cursor:pointer; }
   .deck-cover-disc::after { content:'▶'; position:absolute; inset:0; display:grid; place-items:center; border-radius:50%; background:rgba(9,14,28,.5); color:#fff; font-size:30px; opacity:0; transition:opacity .12s; pointer-events:none; }
@@ -183,17 +216,19 @@
   .deck-cover-disc.spinning .deck-cover { animation: deck-cover-spin 5.5s linear infinite; }
   @media (prefers-reduced-motion: reduce) { .deck-cover-disc.spinning .deck-cover { animation:none; } }
   /* The rest of the track detail lives in its own small card under the cover. */
-  .deck-info-card { min-width:0; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:#0f172a; }
+  .deck-info-card { position:absolute; z-index:3; left:0; right:0; bottom:0; min-width:0; padding:22px 9px 8px; border:0; border-radius:0;
+    background:linear-gradient(to top, rgba(6,10,20,.94) 0%, rgba(6,10,20,.82) 45%, rgba(6,10,20,0) 100%);
+    text-shadow:0 1px 3px rgba(0,0,0,.9); pointer-events:none; }
   .transition-badge .track-title { white-space:normal; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; font-size:12px; line-height:1.2; }
   .transition-badge .track-artist, .transition-badge .track-meta-line { font-size:11px; }
   .transition-badge.out { border-color:rgba(56,189,248,.42); box-shadow:inset 3px 0 0 var(--track1); }
   .transition-badge.in { border-color:rgba(192,132,252,.42); box-shadow:inset 3px 0 0 var(--track2); }
   .transition-badge.out b { color:var(--track1); }
   .transition-badge.in b { color:var(--track2); }
-  .transition-mini-score { grid-column: 1 / -1; border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 8px; }
-  .transition-mini-score table { font-size: 11px; }
-  .transition-mini-score th, .transition-mini-score td { padding: 4px 5px; }
-  .transition-mini-score .score-meter { min-width:0; }
+  /* .transition-mini-score's box is retired: #transition-score-section is a real
+     .build-section card now and .panel-body supplies the padding. Its one
+     load-bearing rule (.score-meter { min-width:0 }) is re-homed on the meter list
+     in the shared card block. */
   .transition-mini-meter-list { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:6px 8px; }
   .transition-mini-meter-row { display:grid; grid-template-columns:minmax(0, 1fr); gap:3px; align-items:center; min-width:0; }
   .transition-mini-meter-row > span { min-width:0; color:#cbd5e1; font-size:11px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -229,9 +264,7 @@
   .energy-controls > .energy-penalty-row > output { min-width:0; text-align:right; font-variant-numeric:tabular-nums; }
   .misc-control-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:7px; align-items:center; padding:9px; border:1px solid var(--line); background:#0f172a; box-shadow:inset 0 1px 0 rgba(255,255,255,.03); }
   .map-slider-control { grid-column:span 1; min-width:0; }
-  /* --- Map display settings (Region 2). Self-contained: depends on no other patch. ---
-     (0,2,0) so it also beats the `grid-template-columns:1fr` flattening inside the
-     @media (max-width:1100px) block without editing that shared line. */
+  /* --- Map display settings. Self-contained: depends on no other rule. --- */
   .side-settings > .misc-control-grid { grid-template-columns:repeat(auto-fit, minmax(min(100%, 176px), 1fr)); gap:10px; align-items:start; }
   .misc-control-grid > * { min-width:0; }
   .misc-control-grid label { color:#cbd5e1; }
@@ -287,16 +320,24 @@
   .side-actions { display:flex; gap:8px; flex-wrap:wrap; border:1px solid var(--line); background:var(--panel); padding:9px; }
   .side-actions button.danger { color:#fecaca; border-color:#4b2630; }
   .side-actions button.danger:hover { border-color:#fb7185; }
-  .energy-curve { height: 220px; border: 1px solid var(--line); background: var(--panel); }
+  /* The sequence is the working surface, so the curve gets the smaller share of the
+     column: 220px left the list at its 120px floor with ~2 rows visible. */
+  .energy-curve { height: 168px; border: 1px solid var(--line); background: var(--panel); }
   /* The right column now holds only the energy curve + sequence. */
-  .build-column .sequence-list { height:auto; min-height:220px; max-height:none; }
+  /* Fill the card and scroll internally, so the wheel acts on the rows under it. */
+  .build-column .sequence-list { height:100%; min-height:120px; max-height:none; overflow-y:auto; }
   /* Recommendations sit under the library table in the analysis column. */
   /* Library pane splits the left column the same way the map pane does: the track
      table flexes, recommendations keep a share below, and each card scrolls itself. */
   #pane-library.active { height:100%; min-height:0; grid-template-rows:minmax(220px,1fr) minmax(190px,.7fr); align-content:stretch; }
   .library-recommendations { margin-top:0; min-height:0; display:grid; grid-template-rows:auto auto minmax(0,1fr); }
   .analysis-column .recommendation-panel { max-height:none; min-height:0; height:100%; }
-  #pane-transition.active { align-content:start; }
+  /* These two panes hold naturally tall content (the editor stack, the diagnostic
+     cards), so their rows must size to CONTENT and let the pane scroll.  Without
+     grid-auto-rows:max-content the pane's fixed height was divided evenly between the
+     cards - four 166px rows - so nothing ever overflowed the pane (no wheel scroll)
+     while every card silently clipped its own content behind overflow:hidden. */
+  #pane-transition.active, #pane-diagnostics.active { align-content:start; grid-auto-rows:max-content; }
   #pane-transition .transition-preview-panel { min-height:auto; }
   .explore-lower-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(430px, 520px); gap: 12px; align-items: start; }
   .energy-column, .sequence-panel, .recommendations-section { min-width: 0; display: grid; gap: 8px; align-content: start; }
@@ -305,7 +346,7 @@
   .sequence-list, .recommendation-panel, .transition-diagnostics, .transition-preview-panel { border: 1px solid var(--line); background: var(--panel); max-height: 560px; overflow: auto; }
   .sequence-list { height: 260px; max-height: 260px; overflow-y: auto; overflow-x: hidden; resize:none; overscroll-behavior:contain; }
   .sequence-list table { table-layout:fixed; width:100%; min-width:0; }
-  .sequence-list .slot-col { width:34px; }
+  .sequence-list .slot-col { width:52px; }
   /* 52px minus the base 7px cell padding left a 38px content box, which is what
      clipped input.target-edit ("5.00" measured clientWidth 42 / scrollWidth 46).
      58px with 3px cell padding gives a 52px content box - see .target-edit below. */
@@ -324,9 +365,12 @@
   /* One row of up to 4 actions (select / up / down / remove). A 2-wide block wrapped
      3 buttons to 2 rows and made every slot row 73px tall - 730px for a 10-slot
      sequence - to buy the Track cell 11px. 24px buttons fit all four on one line. */
-  .sequence-list .actions-col { width:106px; }
-  .sequence-list .table-actions { display:grid; grid-template-columns:repeat(4, 24px); gap:3px; align-items:center; justify-content:end; }
-  .sequence-list .action-symbol-button, .sequence-list .play-button { box-sizing:border-box; width:24px; min-width:24px; height:24px; min-height:24px; padding:0; font-size:12px; }
+  /* No actions column: reorder, remove and load-onto-a-deck are all drag gestures,
+     and the slot number itself is the select toggle.  The 106px the buttons used
+     goes back to the Track cell. */
+  .slot-select { padding:2px 5px; border:0; background:transparent; color:var(--muted); font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; border-radius:5px; cursor:pointer; line-height:1.2; }
+  .slot-select:hover { background:rgba(148,163,184,.16); color:var(--ink); }
+  .slot-select.is-active { background:rgba(148,163,184,.2); color:var(--ink); box-shadow:inset 0 0 0 1px var(--slot); }
   .sequence-list td, .sequence-list th { vertical-align:middle; }
   .sequence-list th.target-col, .sequence-list td.target-col,
   .sequence-list th.actual-col, .sequence-list td.actual-col { text-align:center; }
@@ -388,12 +432,10 @@
   .score-meter.empty .score-meter-value { color:var(--muted); }
   .score-meter.empty .score-meter-track { opacity:.34; }
   .transition-preview-panel { max-height: none; min-height: 760px; padding: 0; overflow:auto; background:#0b1020; }
-  #pane-diagnostics .transition-diagnostics { max-height: 720px; padding:10px; }
-  .diagnostics-grid { display:grid; grid-template-columns:1fr; gap:10px; align-items:start; }
-  .diagnostic-card { min-width:0; border:1px solid var(--line); border-radius:7px; background:#0f172a; padding:10px; display:grid; gap:9px; }
-  .diagnostic-card.wide { grid-column:1 / -1; }
-  .diagnostic-card h3 { margin:0; font-size:13px; color:#dbeafe; }
-  .diagnostic-subhead { color:var(--muted); font-size:12px; line-height:1.35; }
+  /* The .build-section card owns the frame; this element is only the scrollport for
+     the flush table body, so its own padding must be 0. The #id here out-specifies
+     .build-section > .panel-flush (1,1,0 vs 0,2,0), so the 0 has to be written here. */
+  #pane-diagnostics .transition-diagnostics { max-height: 720px; padding:0; }
   .diagnostic-transition-pair { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:10px; align-items:center; margin-bottom:8px; }
   .diagnostic-arrow { color:#67e8f9; font-weight:800; }
   .diagnostic-feature-bars { display:grid; gap:7px; }
@@ -410,9 +452,6 @@
   .diagnostic-feature-bar.groove .diagnostic-bar-track i { background:#2dd4bf; }
   .diagnostic-feature-bar.harmonic .diagnostic-bar-track i { background:#fbbf24; }
   .diagnostic-feature-bar.energy .diagnostic-bar-track i { background:#38bdf8; }
-  .focused-score-bars { margin-bottom:8px; }
-  .focused-transition-section, .focused-transition-waveforms { display:grid; gap:8px; min-width:0; margin-top:12px; }
-  .focused-transition-waveforms h3 { margin:0; font-size:13px; color:#dbeafe; }
   .diagnostic-embedding-compare { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; align-items:start; }
   .diagnostic-embedding-section { min-width:0; display:grid; gap:7px; overflow:hidden; }
   .diagnostic-embedding-section h4 { margin:0; color:#e5e7eb; font-size:12px; letter-spacing:0; }
@@ -446,13 +485,16 @@
   .diagnostic-waveform-head b, .diagnostic-waveform-head span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .diagnostic-waveform-head span { color:var(--muted); font-variant-numeric:tabular-nums; }
   .diagnostic-waveform-canvas { width:100%; height:86px; border:1px solid #243244; background:#0b1020; border-radius:7px; cursor:pointer; display:block; }
-  .diagnostic-table-wrap { overflow:auto; max-height:360px; border:1px solid #263244; }
   .sequence-score-card table { font-size:11px; table-layout:fixed; min-width:0; }
+  /* Columns are now Slot | Waveform | Track | Rank + 8 score columns.  These
+     widths shifted by one when the stale Actions header was removed; the waveform
+     also gets a usable 110px instead of the 46px the old slot-2 rule gave it. */
   .sequence-score-card th:nth-child(1), .sequence-score-card td:nth-child(1) { width:42px; }
-  .sequence-score-card th:nth-child(2), .sequence-score-card td:nth-child(2) { width:46px; text-align:center; }
-  .sequence-score-card th:nth-child(3), .sequence-score-card td:nth-child(3) { width:170px; }
-  .sequence-score-card th:nth-child(4), .sequence-score-card td:nth-child(4) { width:auto; }
-  .sequence-score-card th:nth-child(n+5), .sequence-score-card td:nth-child(n+5) { width:58px; }
+  .sequence-score-card th:nth-child(2), .sequence-score-card td:nth-child(2) { width:110px; text-align:center; }
+  /* Explicit, not auto: in this fixed-layout table the auto column computed to
+     0px and the fixed columns absorbed the slack, collapsing the Track cell. */
+  .sequence-score-card th:nth-child(3), .sequence-score-card td:nth-child(3) { width:210px; }
+  .sequence-score-card th:nth-child(n+4), .sequence-score-card td:nth-child(n+4) { width:58px; }
   .sequence-score-card .table-actions { justify-content:center; }
   .sequence-score-card .recommendation-score-cell { min-width:52px; vertical-align:middle; }
   .sequence-score-card .sequence-empty-score { text-align:center; }
@@ -482,11 +524,8 @@
   .transition-transport-title { min-width:0; color:#cbd5e1; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .transition-scrubbar audio { display:none; }
   .transition-editor { border-bottom:1px solid var(--line); background:#101010; padding:12px; display:grid; gap:10px; }
-  .transition-editor-head { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
-  .transition-editor-head h2 { margin:0; }
-  .transition-editor-tools { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  .transition-editor-tools label { display:flex; grid-template-columns:none; flex-direction:row; gap:6px; align-items:center; color:#cbd5e1; }
-  .transition-editor-hint { font-size:11px; color:var(--muted); }
+  /* The editor's private head bar, snap toggle and hint are gone: the workbench
+     card's .build-section-head / .panel-toolbar / .panel-note own them now. */
   .transition-editor-lanes { display:grid; grid-template-columns:1fr; gap:10px; }
   .transition-native-stage { display:grid; gap:9px; min-width:0; }
   .transition-overview-card, .transition-window-card, .transition-lane-card { min-width:0; border:1px solid #2d2d2d; background:#171717; border-radius:7px; padding:10px; display:grid; gap:8px; box-shadow:inset 0 1px 0 rgba(255,255,255,.03); }
@@ -498,20 +537,37 @@
      12.6 Maximize Tracks grows a non-flexible track to its growth limit before the fr track
      takes the remainder), but unlike minmax(230px,300px) it contributes no min-content floor
      to the editor subtree. */
-  .transition-window-card { background:#151515; grid-template-columns:minmax(0,1fr) minmax(0,300px); align-items:stretch; }
+  /* The waveform surfaces are the point of this editor, so they span the full width
+     and the per-deck controls sit in their own horizontal row underneath.  The card
+     used to be [canvas | 300px sidebar], which cost the mixing view 39% of its width. */
+  .transition-window-card { background:#151515; grid-template-columns:minmax(0,1fr); align-items:stretch; }
   .transition-window-main { min-width:0; display:grid; align-content:stretch; }
-  .transition-track-side { min-width:0; border-left:1px solid #2d2d2d; padding-left:10px; display:grid; grid-template-rows:auto minmax(0,1fr); gap:10px; align-content:start; }
-  .transition-track-meta { min-width:0; overflow:hidden; }
+  .transition-track-side { min-width:0; display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px 14px; border-top:1px solid #2d2d2d; padding-top:9px; }
+  .transition-track-meta { min-width:0; overflow:hidden; align-self:center; flex:0 0 auto; }
   .transition-track-label { color:#cbd5e1; font-size:11px; font-weight:700; letter-spacing:0; }
   .transition-lane-head { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
   .transition-lane-head b { color:#f2f2f2; font-size:12px; }
   .transition-lane-meta { display:flex; gap:8px; flex-wrap:wrap; color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; }
-  .transition-lane-tools { display:grid; grid-template-columns:1fr; gap:8px; align-items:end; align-content:start; }
+  .transition-lane-tools { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px 12px; flex:1 1 auto; min-width:0; }
   .transition-lane-tools label { min-width:0; }
-  .transition-cue-control { display:grid; grid-template-columns:42px minmax(0,1fr); gap:6px; align-items:center; }
-  .transition-cue-control span { color:var(--muted); font-size:11px; }
+  /* Cue takes the slack (its option text is the longest); the other two are fixed. */
+  /* Same caption line-height for all three: Cue's caption is a <span> while the
+     others are bare text nodes, which left their baselines 2px apart. */
+  .transition-lane-tools > label { flex:0 0 118px; line-height:1.2; }
+  .transition-lane-tools .transition-cue-control { flex:1 1 240px; }
+  /* Pin both to the app's 28px control box (16 line + 10 pad + 2 border) so the
+     number input and the selects are the same height and every caption above them
+     lands on one baseline. */
+  .transition-lane-tools input, .transition-lane-tools select { width:100%; height:28px; line-height:16px; }
+  /* Caption above the control, matching Nudge beats / Repitch beside it and the
+     .panel-toolbar idiom.  It used to put "Cue" to the LEFT of the select, which
+     read as a different kind of field once the three sat on one row. */
+  .transition-cue-control { display:grid; grid-template-columns:minmax(0,1fr); gap:4px; align-items:end; }
+  .transition-cue-control span { color:var(--muted); font-size:11px; line-height:1.2; }
   .transition-cue-control select { width:100%; }
-  .transition-overview-row { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px; align-items:center; }
+  /* One column: this was auto + an empty 1fr track, which left the global overview
+     canvas at 34% of the stage with 528px of nothing beside it. */
+  .transition-overview-row { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; align-items:center; }
   .transition-track-play { width:34px; height:34px; border-radius:999px; display:grid; place-items:center; padding:0; font-size:14px; font-weight:800; }
   .transition-cue-list { display:flex; flex-wrap:wrap; gap:4px 10px; font-size:11px; line-height:1.2; }
   .transition-cue-chip { white-space:nowrap; font-weight:700; }
@@ -519,12 +575,11 @@
   .transition-overview-canvas { height:76px; border-radius:7px; }
   .transition-section-canvas { height:245px; border-radius:7px; }
   .transition-overview-canvas:active, .transition-section-canvas:active { cursor:grabbing; }
-  .transition-editor-empty { border:1px solid var(--line); background:rgba(15,23,42,.62); border-radius:7px; padding:12px; color:var(--muted); font-size:12px; }
-  .current-transition-score { border:1px solid var(--line); background:var(--panel); }
+  /* Card chrome moved to the wrapping .build-section; this is just the flush body. */
+  .current-transition-score { min-width:0; }
   .library-panel { display:grid; }
   #pane-library.active .library-panel { min-height:0; grid-template-rows:auto auto minmax(0,1fr); }
   #pane-library.active .library-table { max-height:none; height:100%; min-height:0; }
-  .current-transition-score { padding:10px; overflow:auto; }
 
   .library-table { max-height:690px; overflow:auto; }
   .library-table th[data-library-sort] { cursor:pointer; user-select:none; }
@@ -554,10 +609,14 @@
   .library-table tr.now-playing-paused { background: rgba(148,163,184,.08); box-shadow: inset 3px 0 0 #64748b; }
   .row-player { display:grid; grid-template-columns:auto minmax(120px, 200px); gap:5px; align-items:center; min-width:220px; }
   .row-player .play-button { border-radius:999px; min-width:42px; }
-  .row-waveform-scrubber { display:grid; grid-template-columns:minmax(80px, 1fr) 56px; gap:5px; align-items:center; min-width:0; }
-  .waveform-cell .row-waveform-scrubber { grid-template-columns:minmax(80px, 1fr); min-width:0; }
+  /* min(100%, N) floors: a bare minmax(80px,...) overflowed its cell in the
+     diagnostics table, whose waveform column is only 58px wide - the canvas spilled
+     ~22px into the next column.  Clamping the floor to the container keeps the
+     waveform inside its cell at every column width. */
+  .row-waveform-scrubber { display:grid; grid-template-columns:minmax(min(100%, 80px), 1fr) 56px; gap:5px; align-items:center; min-width:0; }
+  .waveform-cell .row-waveform-scrubber { grid-template-columns:minmax(min(100%, 80px), 1fr); min-width:0; }
   .waveform-cell .row-waveform-scrubber .scrub-time { display:none; }
-  .row-waveform { width:100%; height:24px; border:1px solid #263244; background:#0b1020; border-radius:999px; cursor:pointer; display:block; }
+  .row-waveform { width:100%; max-width:100%; min-width:0; height:24px; border:1px solid #263244; background:#0b1020; border-radius:999px; cursor:pointer; display:block; }
   .scrub-range { --progress:0%; width:100%; min-width:80px; accent-color:#1db954; background:linear-gradient(to right, #1db954 var(--progress), #334155 var(--progress)); border-radius:999px; }
   .scrub-time { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; text-align:right; }
   .recommendation-panel tr.pinned-row { background:rgba(251,191,36,.09); box-shadow:inset 3px 0 0 var(--pin); }
@@ -572,11 +631,25 @@
      container: 3 tracks at >=~1050px of content (>=1500px viewport), 2 at ~790px, 1 below
      ~530px, and auto-fit collapses the spare track so 3 items always fill their row.
      .preview-render-layout is deleted rather than retuned - repo-wide grep finds it only in
-     this file and in stale data/exports snapshots, never on an element. Its @media entry is
-     removed by the last patch. */
+     this file and in stale data/exports snapshots, never on an element. */
   .transition-settings-panel { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap:12px; align-items:start; }
-  .preview-render-section { display:grid; gap:8px; padding:9px; border:1px solid var(--line); border-radius:7px; background:#0f172a; }
-  .preview-render-section h3 { margin:0; font-size:12px; color:#dbeafe; }
+  /* The three control groups have very unequal heights - Transition FX is about
+     twice Timing - so plain auto-placement sized row 1 to FX and left ~90px of
+     dead space under Timing plus a whole empty cell beside Render (panel 308px
+     tall for 218px of content).  When two columns actually fit, stack Timing and
+     Render down column 1 and let FX span both rows.  A CONTAINER query, not a
+     media query: this panel's width follows the analysis column, not the
+     viewport, so a viewport breakpoint would guess wrong in the stacked layout. */
+  .transition-controls { container-type:inline-size; }
+  @container (min-width: 560px) {
+    .transition-settings-panel { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-rows:auto auto; align-content:start; }
+    .transition-settings-panel > [aria-label="Timing"] { grid-column:1; grid-row:1; }
+    .transition-settings-panel > [aria-label="Render"] { grid-column:1; grid-row:2; }
+    .transition-settings-panel > [aria-label="Transition FX"] { grid-column:2; grid-row:1 / span 2; }
+  }
+  /* .preview-render-section is retired: the workbench's three control groups are
+     .build-subsection cards now (Timing / Transition FX / Render), styled by the
+     shared card language instead of a private lookalike. */
   /* repeat(4, minmax(120px,1fr)) = 504px inside a 360px column is how the FX selects spilled
      144px over the render buttons; repeat(3, minmax(86px,1fr)) = 274px did the same inside the
      260px column. The min(100%, N) floors clamp both to the container at any width, and
@@ -605,7 +678,10 @@
   .song-waveform { width:100%; height:54px; border:1px solid #243244; background:#0b1020; border-radius:7px; cursor:pointer; display:block; }
   /* The player bar's progress control is the waveform itself. */
   .global-waveform { height:44px; min-width:0; border-radius:6px; touch-action:none; }
-  .global-player { position:relative; z-index:2; display:grid; grid-template-columns:minmax(180px, 1fr) minmax(220px, 2.6fr) auto minmax(120px, .5fr); gap:12px; align-items:center; padding:9px 14px; border:1px solid #334155; border-radius:9px; background:rgba(15,23,42,.96); }
+  /* Docked in the left column now rather than spanning the whole window, so the
+     now-playing block and the volume give ground to the waveform - it is the scrub
+     bar, and 264px of it was the narrowest thing in the row. */
+  .global-player { position:relative; z-index:2; display:grid; grid-template-columns:minmax(140px, .7fr) minmax(240px, 3fr) auto minmax(116px, .35fr); gap:10px; align-items:center; padding:9px 12px; border:1px solid #334155; border-radius:9px; background:rgba(15,23,42,.96); }
   /* No play button: the now-playing block itself toggles playback. */
   .global-nowplaying { display:grid; grid-template-columns:48px minmax(0,1fr); gap:10px; align-items:center; min-width:0; padding:4px; margin:-4px; border-radius:8px; cursor:pointer; }
   .global-nowplaying:hover { background:rgba(148,163,184,.10); }
@@ -661,30 +737,44 @@
   .toast-close:hover { color:var(--ink); }
   .sequence-gap-warning { font-size:12px; margin:0 0 6px; }
   .transition-badge-note { font-size:10px; margin-top:4px; }
-  @media (max-width: 1100px) {
-    .app-header { align-items:flex-start; flex-direction:column; }
-    .builder { height:auto; min-height:0; }
-    .app-body { grid-template-columns: 1fr; min-height:0; }
-    .analysis-column { overflow:visible; }
-    .build-column { grid-template-rows:auto auto; }
-    .build-scroll { overflow:visible; }
-    .transition-badges { grid-template-columns:1fr; }
-    .global-player { grid-template-columns:minmax(0,1fr) auto auto; grid-template-rows:auto auto; row-gap:8px; }
-    .global-player .global-nowplaying { grid-column:1 / -1; grid-row:1; }
-    .global-player .global-waveform { grid-column:1 / 2; grid-row:2; }
-    .global-player #global-time { grid-column:2 / 3; grid-row:2; }
-    .global-player .global-volume { grid-column:3 / 4; grid-row:2; justify-self:end; }
-    .control-grid, .mixability-controls, .selected-panel, .lower-grid, .explore-lower-grid, .preview-grid, .transition-window-card, .transition-transport-row, .transition-workbench, .transition-editor-lanes, .transition-lane-tools, .diagnostics-grid, .diagnostic-transition-pair, .diagnostic-embedding-compare { grid-template-columns: 1fr; }
-    .diagnostic-card.wide { grid-column:auto; }
-    .diagnostic-feature-bar { grid-template-columns:1fr; gap:4px; }
-    .diagnostic-feature-bar b, .diagnostic-feature-bar em { text-align:left; }
-    .transition-track-side { border-left:0; border-top:1px solid #2d2d2d; padding-left:0; padding-top:10px; }
-    .preview-mode-controls { border-left:0; padding-left:0; }
-    .weights-panel > .control-grid, .misc-control-grid { grid-template-columns: 1fr; }
-    .actions { justify-content: flex-start; }
-    /* Stacked layout has no fixed column height, so cap the two library cards
-       instead of splitting the space between them. */
-    #pane-library.active { height:auto; grid-template-rows:auto auto; align-content:start; }
-    #pane-library.active .library-table { height:auto; max-height:520px; }
-    .analysis-column .recommendation-panel { height:auto; max-height:420px; }
-  }
+/* ---- Shared card language: tier 2 + card body furniture -----------------
+     Added once so the Transition and Diagnostics panes reuse the Map/Library
+     vocabulary instead of inventing .diagnostic-card / .preview-render-section.
+     Tier 1 (.build-section, .build-section-head, .build-section-title,
+     .panel-count, .panel-toolbar, .panel-note, .panel-empty) is unchanged. */
+  /* A card that has nothing to show in the current state may hide itself
+     rather than repeat a precondition another card on the pane already states. */
+  .build-section[hidden], .build-subsection[hidden] { display:none; }
+  /* Generic version of the explicit selector list on line 39: any body that
+     should scroll flush inside a card, letting the card own the frame. */
+  .build-section > .panel-flush { border:0; border-radius:0; padding:0; min-width:0; }
+  /* Padded interior for every body that is not a flush table or canvas. This is
+     what .diagnostic-card's and .preview-render-section's padding used to do,
+     minus the duplicate border/background. */
+  .panel-body { min-width:0; padding:10px; display:grid; gap:9px; align-content:start; }
+  .panel-body > * { min-width:0; }
+  /* Tier 2 - the only nested card tier. Same head markup as tier 1, one step
+     darker so it reads as inside (the step .panel-toolbar already uses against
+     var(--panel)). overflow stays visible so a focus ring on a control inside is
+     not clipped; it never holds a flush child, so nothing pokes past the radius.
+     min-width:0 keeps it safe as a grid item in .transition-settings-panel. */
+  .build-subsection { min-width:0; border:1px solid var(--line); border-radius:7px; background:#0f172a; }
+  .build-subsection > .build-section-head { padding:7px 10px; }
+  .build-subsection > .panel-body { padding:9px 10px; gap:8px; }
+  /* .transition-mini-score's box is retired; this is the one rule inside it that
+     was load-bearing - without it .score-meter's 52px floor overflows the
+     4-column meter grid at narrow widths. */
+  .transition-mini-meter-list .score-meter { min-width:0; }
+  /* ---- Desktop-only guard -------------------------------------------------
+     Tablet and phone layouts are no longer maintained: instead of letting a
+     narrow window render a broken page, cover it with a notice.  Sized in vw/vh
+     so it is readable at whatever size triggered it. */
+  .viewport-guard { position:fixed; inset:0; z-index:200; display:grid; place-items:center; padding:20px; background:rgba(11,16,32,.97); backdrop-filter:blur(6px); }
+  .viewport-guard[hidden] { display:none; }
+  .viewport-guard-card { max-width:420px; width:100%; box-sizing:border-box; padding:22px 22px 18px; border:1px solid var(--line); border-radius:9px; background:var(--panel); box-shadow:0 26px 70px rgba(0,0,0,.5); text-align:center; }
+  .viewport-guard-icon { font-size:30px; line-height:1; margin-bottom:10px; }
+  .viewport-guard-card h2 { margin:0 0 8px; font-size:15px; color:var(--ink); }
+  .viewport-guard-body { margin:0 0 10px; color:var(--muted); font-size:12px; line-height:1.45; }
+  .viewport-guard-body b { color:#cbd5e1; font-variant-numeric:tabular-nums; }
+  .viewport-guard-size { margin:0; color:var(--muted); font-size:12px; }
+  .viewport-guard-size b { color:var(--warn); font-variant-numeric:tabular-nums; }
