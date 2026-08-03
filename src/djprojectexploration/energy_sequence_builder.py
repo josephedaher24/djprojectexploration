@@ -47,6 +47,7 @@ from djprojectexploration.multimodal_compatibility import (
     load_aries_mix_feature_set,
 )
 from djprojectexploration.tracklists import read_csv_rows
+from djprojectexploration.loudness_matching import load_loudness_catalog, lookup_loudness
 from djprojectexploration.waveform_features import (
     default_waveform_npz_path,
     load_waveform_feature_lookup,
@@ -339,6 +340,7 @@ def _load_combined_records_and_features(
         )
 
         csv_rows = read_csv_rows(tracklist_csv)
+        loudness_by_filename, loudness_by_number = load_loudness_catalog(tracklist_csv, project_root=project_root)
         csv_by_token: dict[str, dict[str, str]] = {}
         for row in csv_rows:
             token = _row_token(row)
@@ -385,6 +387,12 @@ def _load_combined_records_and_features(
             raw_genre = genre_value or "Unknown"
             genre = simplify_genre(raw_genre)
             track_num_tag = (row.get("track_number") or row.get("#") or str(meta.track_number)).strip()
+            loudness = lookup_loudness(
+                loudness_by_filename,
+                loudness_by_number,
+                filename=meta.filename,
+                track_number=track_num_tag,
+            )
             track_id = f"{mix_slug}:{track_num_tag}"
             est_bpm = float(mix_features.tempo_bpm[local_i])
             est_conf = float(mix_features.tempo_confidence[local_i])
@@ -488,6 +496,7 @@ def _load_combined_records_and_features(
                     "snippet_rms": preview_score,
                     "human_energy": float(energy_values.get("human_energy", 5.0)),
                     "glm_energy": float(energy_values.get("glm_energy", np.nan)),
+                    "loudness": loudness.payload(),
                 }
             )
 
@@ -672,6 +681,18 @@ def _build_plot(records: list[dict[str, Any]], coords: np.ndarray, *, plot_div_i
     fig.add_scatter(
         x=[],
         y=[],
+        mode="markers+text",
+        name="Recommendation source",
+        marker={"size": 18, "symbol": "diamond", "color": "rgba(251,191,36,0.12)", "line": {"color": "#fbbf24", "width": 2}},
+        text=[],
+        textposition="top center",
+        textfont={"color": "#fde68a", "size": 11},
+        hoverinfo="skip",
+        showlegend=True,
+    )
+    fig.add_scatter(
+        x=[],
+        y=[],
         mode="lines",
         name="Transition pair",
         line={"color": "rgba(192,132,252,0.0)", "width": 0},
@@ -851,6 +872,7 @@ def _build_html(
             "snippet_rms": float(r["snippet_rms"]),
             "human_energy": float(r["human_energy"]) if np.isfinite(float(r["human_energy"])) else None,
             "glm_energy": float(r["glm_energy"]) if np.isfinite(float(r["glm_energy"])) else None,
+            "loudness": dict(r.get("loudness") or {}),
             "diagnostic_chroma": list((feature_visuals or {}).get(int(r["idx"]), {}).get("chroma", [])),
             "diagnostic_groove": list((feature_visuals or {}).get(int(r["idx"]), {}).get("groove", [])),
         }

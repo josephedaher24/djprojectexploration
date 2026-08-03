@@ -7,6 +7,7 @@
       <button class="tab-button" data-pane-tab="diagnostics">Diagnostics</button>
       <button class="tab-button" data-pane-tab="preview">Transition Preview</button>
     </nav>
+    <button id="fullscreen-toggle" class="icon-button settings-toggle" type="button" aria-label="Enter fullscreen" aria-pressed="false" title="Enter fullscreen (F)">⛶</button>
     <button id="help-toggle" class="icon-button settings-toggle" type="button" aria-label="Keyboard shortcuts and controls" aria-controls="help-popover" aria-expanded="false" title="Keyboard shortcuts and controls">?</button>
     <button id="settings-toggle" class="icon-button settings-toggle" type="button" aria-label="App settings" aria-controls="settings-popover" aria-expanded="false" title="App settings">⚙</button>
   </div>
@@ -87,15 +88,16 @@
               <option value="tempo">Tempo</option>
             </select>
           </label>
-          <label>Map renderer
-            <select id="map-renderer">
-              <option value="plotly">Plotly</option>
-              <option value="webgl">WebGL experimental</option>
-            </select>
-          </label>
           <label>Map FX <input id="map-effects-enabled" type="checkbox" checked></label>
           <label>Show scores <input id="show-score-values" type="checkbox" checked></label>
           <label>Figure light <input id="figure-light-mode" type="checkbox"></label>
+          <label id="loudness-match-setting" hidden title="Whole-track target −12 LUFS; compensation is capped at ±6 dB.">Loudness match
+            <select id="loudness-match-mode" title="Whole-track target −12 LUFS; compensation is capped at ±6 dB.">
+              <option value="off">Off</option>
+              <option value="auditions">Auditions only</option>
+              <option value="auditions_transitions">Auditions + transitions</option>
+            </select>
+          </label>
           <label class="map-slider-control" title="Top-K weighted candidate links per track.">Latent top-K/track
             <span class="map-slider-row"><input id="latent-links-per-track" type="range" min="0" max="8" step="1" value="3"><output id="latent-links-per-track-val">3</output></span>
             <span class="control-note">weighted candidates per track</span>
@@ -106,9 +108,14 @@
           </label>
         </div>
         <div class="side-actions">
+          <button id="undo-planning" type="button" title="Undo the last planning edit (⌘/Ctrl+Z)">Undo</button>
+          <button id="redo-planning" type="button" title="Redo the last planning edit (⌘/Ctrl+Shift+Z)">Redo</button>
+          <button id="apply-energy-guides" type="button" title="Make dashed interpolated guide values explicit targets">Apply guides</button>
+          <button id="clear-energy-targets" type="button" title="Clear every explicit energy target">Clear targets</button>
           <button id="clear-last">Clear last</button>
           <button id="reset-sequence">Reset sequence</button>
           <button id="download-sequence">Download CSV</button>
+          <span id="planning-save-status" class="planning-save-status" aria-live="polite">Local plan</span>
         </div>
       </aside>
     </div>

@@ -88,7 +88,12 @@ class SequenceBuilderApp:
         self.output_dir = output_dir.expanduser().resolve()
         self.tracklists = [path.expanduser().resolve() for path in tracklists]
         self.mix_slugs = [path.parent.name for path in self.tracklists]
-        self.workbench = TransitionWorkbench(tracklists=self.tracklists, cue_tables=None, output_dir=self.output_dir)
+        self.workbench = TransitionWorkbench(
+            tracklists=self.tracklists,
+            cue_tables=None,
+            output_dir=self.output_dir,
+            render_visuals=False,
+        )
         self.audio_by_track_id: dict[str, Path] = {}
         for source in self.workbench.sources:
             for track in load_playlist_tracks(source.tracklist):
@@ -112,6 +117,9 @@ class SequenceBuilderApp:
 
     def render_transition(self, body: dict[str, Any]) -> dict[str, Any]:
         return self.workbench.render_payload(body)
+
+    def prepare_live_transition(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.workbench.prepare_live_payload(body)
 
     def artifact_path(self, transition_id: str, filename: str) -> Path | None:
         return self.workbench.artifact_path(transition_id, filename)
@@ -172,7 +180,7 @@ def make_handler(app: SequenceBuilderApp) -> type[BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
-            if parsed.path != "/api/render-transition":
+            if parsed.path not in {"/api/render-transition", "/api/prepare-live-transition"}:
                 error_response(self, HTTPStatus.NOT_FOUND, "Not found")
                 return
             try:
@@ -181,7 +189,12 @@ def make_handler(app: SequenceBuilderApp) -> type[BaseHTTPRequestHandler]:
                 payload = json.loads(body)
                 if not isinstance(payload, dict):
                     raise ValueError("Request body must be a JSON object.")
-                json_response(self, HTTPStatus.OK, app.render_transition(payload))
+                result = (
+                    app.prepare_live_transition(payload)
+                    if parsed.path == "/api/prepare-live-transition"
+                    else app.render_transition(payload)
+                )
+                json_response(self, HTTPStatus.OK, result)
             except Exception as exc:
                 error_response(self, HTTPStatus.BAD_REQUEST, str(exc))
 

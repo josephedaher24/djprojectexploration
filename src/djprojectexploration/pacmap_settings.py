@@ -162,7 +162,6 @@ class SequenceBuilderUiSettings:
     latent_links_per_track: int = 3
     recommended_links_highlight: int = 25
     point_color: str = "genre"
-    map_renderer: str = "plotly"
     map_fx: bool = True
     figure_light_mode: bool = False
 
@@ -175,8 +174,6 @@ class SequenceBuilderUiSettings:
             raise ValueError(
                 "ui.point_color must be one of {'genre', 'energy', 'tempo', 'key', 'target', 'energy_residual'}."
             )
-        if self.map_renderer not in {"plotly", "webgl"}:
-            raise ValueError("ui.map_renderer must be one of {'plotly', 'webgl'}.")
         return self
 
     def to_dict(self) -> dict[str, Any]:
@@ -195,7 +192,6 @@ class SequenceBuilderUiSettings:
             "latentLinksPerTrack": "latent_links_per_track",
             "recommendedLinksHighlight": "recommended_links_highlight",
             "pointColor": "point_color",
-            "mapRenderer": "map_renderer",
             "mapFx": "map_fx",
             "figureLightMode": "figure_light_mode",
         }
@@ -203,6 +199,10 @@ class SequenceBuilderUiSettings:
         values: dict[str, Any] = {}
         for key, value in raw_ui.items():
             normalized = aliases.get(str(key), str(key))
+            # WebGL is now the sole map renderer.  Accept old presets without
+            # preserving their renderer choice.
+            if normalized == "map_renderer" or str(key) == "mapRenderer":
+                continue
             if normalized not in allowed:
                 raise ValueError(f"Unknown PaCMAP preset ui key {key!r} in {preset_path}")
             values[normalized] = value

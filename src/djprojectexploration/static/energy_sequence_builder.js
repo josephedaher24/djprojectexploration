@@ -10,7 +10,7 @@
     latent_links_per_track: 3,
     recommended_links_highlight: 25,
     point_color: 'genre',
-    map_renderer: 'plotly',
+    loudness_match_mode: 'auditions_transitions',
     map_fx: true,
     show_score_values: true,
     figure_light_mode: false,
@@ -36,8 +36,10 @@
     sequence: '#fb923c',
     sequenceLine: 'rgba(251, 146, 60, __A__)',
     selectedSlot: '#94a3b8',
+    reference: '#fbbf24',
   };
-  const DEFAULT_TARGET_ENERGY = 5;
+  const DEFAULT_TARGET_ENERGY = null;
+  const PLANNING_HISTORY_LIMIT = 100;
   const configuredRhythmTempoWeight = Number(config.weights && config.weights.rhythm_tempo_weight);
   const RHYTHM_TEMPO_WEIGHT = Number.isFinite(configuredRhythmTempoWeight)
     ? clamp(configuredRhythmTempoWeight, 0, 1)
@@ -102,11 +104,16 @@
     initialRecommendationOrder[j] = tmp;
   }
   let selectedIdx = null;
+  let recommendationReferenceIdx = null;
   let hoveredIdx = null;
   let selectedSlot = null;
   let sequenceLength = Number(config.default_length || 10);
   let sequence = Array.from({ length: sequenceLength }, () => null);
   let targetValues = Array.from({ length: sequenceLength }, () => DEFAULT_TARGET_ENERGY);
+  let planningUndoStack = [];
+  let planningRedoStack = [];
+  let planningEditSnapshot = null;
+  let planningSaveTimer = null;
   let sequenceDragSlot = null;
   let draggingEnergySlot = null;
   let currentPoints = [];
@@ -133,6 +140,43 @@
   let transitionRenderMessage = '';
   let transitionRenderWarn = false;
   let transitionRenderRequestId = 0;
+  let transitionPreviewMode = 'verified';
+  let liveTransition = null;
+  let liveTransitionPending = false;
+  let liveTransitionMessage = '';
+  let liveTransitionError = false;
+  let liveTransitionRequestId = 0;
+  let livePreparationTimer = null;
+  let liveAudioContext = null;
+  let liveMasterGain = null;
+  let liveCompressor = null;
+  let livePlayback = null;
+  let liveTransportPosition = 0;
+  let liveAutomationRescheduleFrame = null;
+  let liveSeekFrame = null;
+  let livePlaybackStartRequestId = 0;
+  let liveSeekPending = null;
+  let liveSeekInFlight = false;
+  let transitionLoopEnabled = true;
+  let liveMixerOpen = true;
+  let liveCrossfader = 0;
+  const LIVE_MIXER_LANES = ['volume', 'eq_low', 'eq_mid', 'eq_high', 'filter', 'delay', 'reverb'];
+  const LIVE_CHANNEL_LANES = ['volume', 'eq_low', 'eq_mid', 'eq_high', 'filter'];
+  const LIVE_FX_LANES = ['delay', 'reverb'];
+  // Rotary controls use relative movement, so their full range takes a
+  // deliberate, encoder-like gesture instead of the knob diameter.
+  const LIVE_KNOB_TRAVEL_PX = 130;
+  const BEAT_JUMP_SIZES = [.125, .25, .5, 1, 2, 4, 8, 16, 32, 64];
+  const transitionBeatJumpSizes = { from: 4, to: 4 };
+  const liveRoughOffsets = { from: 0, to: 0 };
+  const LIVE_AUTOMATION_HORIZON_SECONDS = 12;
+  const LIVE_AUTOMATION_REFRESH_SECONDS = 3;
+  const liveManualOverrides = { from: {}, to: {} };
+  const liveBufferCache = new Map();
+  let sharedAudioContext = null;
+  let sharedAudioSource = null;
+  let sharedAudioLoudnessGain = null;
+  let sharedAudioMasterGain = null;
   let mapTrailSegments = [];
   let mapEffectsFrame = null;
   let previewAudioIdx = null;
@@ -148,6 +192,8 @@
   let transitionScrubDragging = false;
   let transitionSnapToBeat = true;
   let transitionEditorDrag = null;
+  let transitionViewport = null;
+  let transitionReferenceLocked = false;
   let recFilters = { query: '', sameKey: false, bpmRange: '', energyRange: '', excludeUsed: true, genreMode: 'any' };
   let waveformState = { idx: null, url: '', payload: null, loading: false, error: '' };
   const waveformCache = new Map();
@@ -163,24 +209,43 @@
     overlap_bars: 16,
     front_padding_bars: 2,
     back_padding_bars: 2,
+    padding_bars: 2,
     from_nudge_beats: 0,
     to_nudge_beats: 0,
+    from_beatgrid_ms: 0,
+    to_beatgrid_ms: 0,
     from_pitch_shift: 0,
     to_pitch_shift: 0,
     preset: 'auto',
-    volume_mode: 'smooth-crossfade',
+    quality: 'preview',
+    volume_mode: 'overlap-crossfade',
     eq_mode: 'center-bass-swap',
     filter_mode: 'none',
+    effects: {
+      from: { delay_beats: .5, delay_tone: .5, reverb_decay: 1.2, reverb_tone: .5 },
+      to: { delay_beats: .5, delay_tone: .5, reverb_decay: 1.2, reverb_tone: .5 },
+    },
   };
+  let transitionAutomation = null;
+  let transitionAutomationPreset = 'auto';
+  let transitionAutomationActiveLane = null;
+  let transitionAutomationSelectedPoint = null;
+  let transitionAutomationSelectedSegment = null;
+  let transitionAutomationDrag = null;
+  let transitionAutomationHistory = [];
+  let transitionAutomationHistoryIndex = -1;
+  let transitionAutomationSnapTime = 'beat';
+  let transitionAutomationSnapValue = '1';
 
   const els = {
     sequenceLength: document.getElementById('sequence-length'),
     energySource: document.getElementById('energy-source'),
     colorMode: document.getElementById('color-mode'),
-    mapRenderer: document.getElementById('map-renderer'),
     mapEffectsEnabled: document.getElementById('map-effects-enabled'),
     showScoreValues: document.getElementById('show-score-values'),
     figureLightMode: document.getElementById('figure-light-mode'),
+    loudnessMatchSetting: document.getElementById('loudness-match-setting'),
+    loudnessMatchMode: document.getElementById('loudness-match-mode'),
     latentLinksPerTrack: document.getElementById('latent-links-per-track'),
     latentLinksPerTrackVal: document.getElementById('latent-links-per-track-val'),
     recommendedLinksHighlight: document.getElementById('recommended-links-highlight'),
@@ -195,6 +260,7 @@
     weightHarmonyVal: document.getElementById('weight-harmony-val'),
     simplex: document.getElementById('simplex-control'),
     simplexHandle: document.getElementById('simplex-handle'),
+    fullscreenToggle: document.getElementById('fullscreen-toggle'),
     helpToggle: document.getElementById('help-toggle'),
     helpClose: document.getElementById('help-close'),
     helpPopover: document.getElementById('help-popover'),
@@ -225,7 +291,12 @@
     clearTransition: document.getElementById('clear-transition'),
     clearLast: document.getElementById('clear-last'),
     resetSequence: document.getElementById('reset-sequence'),
+    undoPlanning: document.getElementById('undo-planning'),
+    redoPlanning: document.getElementById('redo-planning'),
+    applyEnergyGuides: document.getElementById('apply-energy-guides'),
+    clearEnergyTargets: document.getElementById('clear-energy-targets'),
     downloadSequence: document.getElementById('download-sequence'),
+    planningSaveStatus: document.getElementById('planning-save-status'),
     energyCurve: document.getElementById('energy-curve'),
     sequenceList: document.getElementById('sequence-list'),
     recommendationPanel: document.getElementById('recommendation-panel'),
@@ -272,17 +343,141 @@
 
   function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
   function finiteOr(v, fallback) { const n = Number(v); return Number.isFinite(n) ? n : fallback; }
-  function fmt(v, d=3) { return Number.isFinite(Number(v)) ? Number(v).toFixed(d) : ''; }
+  function hasNumericValue(value) { return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)); }
+  function fmt(v, d=3) { return hasNumericValue(v) ? Number(v).toFixed(d) : ''; }
+  function fmtEnergy(v) { return hasNumericValue(v) ? Number(v).toFixed(1) : '—'; }
+  function planningStorageKey() {
+    const identity = records.map(record => String(record.track_id || record.idx)).join('|');
+    let hash = 2166136261;
+    for (let i = 0; i < identity.length; i += 1) {
+      hash ^= identity.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return 'djprojectexploration.sequence-plan.v1.' + (hash >>> 0).toString(36);
+  }
+  function planningSnapshot() {
+    return {
+      sequenceLength,
+      sequence: sequence.map(value => hasNumericValue(value) ? Number(value) : null),
+      targetValues: targetValues.map(value => hasNumericValue(value) ? normalizeTargetEnergy(value, null) : null),
+      selectedSlot: hasNumericValue(selectedSlot) ? Number(selectedSlot) : null,
+      selectedIdx: hasNumericValue(selectedIdx) ? Number(selectedIdx) : null,
+      recommendationReferenceIdx: hasNumericValue(recommendationReferenceIdx) ? Number(recommendationReferenceIdx) : null,
+      transitionFromIdx: hasNumericValue(transitionFromIdx) ? Number(transitionFromIdx) : null,
+      transitionToIdx: hasNumericValue(transitionToIdx) ? Number(transitionToIdx) : null,
+    };
+  }
+  function samePlanningSnapshot(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+  function normalizePlanningTrack(value, seen) {
+    if (!hasNumericValue(value)) return null;
+    const idx = Number(value);
+    if (!Number.isFinite(idx) || !byIdx.has(idx) || seen.has(idx)) return null;
+    seen.add(idx);
+    return idx;
+  }
+  function applyPlanningSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    const length = clamp(Math.round(Number(snapshot.sequenceLength || sequenceLength)), 2, 40);
+    const seen = new Set();
+    const sourceSequence = Array.isArray(snapshot.sequence) ? snapshot.sequence : [];
+    const sourceTargets = Array.isArray(snapshot.targetValues) ? snapshot.targetValues : [];
+    sequenceLength = length;
+    sequence = Array.from({ length }, (_, slot) => normalizePlanningTrack(sourceSequence[slot], seen));
+    targetValues = Array.from({ length }, (_, slot) => normalizeTargetEnergy(sourceTargets[slot], null));
+    const savedSlot = hasNumericValue(snapshot.selectedSlot) ? Number(snapshot.selectedSlot) : NaN;
+    selectedSlot = Number.isFinite(savedSlot) && savedSlot >= 0 && savedSlot < length ? Math.round(savedSlot) : null;
+    const savedSelected = hasNumericValue(snapshot.selectedIdx) ? Number(snapshot.selectedIdx) : NaN;
+    selectedIdx = Number.isFinite(savedSelected) && byIdx.has(savedSelected) ? savedSelected : null;
+    const savedReference = hasNumericValue(snapshot.recommendationReferenceIdx) ? Number(snapshot.recommendationReferenceIdx) : NaN;
+    recommendationReferenceIdx = Number.isFinite(savedReference) && byIdx.has(savedReference) ? savedReference : selectedIdx;
+    const savedFrom = hasNumericValue(snapshot.transitionFromIdx) ? Number(snapshot.transitionFromIdx) : NaN;
+    const savedTo = hasNumericValue(snapshot.transitionToIdx) ? Number(snapshot.transitionToIdx) : NaN;
+    transitionFromIdx = Number.isFinite(savedFrom) && byIdx.has(savedFrom) ? savedFrom : null;
+    transitionToIdx = Number.isFinite(savedTo) && byIdx.has(savedTo) && savedTo !== transitionFromIdx ? savedTo : null;
+    if (els.sequenceLength) els.sequenceLength.value = String(sequenceLength);
+    return true;
+  }
+  function updatePlanningControls() {
+    if (els.undoPlanning) els.undoPlanning.disabled = planningUndoStack.length === 0;
+    if (els.redoPlanning) els.redoPlanning.disabled = planningRedoStack.length === 0;
+    if (els.applyEnergyGuides) els.applyEnergyGuides.disabled = !targetGuideSlots().some(slot => !hasNumericValue(targetValues[slot]));
+    if (els.clearEnergyTargets) els.clearEnergyTargets.disabled = !targetValues.some(hasNumericValue);
+  }
+  function savePlanningWorkspace() {
+    planningSaveTimer = null;
+    try {
+      window.localStorage.setItem(planningStorageKey(), JSON.stringify(planningSnapshot()));
+      if (els.planningSaveStatus) els.planningSaveStatus.textContent = 'Saved locally';
+    } catch (err) {
+      if (els.planningSaveStatus) els.planningSaveStatus.textContent = 'Local save unavailable';
+    }
+  }
+  function schedulePlanningSave() {
+    if (planningSaveTimer !== null) window.clearTimeout(planningSaveTimer);
+    planningSaveTimer = window.setTimeout(savePlanningWorkspace, 180);
+    if (els.planningSaveStatus) els.planningSaveStatus.textContent = 'Saving…';
+    updatePlanningControls();
+  }
+  function restorePlanningWorkspace() {
+    try {
+      const raw = window.localStorage.getItem(planningStorageKey());
+      if (!raw) return false;
+      return applyPlanningSnapshot(JSON.parse(raw));
+    } catch (err) {
+      return false;
+    }
+  }
+  function commitPlanningChange(before) {
+    const after = planningSnapshot();
+    if (samePlanningSnapshot(before, after)) return false;
+    planningUndoStack.push(before);
+    if (planningUndoStack.length > PLANNING_HISTORY_LIMIT) planningUndoStack.shift();
+    planningRedoStack = [];
+    schedulePlanningSave();
+    return true;
+  }
+  function mutatePlanning(mutator, { render=true } = {}) {
+    const before = planningSnapshot();
+    mutator();
+    const changed = commitPlanningChange(before);
+    if (render) renderAll();
+    return changed;
+  }
+  function undoPlanning() {
+    if (!planningUndoStack.length) return;
+    const current = planningSnapshot();
+    const previous = planningUndoStack.pop();
+    planningRedoStack.push(current);
+    applyPlanningSnapshot(previous);
+    schedulePlanningSave();
+    renderAll();
+    scheduleLivePreparation();
+  }
+  function redoPlanning() {
+    if (!planningRedoStack.length) return;
+    const current = planningSnapshot();
+    const next = planningRedoStack.pop();
+    planningUndoStack.push(current);
+    applyPlanningSnapshot(next);
+    schedulePlanningSave();
+    renderAll();
+  }
   function setRangeProgress(el, value, maxValue) {
     if (!el) return;
+    const min = Number(el.min || 0);
     const max = Number(maxValue || el.max || 0);
-    const pct = max > 0 ? clamp((Number(value) || 0) / max, 0, 1) * 100 : 0;
+    const pct = max > min ? clamp(((Number(value) || 0) - min) / (max - min), 0, 1) * 100 : 0;
     el.style.setProperty('--progress', pct.toFixed(2) + '%');
   }
   function applyMasterVolume() {
     masterVolume = clamp(Number(masterVolume), 0, 1);
     if (masterVolume > 0.001) lastNonzeroVolume = masterVolume;
-    if (els.audio) els.audio.volume = masterVolume;
+    if (els.audio) els.audio.volume = sharedAudioMasterGain ? 1 : masterVolume;
+    if (sharedAudioMasterGain && sharedAudioContext) {
+      const now = sharedAudioContext.currentTime;
+      sharedAudioMasterGain.gain.cancelScheduledValues(now);
+      sharedAudioMasterGain.gain.setTargetAtTime(masterVolume, now, .01);
+    }
     const transitionAudio = transitionAudioElement();
     if (transitionAudio) transitionAudio.volume = masterVolume;
     if (els.globalVolume) {
@@ -297,6 +492,33 @@
       els.globalVolumeButton.setAttribute('title', muted ? 'Unmute' : 'Mute');
       els.globalVolumeButton.classList.toggle('is-muted', muted);
     }
+  }
+  function ensureSharedAudioLoudnessGraph() {
+    if (!els.audio || sharedAudioLoudnessGain) return sharedAudioLoudnessGain;
+    const Constructor = window.AudioContext || window.webkitAudioContext;
+    if (!Constructor) return null;
+    sharedAudioContext = new Constructor();
+    sharedAudioSource = sharedAudioContext.createMediaElementSource(els.audio);
+    sharedAudioLoudnessGain = sharedAudioContext.createGain();
+    sharedAudioMasterGain = sharedAudioContext.createGain();
+    sharedAudioSource.connect(sharedAudioLoudnessGain);
+    sharedAudioLoudnessGain.connect(sharedAudioMasterGain);
+    sharedAudioMasterGain.connect(sharedAudioContext.destination);
+    applyMasterVolume();
+    return sharedAudioLoudnessGain;
+  }
+  function applySharedAudioLoudness({ smooth=true } = {}) {
+    if (!els.audio) return;
+    const record = previewAudioIdx === null ? null : byIdx.get(Number(previewAudioIdx));
+    const target = loudnessGainLinear(record, 'audition');
+    if (target === 1 && !sharedAudioLoudnessGain) return;
+    const gain = ensureSharedAudioLoudnessGraph();
+    if (!gain || !sharedAudioContext) return;
+    const now = sharedAudioContext.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setTargetAtTime(target, now, smooth ? .018 : .001);
+    const resume = sharedAudioContext.resume();
+    if (resume && resume.catch) resume.catch(() => {});
   }
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -328,6 +550,52 @@
     if (!appSettings.current) appSettings.current = {};
     appSettings.current[key] = value;
   }
+  const LOUDNESS_MATCH_MODES = ['off', 'auditions', 'auditions_transitions'];
+  const LOUDNESS_TARGET_LUFS = -12;
+  const LOUDNESS_MAX_GAIN_DB = 6;
+  function loudnessMatchMode() {
+    if (!config.app_mode) return 'off';
+    const mode = String(appSetting('loudness_match_mode', 'auditions_transitions'));
+    return LOUDNESS_MATCH_MODES.includes(mode) ? mode : 'auditions_transitions';
+  }
+  function loudnessMatchingEnabled(scope='audition') {
+    const mode = loudnessMatchMode();
+    return mode === 'auditions_transitions' || (scope === 'audition' && mode === 'auditions');
+  }
+  function loudnessInfo(record) {
+    record = canonicalRecord(record);
+    const info = record && record.loudness && typeof record.loudness === 'object' ? record.loudness : {};
+    const integrated = Number(info.integrated_lufs);
+    const shortTermMean = Number(info.short_term_mean_lufs);
+    const shortTermStd = Number(info.short_term_std_lu);
+    const shortTermRange = Number(info.short_term_range_lu);
+    return {
+      integrated: Number.isFinite(integrated) ? integrated : null,
+      shortTermMean: Number.isFinite(shortTermMean) ? shortTermMean : null,
+      shortTermStd: Number.isFinite(shortTermStd) ? shortTermStd : null,
+      shortTermRange: Number.isFinite(shortTermRange) ? shortTermRange : null,
+    };
+  }
+  function loudnessGainDb(record, scope='audition') {
+    const info = loudnessInfo(record);
+    if (!loudnessMatchingEnabled(scope) || info.integrated === null) return 0;
+    return clamp(LOUDNESS_TARGET_LUFS - info.integrated, -LOUDNESS_MAX_GAIN_DB, LOUDNESS_MAX_GAIN_DB);
+  }
+  function loudnessGainLinear(record, scope='audition') {
+    return Math.pow(10, loudnessGainDb(record, scope) / 20);
+  }
+  function loudnessMetaHtml(record, scope='audition') {
+    const info = loudnessInfo(record);
+    if (info.integrated === null) return '<span class="loudness-meta muted">Loudness unavailable</span>';
+    const gain = loudnessGainDb(record, scope);
+    const details = [
+      'Integrated ' + info.integrated.toFixed(1) + ' LUFS',
+      info.shortTermMean === null ? '' : 'short-term mean ' + info.shortTermMean.toFixed(1) + ' LUFS',
+      info.shortTermStd === null ? '' : 'short-term variation ' + info.shortTermStd.toFixed(1) + ' LU',
+      info.shortTermRange === null ? '' : 'short-term range ' + info.shortTermRange.toFixed(1) + ' LU',
+    ].filter(Boolean).join(' · ');
+    return '<span class="loudness-meta" title="' + esc(details) + '">Loudness ' + esc(info.integrated.toFixed(1)) + ' LUFS · match ' + esc(signedFmt(gain, 1)) + ' dB <span aria-hidden="true">ⓘ</span></span>';
+  }
   function currentUiSettingsRows() {
     const row = (label, value) => [label, value];
     return [
@@ -336,18 +604,21 @@
       row('Sequence length', sequenceLength),
       row('Energy source', els.energySource ? els.energySource.value : ''),
       row('Point color', appSetting('point_color', 'genre')),
-      row('Map renderer', selectedMapRenderer()),
       row('Map effects', Boolean(appSetting('map_fx', true))),
       row('Figure light mode', figureLightMode()),
+      row('Loudness match', titleCaseOption(loudnessMatchMode())),
       row('Latent links per track', appSetting('latent_links_per_track', 3)),
       row('Recommended links highlighted', appSetting('recommended_links_highlight', 25)),
       row('Show recommendation scores', Boolean(appSetting('show_score_values', true))),
       row('Energy penalty scale', els.penaltyScale ? Number(els.penaltyScale.value) : null),
       row('Current weights', weights()),
-      row('Preview preset', previewFormState.preset),
-      row('Preview volume mode', previewFormState.volume_mode),
-      row('Preview EQ mode', previewFormState.eq_mode),
-      row('Preview filter mode', previewFormState.filter_mode),
+      row('Preview preset', titleCaseOption(previewFormState.preset)),
+      row('Preview quality', previewFormState.quality),
+      row('Track 1 beatgrid offset (ms)', previewFormState.from_beatgrid_ms),
+      row('Track 2 beatgrid offset (ms)', previewFormState.to_beatgrid_ms),
+      row('Preview volume mode', titleCaseOption(previewFormState.volume_mode)),
+      row('Preview Low EQ mode', titleCaseOption(previewFormState.eq_mode)),
+      row('Preview filter mode', titleCaseOption(previewFormState.filter_mode)),
     ];
   }
   function renderSettingsPanel() {
@@ -413,6 +684,10 @@
         helpKeyHtml('hover', 'Show preview without changing selection.'),
         helpKeyHtml('Esc', 'Close open panels.'),
       ]) +
+      helpCardHtml('Fullscreen', [
+        helpKeyHtml('F', 'Toggle app fullscreen.'),
+        helpKeyHtml('F11', 'Toggle fullscreen when the browser allows the shortcut.'),
+      ]) +
       helpCardHtml('Sequence workflow', [
         helpKeyHtml('+ button', 'Append or replace with the current candidate.'),
         helpKeyHtml('Track 1', 'Locked source for recommendations and transition scoring.'),
@@ -446,6 +721,33 @@
   }
   function toggleHelpPanel() {
     setHelpPanelOpen(!els.helpPopover || els.helpPopover.classList.contains('hidden'));
+  }
+  function isFullscreenActive() {
+    return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+  function syncFullscreenToggle() {
+    if (!els.fullscreenToggle) return;
+    const active = isFullscreenActive();
+    els.fullscreenToggle.textContent = active ? '⤡' : '⛶';
+    els.fullscreenToggle.setAttribute('aria-label', active ? 'Exit fullscreen' : 'Enter fullscreen');
+    els.fullscreenToggle.setAttribute('aria-pressed', active ? 'true' : 'false');
+    els.fullscreenToggle.title = (active ? 'Exit' : 'Enter') + ' fullscreen (F)';
+  }
+  async function toggleFullscreen() {
+    try {
+      if (isFullscreenActive()) {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (!exit) throw new Error('Fullscreen exit is unavailable in this browser.');
+        await exit.call(document);
+      } else {
+        const root = document.documentElement;
+        const request = root.requestFullscreen || root.webkitRequestFullscreen;
+        if (!request) throw new Error('Fullscreen is unavailable in this browser.');
+        await request.call(root);
+      }
+    } catch (error) {
+      console.error('fullscreen toggle:', error);
+    }
   }
   function setSettingsPanelOpen(open) {
     if (!els.settingsPopover || !els.settingsToggle) return;
@@ -504,29 +806,8 @@
     safeUi('map effects theme redraw', ensureMapEffectsLoop);
     if (renderEnergy && activePane === 'explore') safeUi('energy curve render', renderEnergyCurve);
   }
-  function selectedMapRenderer() {
-    const raw = String(appSetting('map_renderer', els.mapRenderer ? els.mapRenderer.value : 'plotly')).toLowerCase();
-    return raw === 'webgl' ? 'webgl' : 'plotly';
-  }
-  function wantsWebglMap() {
-    return selectedMapRenderer() === 'webgl';
-  }
   function usingWebglMap() {
-    return wantsWebglMap() && webglMap && webglMap.available();
-  }
-  function fallbackToPlotlyMap(reason) {
-    if (reason) reportUiError('webgl map fallback', reason);
-    setAppSetting('map_renderer', 'plotly');
-    if (els.mapRenderer) els.mapRenderer.value = 'plotly';
-    const pane = plotPaneEl();
-    if (pane) pane.classList.remove('map-renderer-webgl');
-    webglMap = null;
-    if (window.Plotly && plot) {
-      setTimeout(() => Plotly.Plots.resize(plot), 20);
-    }
-  }
-  function plotPaneEl() {
-    return els.webglMap ? els.webglMap.closest('.plot-pane') : document.querySelector('.plot-pane');
+    return Boolean(webglMap && webglMap.available());
   }
   function cssColorToRgba(value, alpha=1) {
     const fallback = [0.58, 0.64, 0.72, alpha];
@@ -871,34 +1152,26 @@
     };
   }
   function syncMapRenderer({ render=true } = {}) {
-    const mode = selectedMapRenderer();
-    if (els.mapRenderer && els.mapRenderer.value !== mode) els.mapRenderer.value = mode;
-    const pane = plotPaneEl();
-    if (mode === 'webgl') {
-      if (!webglMap) {
-        try {
-          webglMap = createWebglMapRenderer(els.webglMap);
-        } catch (err) {
-          reportUiError('webgl map init', err);
-          webglMap = null;
-        }
+    if (!webglMap) {
+      try {
+        webglMap = createWebglMapRenderer(els.webglMap);
+      } catch (err) {
+        reportUiError('webgl map init', err);
+        webglMap = null;
       }
-      if (webglMap && webglMap.available()) {
-        if (pane) pane.classList.add('map-renderer-webgl');
-        try {
-          if (!webglMap.viewRanges()) webglMap.fitBounds();
-          if (render) webglMap.render();
-          return 'webgl';
-        } catch (err) {
-          fallbackToPlotlyMap(err);
-          return 'plotly';
-        }
-      }
-      fallbackToPlotlyMap('WebGL is unavailable in this browser.');
-      return 'plotly';
     }
-    if (pane) pane.classList.remove('map-renderer-webgl');
-    return 'plotly';
+    if (!webglMap || !webglMap.available()) {
+      reportUiError('webgl map init', 'WebGL is unavailable in this browser.');
+      return false;
+    }
+    try {
+      if (!webglMap.viewRanges()) webglMap.fitBounds();
+      if (render) webglMap.render();
+      return true;
+    } catch (err) {
+      reportUiError('webgl map render', err);
+      return false;
+    }
   }
   function durationText(record) {
     if (!record) return '';
@@ -939,6 +1212,33 @@
     if (!key || key.toLowerCase() === 'nan') return '';
     const canonical = camelotCanonicalName(key);
     return canonical ? key.toUpperCase() + ' (' + canonical + ')' : key;
+  }
+  function shiftCamelotKey(value, semitones=0) {
+    const match = String(value || '').trim().toUpperCase().match(/^(\d{1,2})([AB])$/);
+    if (!match) return String(value || '').trim().toUpperCase();
+    const number = Number(match[1]);
+    if (!Number.isFinite(number) || number < 1 || number > 12) return String(value || '').trim().toUpperCase();
+    // Match the backend renderer: a chromatic semitone moves seven Camelot
+    // positions around the wheel while retaining major/minor mode.
+    const shifted = ((number - 1 + (7 * Math.round(Number(semitones) || 0))) % 12 + 12) % 12 + 1;
+    return String(shifted) + match[2];
+  }
+  function transitionDeckKeyHtml(record, pitchShift) {
+    const shiftedKey = shiftCamelotKey(record && record.key, pitchShift);
+    if (!shiftedKey) return '';
+    const shift = Math.round(Number(pitchShift) || 0);
+    return keyHtml(shiftedKey) + (shift ? ' <span class="transition-key-shift">(' + esc((shift > 0 ? '+' : '') + shift) + ')</span>' : '');
+  }
+  function transitionDeckMetaHtml(record, pitchShift) {
+    record = canonicalRecord(record);
+    if (!record) return '';
+    return [
+      esc(rawGenre(record)),
+      transitionDeckKeyHtml(record, pitchShift),
+      esc(roundedBpm(record)),
+      energyMetaHtml(record, null, false),
+      esc(durationText(record)),
+    ].filter(Boolean).join(' &sdot; ');
   }
   function genreMarkerColor(value) {
     const mapped = baseTraceGenreColors.get(String(value || ''));
@@ -995,7 +1295,7 @@
   function targetEnergyResidualForSlot(record, slot) {
     const slotNumber = Number(slot);
     if (!Number.isFinite(slotNumber) || slotNumber < 0) return NaN;
-    const target = targetCurve()[slotNumber] ?? 5;
+    const target = targetForSlot(slotNumber);
     const value = energyOf(record);
     return Number.isFinite(value) && Number.isFinite(target) ? value - target : NaN;
   }
@@ -1106,11 +1406,11 @@
     if (!Number.isFinite(value)) return '';
     const resolvedSlot = relevantResidualSlot(record, slot);
     const residual = showResidual ? targetEnergyResidualForSlot(record, resolvedSlot) : NaN;
-    const energy = '<span class="track-energy" style="color:' + esc(energyTextColor(value)) + '">' + esc(fmt(value, 2)) + '</span>';
+    const energy = '<span class="track-energy" style="color:' + esc(energyTextColor(value)) + '">' + esc(fmtEnergy(value)) + '</span>';
     if (!Number.isFinite(residual)) return energy;
     const extent = targetEnergyResidualExtentForSlot(resolvedSlot);
     const maxAbs = Math.max(Math.abs(Number(extent.min) || 0), Math.abs(Number(extent.max) || 0), 1);
-    return energy + ' <span class="track-energy-residual" style="color:' + esc(twoSidedResidualColor(residual, maxAbs)) + '">(' + esc(signedFmt(residual, 2)) + ')</span>';
+    return energy + ' <span class="track-energy-residual" style="color:' + esc(twoSidedResidualColor(residual, maxAbs)) + '">(' + esc(signedFmt(residual, 1)) + ')</span>';
   }
   function trackMetaHtml(record, { slot=null, showEnergy=true, showResidual=true } = {}) {
     record = canonicalRecord(record);
@@ -1130,7 +1430,8 @@
     const body =
       '<div class="track-title">' + esc(record.title) + '</div>' +
       '<div class="track-artist muted">' + esc(record.artists) + '</div>' +
-      '<div class="track-meta-line muted">' + trackMetaHtml(record, { slot, showEnergy, showResidual }) + '</div>';
+      '<div class="track-meta-line muted">' + trackMetaHtml(record, { slot, showEnergy, showResidual }) + '</div>' +
+      (size === 'large' ? '<div class="track-loudness-line">' + loudnessMetaHtml(record) + '</div>' : '');
     if (!showArt) return body;
     return '<div class="track-summary ' + esc(size) + '">' + artworkHtml(record) + '<div>' + body + '</div></div>';
   }
@@ -1148,12 +1449,24 @@
     return record ? String(record.track_id || (record.mix_slug + ':' + record.track_number)) : '';
   }
   function resetTransitionRenderState() {
+    stopLiveAudition({ clear: true });
     transitionRender = null;
     transitionRenderedState = null;
     transitionRenderPending = false;
     transitionRenderMessage = '';
     transitionRenderWarn = false;
     transitionRenderRequestId += 1;
+    transitionViewport = null;
+  }
+  function resetTransitionAutomationState() {
+    transitionAutomation = null;
+    transitionAutomationActiveLane = null;
+    transitionAutomationSelectedPoint = null;
+    transitionAutomationSelectedSegment = null;
+    transitionAutomationDrag = null;
+    transitionAutomationHistory = [];
+    transitionAutomationHistoryIndex = -1;
+    previewFormState.automation = null;
   }
   function appTrack(record) {
     const id = trackId(record);
@@ -1178,11 +1491,59 @@
   function numericInput(id, label, value, min, max, step) {
     return '<label>' + esc(label) + '<input id="' + id + '" data-preview-field="' + id + '" type="number" min="' + min + '" max="' + max + '" step="' + step + '" value="' + esc(value) + '"></label>';
   }
+  const TRANSITION_TIMING_STEPS = {
+    overlap_bars: [1, 2, 4, 8, 16, 32, 48, 64],
+    front_padding_bars: [0, 1, 2, 4, 8, 16],
+    back_padding_bars: [0, 1, 2, 4, 8, 16],
+    padding_bars: [0, 1, 2, 4, 8, 16],
+  };
+  function nearestTransitionTimingValue(field, value) {
+    const choices = TRANSITION_TIMING_STEPS[field];
+    if (!choices) return Number(value) || 0;
+    const target = Number(value);
+    if (!Number.isFinite(target)) return choices[0];
+    return choices.reduce((best, choice) => Math.abs(choice - target) < Math.abs(best - target) ? choice : best, choices[0]);
+  }
+  function steppedTimingInput(id, label, value) {
+    const choices = TRANSITION_TIMING_STEPS[id];
+    const normalized = nearestTransitionTimingValue(id, value);
+    return '<label class="preview-step-label">' + esc(label) + '<span class="preview-step-input">' +
+      '<button type="button" data-preview-step="' + esc(id) + ':-1" aria-label="Decrease ' + esc(label) + '">−</button>' +
+      '<input id="' + esc(id) + '" data-preview-field="' + esc(id) + '" type="number" min="' + choices[0] + '" max="' + choices[choices.length - 1] + '" step="1" value="' + esc(normalized) + '">' +
+      '<button type="button" data-preview-step="' + esc(id) + ':1" aria-label="Increase ' + esc(label) + '">+</button></span></label>';
+  }
+  function setTransitionPadding(value) {
+    const next = nearestTransitionTimingValue('padding_bars', value);
+    const changed = next !== Number(previewFormState.front_padding_bars) || next !== Number(previewFormState.back_padding_bars);
+    previewFormState.padding_bars = next;
+    previewFormState.front_padding_bars = next;
+    previewFormState.back_padding_bars = next;
+    syncPreviewFieldElements('padding_bars', next);
+    // Padding changes the visible Front → overlap → Back timeline itself.
+    // Reset any zoomed shared viewport so the newly added/removed context is
+    // immediately reflected in both deck waveforms and the transport bounds.
+    if (changed) transitionViewport = null;
+    updatePreviewEffectDisplay({ dirty: true });
+  }
+  function stepTransitionTimingField(field, direction) {
+    const choices = TRANSITION_TIMING_STEPS[field];
+    if (!choices) return;
+    const current = nearestTransitionTimingValue(field, previewFormState[field]);
+    const index = Math.max(0, choices.indexOf(current));
+    const next = choices[clamp(index + Math.sign(Number(direction) || 0), 0, choices.length - 1)];
+    if (field === 'padding_bars') { setTransitionPadding(next); return; }
+    previewFormState[field] = next;
+    syncPreviewFieldElements(field, next);
+    updatePreviewEffectDisplay({ dirty: true });
+  }
   function selectInput(id, label, values, selectedValue, labelFn) {
     const labels = labelFn || (v => v);
     return '<label>' + esc(label) + '<select id="' + id + '" data-preview-field="' + id + '">' +
       values.map(v => optionHtml(v, labels(v), selectedValue)).join('') +
       '</select></label>';
+  }
+  function titleCaseOption(value) {
+    return String(value == null ? '' : value).replace(/[-_]+/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
   }
   function cueOptions(record, role, selectedValue) {
     const track = appTrack(record);
@@ -1241,6 +1602,7 @@
       role: isFrom ? 'out' : 'in',
       cueField: isFrom ? 'from_cue' : 'to_cue',
       nudgeField: isFrom ? 'from_nudge_beats' : 'to_nudge_beats',
+      beatgridField: isFrom ? 'from_beatgrid_ms' : 'to_beatgrid_ms',
       record: isFrom ? (transitionFromIdx === null ? null : byIdx.get(transitionFromIdx)) : (transitionToIdx === null ? null : byIdx.get(transitionToIdx)),
       color: isFrom ? roleColors.track1 : roleColors.track2,
     };
@@ -1260,7 +1622,8 @@
     const cueSeconds = Number(cue && cue.start_seconds);
     const anchor = Number.isFinite(cueSeconds) ? cueSeconds : previewStart(record);
     const nudgeBeats = Number(previewFormState[cfg.nudgeField]) || 0;
-    const transitionStart = anchor + (nudgeBeats * beatSec);
+    const beatgridMs = Math.round((Number(previewFormState[cfg.beatgridField]) || 0) / 5) * 5;
+    const transitionStart = anchor + (nudgeBeats * beatSec) + (beatgridMs / 1000);
     const contextStart = transitionStart - (frontBars * beatsPerBar * beatSec);
     const duration = Math.max(beatSec, totalBars * beatsPerBar * beatSec);
     const trackDuration = Math.max(beatSec, Number(record.duration_seconds) || audioDuration(record) || duration);
@@ -1277,6 +1640,7 @@
       cue,
       anchor,
       nudgeBeats,
+      beatgridMs,
       transitionStart,
       transitionEnd: transitionStart + (overlapBars * beatsPerBar * beatSec),
       contextStart,
@@ -1298,15 +1662,245 @@
     if (!Number.isFinite(n)) return 0;
     const info = transitionWindowInfo(deck);
     const bounds = transitionNudgeBounds(info);
-    return clamp(n, bounds.min, bounds.max);
+    // Serato-style jump sizes go down to one eighth of a beat. Keep the
+    // alignment model at that precision rather than silently rounding jumps.
+    return Math.round(clamp(n, bounds.min, bounds.max) * 8) / 8;
+  }
+  function resetDeckAlignment(deck) {
+    const cfg = transitionDeckConfig(deck);
+    previewFormState[cfg.nudgeField] = 0;
+    previewFormState[cfg.beatgridField] = 0;
+  }
+  function resetBothDeckAlignments() {
+    resetDeckAlignment('from');
+    resetDeckAlignment('to');
+    syncPreviewFieldElements('from_nudge_beats', 0);
+    syncPreviewFieldElements('to_nudge_beats', 0);
+    syncPreviewFieldElements('from_beatgrid_ms', 0);
+    syncPreviewFieldElements('to_beatgrid_ms', 0);
+    updatePreviewEffectDisplay({ dirty: true });
+    schedulePlanningSave();
   }
   function presetDetails(name) {
     return (appOptions && appOptions.preset_details && appOptions.preset_details[name]) || {};
   }
+  function transitionAutomationBeats() {
+    return Math.max(1, Number(previewFormState.overlap_bars) || 1) * 4;
+  }
+  function automationLaneLimits(lane) {
+    if (lane === 'volume') return [-96, 6];
+    if (lane === 'filter') return [-1, 1];
+    if (lane === 'delay' || lane === 'reverb') return [0, 1];
+    return [-96, 6];
+  }
+  // A compact, invertible DAW-style fader response. Values remain dB in the
+  // payload; the editor and renderer interpolate their positions on this
+  // smooth fader curve instead of directly in dB.
+  const AUTOMATION_DAW_SCALE = [[0, -96], [.25, -30], [.5, -13], [.85, 0], [1, 6]];
+  function usesDawAutomationScale(lane) {
+    return lane === 'volume' || String(lane || '').startsWith('eq_');
+  }
+  function dawFaderSlopes() {
+    const positions = AUTOMATION_DAW_SCALE.map(point => point[0]);
+    const values = AUTOMATION_DAW_SCALE.map(point => point[1]);
+    const deltas = positions.slice(1).map((position, index) => (values[index + 1] - values[index]) / (position - positions[index]));
+    return positions.map((position, index) => {
+      if (index === 0) return deltas[0];
+      if (index === positions.length - 1) return deltas[deltas.length - 1];
+      const left = deltas[index - 1], right = deltas[index];
+      if (left * right <= 0) return 0;
+      const leftWidth = positions[index] - positions[index - 1];
+      const rightWidth = positions[index + 1] - positions[index];
+      const firstWeight = (2 * rightWidth) + leftWidth;
+      const secondWeight = rightWidth + (2 * leftWidth);
+      return (firstWeight + secondWeight) / ((firstWeight / left) + (secondWeight / right));
+    });
+  }
+  const AUTOMATION_DAW_SLOPES = dawFaderSlopes();
+  function dawFaderValue(position) {
+    const p = clamp(Number(position) || 0, 0, 1);
+    let index = AUTOMATION_DAW_SCALE.length - 2;
+    for (let i = 1; i < AUTOMATION_DAW_SCALE.length; i += 1) {
+      if (p <= AUTOMATION_DAW_SCALE[i][0] || i === AUTOMATION_DAW_SCALE.length - 1) { index = i - 1; break; }
+    }
+    const [x0, y0] = AUTOMATION_DAW_SCALE[index];
+    const [x1, y1] = AUTOMATION_DAW_SCALE[index + 1];
+    const width = x1 - x0;
+    const t = (p - x0) / width;
+    const t2 = t * t, t3 = t2 * t;
+    return ((2 * t3 - 3 * t2 + 1) * y0)
+      + ((t3 - 2 * t2 + t) * width * AUTOMATION_DAW_SLOPES[index])
+      + ((-2 * t3 + 3 * t2) * y1)
+      + ((t3 - t2) * width * AUTOMATION_DAW_SLOPES[index + 1]);
+  }
+  function dawFaderPosition(value) {
+    const target = clamp(Number(value) || 0, -96, 6);
+    if (target <= -96) return 0;
+    if (target >= 6) return 1;
+    let low = 0, high = 1;
+    for (let i = 0; i < 28; i += 1) {
+      const middle = (low + high) * .5;
+      if (dawFaderValue(middle) < target) low = middle;
+      else high = middle;
+    }
+    return (low + high) * .5;
+  }
+  function automationScalePosition(lane, value) {
+    if (!usesDawAutomationScale(lane)) {
+      const limits = automationLaneLimits(lane);
+      return clamp((Number(value) - limits[0]) / Math.max(.000001, limits[1] - limits[0]), 0, 1);
+    }
+    return dawFaderPosition(value);
+  }
+  function automationValueFromScalePosition(lane, position) {
+    if (!usesDawAutomationScale(lane)) {
+      const limits = automationLaneLimits(lane);
+      return limits[0] + (clamp(position, 0, 1) * (limits[1] - limits[0]));
+    }
+    return dawFaderValue(position);
+  }
+  function cloneAutomation(value) {
+    return value ? JSON.parse(JSON.stringify(value)) : null;
+  }
+  function automationLane(deck, lane) {
+    return transitionAutomation && transitionAutomation[deck] && transitionAutomation[deck][lane];
+  }
+  function automationPoint(beat, value, curve='linear') {
+    return { beat: Number(beat), value: Number(value), curve };
+  }
+  function presetAutomationTemplate(name) {
+    const total = transitionAutomationBeats();
+    const preset = presetDetails(name);
+    const volumeMode = preset.volume_mode || previewFormState.volume_mode || 'overlap-crossfade';
+    const eqMode = preset.eq_mode || previewFormState.eq_mode || 'none';
+    const filterMode = preset.filter_mode || previewFormState.filter_mode || 'none';
+    const blank = () => [automationPoint(0, 0), automationPoint(total, 0)];
+    const defaultVolume = () => [automationPoint(0, 0), automationPoint(total, 0)];
+    const output = { from: {}, to: {} };
+    ['from', 'to'].forEach(deck => {
+      output[deck].volume = defaultVolume();
+      output[deck].eq_low = blank();
+      output[deck].eq_mid = blank();
+      output[deck].eq_high = blank();
+      output[deck].filter = blank();
+      output[deck].delay = blank();
+      output[deck].reverb = blank();
+    });
+    const fromFade = [automationPoint(0, 0, 'smooth'), automationPoint(total, -60, 'smooth')];
+    const toFade = [automationPoint(0, -60, 'smooth'), automationPoint(total, 0, 'smooth')];
+    if (volumeMode === 'overlap-crossfade') {
+      output.from.volume = [automationPoint(0, 0, 'smooth'), automationPoint(total, -6, 'smooth')];
+      output.to.volume = [automationPoint(0, -6, 'smooth'), automationPoint(total, 0, 'smooth')];
+    } else if (volumeMode !== 'overlap') {
+      output.from.volume = fromFade;
+      output.to.volume = toFade;
+    }
+    if (volumeMode === 'center-cut') {
+      const before = Math.max(0, total / 2 - 0.01);
+      const after = Math.min(total, total / 2 + 0.01);
+      output.from.volume = [automationPoint(0, 0), automationPoint(before, 0), automationPoint(after, -60), automationPoint(total, -60)];
+      output.to.volume = [automationPoint(0, -60), automationPoint(before, -60), automationPoint(after, 0), automationPoint(total, 0)];
+    } else if (volumeMode === 'fade-in-fade-out') {
+      output.from.volume = [automationPoint(0, 0), automationPoint(total / 2, 0), automationPoint(total, -60)];
+      output.to.volume = [automationPoint(0, -60), automationPoint(total / 2, 0), automationPoint(total, 0)];
+    } else if (volumeMode === 'cut-in-fade-out') {
+      output.from.volume = [automationPoint(0, 0), automationPoint(total / 2, 0), automationPoint(total, -60)];
+      output.to.volume = defaultVolume();
+    } else if (volumeMode === 'fade-in-cut-out') {
+      output.from.volume = defaultVolume();
+      output.to.volume = [automationPoint(0, -60), automationPoint(total / 2, 0), automationPoint(total, 0)];
+    }
+    if (eqMode === 'start-bass-swap') output.from.eq_low = [automationPoint(0, -96), automationPoint(total, -96)];
+    if (eqMode === 'end-bass-swap') output.to.eq_low = [automationPoint(0, -96), automationPoint(total, -96)];
+    if (eqMode === 'center-bass-swap') {
+      const center = total / 2;
+      output.from.eq_low = [automationPoint(0, 0), automationPoint(center, 0), automationPoint(center, -96), automationPoint(total, -96)];
+      output.to.eq_low = [automationPoint(0, -96), automationPoint(center, -96), automationPoint(center, 0), automationPoint(total, 0)];
+    }
+    if (eqMode === 'long-bass-cut') ['from', 'to'].forEach(deck => { output[deck].eq_low = [automationPoint(0, -96), automationPoint(total, -96)]; });
+    if (filterMode === 'low-pass-filter-out') output.from.filter = [automationPoint(0, 0), automationPoint(total, -1, 'smooth')];
+    if (filterMode === 'low-pass-filter-in') output.to.filter = [automationPoint(0, -1), automationPoint(total, 0, 'smooth')];
+    if (filterMode === 'high-pass-filter-out') output.from.filter = [automationPoint(0, 0), automationPoint(total, 1, 'smooth')];
+    if (filterMode === 'high-pass-filter-in') output.to.filter = [automationPoint(0, 1), automationPoint(total, 0, 'smooth')];
+    return output;
+  }
+  function normalizeAutomationPoints(points, lane) {
+    const total = transitionAutomationBeats();
+    const limits = automationLaneLimits(lane);
+    const clean = (Array.isArray(points) ? points : []).map((point, order) => ({
+      beat: clamp(Number(point.beat) || 0, 0, total),
+      value: clamp(Number(point.value) || 0, limits[0], limits[1]),
+      curve: ['linear', 'smooth', 'exponential'].includes(point.curve) ? point.curve : 'linear',
+      order,
+    })).sort((a, b) => a.beat - b.beat || a.order - b.order);
+    const normalized = [];
+    for (let start = 0; start < clean.length;) {
+      const beat = clean[start].beat;
+      let end = start + 1;
+      while (end < clean.length && Math.abs(clean[end].beat - beat) < .000001) end += 1;
+      const group = clean.slice(start, end);
+      if (group.length > 2) normalized.push(group[0], group[group.length - 1]);
+      else normalized.push(...group);
+      start = end;
+    }
+    if (normalized.length < 2) return [automationPoint(0, 0), automationPoint(total, 0)];
+    while (normalized.length > 2 && Math.abs(normalized[0].beat) < .000001 && Math.abs(normalized[1].beat) < .000001) normalized.splice(0, 1);
+    while (normalized.length > 2 && Math.abs(normalized[normalized.length - 1].beat - total) < .000001 && Math.abs(normalized[normalized.length - 2].beat - total) < .000001) normalized.splice(normalized.length - 1, 1);
+    normalized[0].beat = 0;
+    normalized[normalized.length - 1].beat = total;
+    return normalized.map(({ order, ...point }) => point);
+  }
+  function ensureTransitionAutomation({ reset=false } = {}) {
+    if (reset || !transitionAutomation) {
+      transitionAutomation = presetAutomationTemplate(transitionAutomationPreset || previewFormState.preset || 'auto');
+      previewFormState.automation = transitionAutomation;
+      return transitionAutomation;
+    }
+    ['from', 'to'].forEach(deck => LIVE_MIXER_LANES.forEach(lane => {
+      transitionAutomation[deck][lane] = normalizeAutomationPoints(transitionAutomation[deck][lane], lane);
+    }));
+    previewFormState.automation = transitionAutomation;
+    return transitionAutomation;
+  }
+  function snapshotTransitionAutomation({ resetHistory=false } = {}) {
+    const snapshot = cloneAutomation(ensureTransitionAutomation());
+    if (resetHistory) {
+      transitionAutomationHistory = [snapshot];
+      transitionAutomationHistoryIndex = 0;
+      return;
+    }
+    transitionAutomationHistory = transitionAutomationHistory.slice(0, transitionAutomationHistoryIndex + 1);
+    transitionAutomationHistory.push(snapshot);
+    if (transitionAutomationHistory.length > 50) transitionAutomationHistory.shift();
+    transitionAutomationHistoryIndex = transitionAutomationHistory.length - 1;
+  }
+  function markTransitionAutomationEdited({ history=true } = {}) {
+    ensureTransitionAutomation();
+    if (previewFormState.preset !== 'custom') {
+      previewFormState.preset = 'custom';
+      const presetEl = document.getElementById('preset');
+      if (presetEl) presetEl.value = 'custom';
+    }
+    if (history) snapshotTransitionAutomation();
+    if (livePlayback) requestLiveAutomationReschedule();
+    updatePreviewEffectDisplay({ dirty: true });
+  }
+  function restoreTransitionAutomationHistory(delta) {
+    const next = clamp(transitionAutomationHistoryIndex + delta, 0, transitionAutomationHistory.length - 1);
+    if (next === transitionAutomationHistoryIndex || !transitionAutomationHistory[next]) return;
+    transitionAutomationHistoryIndex = next;
+    transitionAutomation = cloneAutomation(transitionAutomationHistory[next]);
+    previewFormState.automation = transitionAutomation;
+    previewFormState.preset = 'custom';
+    transitionAutomationSelectedPoint = null;
+    transitionAutomationSelectedSegment = null;
+    if (livePlayback) requestLiveAutomationReschedule();
+    updatePreviewEffectDisplay({ dirty: true });
+  }
   function applyPresetToPreviewState(name) {
     previewFormState.preset = name || 'auto';
     const preset = presetDetails(previewFormState.preset);
-    previewFormState.volume_mode = preset.volume_mode || previewFormState.volume_mode || 'crossfade';
+    previewFormState.volume_mode = preset.volume_mode || previewFormState.volume_mode || 'overlap-crossfade';
     previewFormState.eq_mode = preset.eq_mode || previewFormState.eq_mode || 'none';
     previewFormState.filter_mode = preset.filter_mode || previewFormState.filter_mode || 'none';
     ['volume_mode', 'eq_mode', 'filter_mode'].forEach(id => {
@@ -1315,10 +1909,28 @@
     });
     const presetEl = document.getElementById('preset');
     if (presetEl) presetEl.value = previewFormState.preset;
+    transitionAutomationPreset = previewFormState.preset;
+    transitionAutomationSelectedPoint = null;
+    transitionAutomationSelectedSegment = null;
+    ensureTransitionAutomation({ reset: true });
+    snapshotTransitionAutomation({ resetHistory: true });
+    if (livePlayback) requestLiveAutomationReschedule();
+  }
+  function applyLegacyModeAutomation(field) {
+    ensureTransitionAutomation();
+    const template = presetAutomationTemplate('custom');
+    const lane = field === 'volume_mode' ? 'volume' : field === 'eq_mode' ? 'eq_low' : field === 'filter_mode' ? 'filter' : null;
+    if (!lane) return;
+    ['from', 'to'].forEach(deck => {
+      transitionAutomation[deck][lane] = cloneAutomation(template[deck][lane]);
+    });
+    transitionAutomationSelectedPoint = null;
+    transitionAutomationSelectedSegment = null;
+    markTransitionAutomationEdited();
   }
   function resolvedPreviewModes() {
     return {
-      volume: previewFormState.volume_mode || 'crossfade',
+      volume: previewFormState.volume_mode || 'overlap-crossfade',
       eq: previewFormState.eq_mode || 'none',
       filter: previewFormState.filter_mode || 'none',
     };
@@ -1333,15 +1945,22 @@
       back_padding_bars: Number(s.back_padding_bars) || 0,
       from_nudge_beats: Number(s.from_nudge_beats) || 0,
       to_nudge_beats: Number(s.to_nudge_beats) || 0,
+      from_beatgrid_ms: Number(s.from_beatgrid_ms) || 0,
+      to_beatgrid_ms: Number(s.to_beatgrid_ms) || 0,
       from_pitch_shift: Number(s.from_pitch_shift) || 0,
       to_pitch_shift: Number(s.to_pitch_shift) || 0,
-      volume_mode: s.volume_mode || 'crossfade',
+      quality: s.quality || 'preview',
+      volume_mode: s.volume_mode || 'overlap-crossfade',
       eq_mode: s.eq_mode || 'none',
       filter_mode: s.filter_mode || 'none',
+      loudness_match_mode: s.loudness_match_mode || 'auditions_transitions',
+      effects: s.effects || null,
+      automation: s.automation || null,
     });
   }
   function previewSettingsDirty() {
-    return !!(transitionRender && transitionRenderedState && previewSignature(previewFormState) !== previewSignature(transitionRenderedState));
+    const current = Object.assign({}, previewFormState, { loudness_match_mode: loudnessMatchMode() });
+    return !!(transitionRender && transitionRenderedState && previewSignature(current) !== previewSignature(transitionRenderedState));
   }
   function transitionLoadingHtml(active=false, id='transition-loading') {
     const idAttr = id ? ' id="' + esc(id) + '"' : '';
@@ -1376,7 +1995,9 @@
     const loading = document.getElementById('transition-loading');
     const dirty = previewSettingsDirty();
     if (button) {
-      button.textContent = transitionRenderPending ? 'Rendering...' : (transitionRender && dirty ? 'Render again' : 'Render transition');
+      const seamAction = button.classList.contains('transition-seam-action');
+      button.textContent = seamAction ? (transitionRenderPending ? '…' : '↻') : (transitionRenderPending ? 'Rendering...' : (transitionRender && dirty ? 'Render again' : 'Render transition'));
+      button.setAttribute('title', transitionRenderPending ? 'Rendering transition' : (transitionRender && dirty ? 'Render transition again' : 'Render transition'));
       button.disabled = transitionRenderPending;
     }
     if (loading) {
@@ -1404,16 +2025,17 @@
   function updatePreviewEffectDisplay({ dirty=true } = {}) {
     const summary = document.getElementById('automation-summary');
     if (summary) summary.innerHTML = automationSummaryInnerHtml();
+    syncAutomationEditorControls();
     safeUi('transition editor draw', drawTransitionEditor);
+    if (dirty) scheduleLivePreparation();
     if (dirty) safeUi('transition dirty ui update', updateTransitionDirtyUi);
   }
   function automationSummaryInnerHtml() {
-    const modes = resolvedPreviewModes();
-    return '<b>Resolved automation</b><br>' +
-      'preset ' + esc(previewFormState.preset || 'auto') +
-      ' / volume ' + esc(modes.volume || 'none') +
-      ' / EQ ' + esc(modes.eq || 'none') +
-      ' / filter ' + esc(modes.filter || 'none');
+    const active = transitionAutomationActiveLane ? transitionAutomationActiveLane.replace(':', ' · ') : 'alignment mode';
+    return '<b>Offline automation</b><br>' +
+      'preset ' + esc(titleCaseOption(previewFormState.preset || 'auto')) +
+      ' / active ' + esc(active) +
+      ' / 3-band EQ';
   }
   async function loadAppRuntime() {
     if (!config.app_mode || appLoadStarted) return;
@@ -1443,10 +2065,7 @@
     if (activePane === 'explore') {
       setTimeout(() => safeUi('map renderer sync', () => syncMapRenderer()), 20);
     }
-    if (activePane === 'explore' && selectedMapRenderer() === 'plotly' && window.Plotly && plot) {
-      setTimeout(() => Plotly.Plots.resize(plot), 30);
-      setTimeout(ensureMapEffectsLoop, 40);
-    }
+    if (activePane === 'explore') setTimeout(ensureMapEffectsLoop, 40);
     if (activePane === 'explore' && window.Plotly && els.energyCurve) {
       setTimeout(() => Plotly.Plots.resize(els.energyCurve), 30);
     }
@@ -1623,6 +2242,18 @@
       button.textContent = active ? '⏸' : '▶';
       button.setAttribute('aria-label', (active ? 'Pause ' : 'Play ') + (info && info.cfg ? info.cfg.label : 'track'));
     });
+    document.querySelectorAll('[data-transition-track-scrub]').forEach(scrub => {
+      const deck = scrub.getAttribute('data-transition-track-scrub') || '';
+      const info = transitionWindowInfo(deck);
+      if (!info || !info.record) return;
+      const active = previewAudioIdx === Number(info.record.idx) && previewAudioContext === 'transition-' + deck;
+      const value = active && els.audio && Number.isFinite(Number(els.audio.currentTime))
+        ? Number(els.audio.currentTime)
+        : (rowScrubPositions.has(Number(info.record.idx)) ? rowScrubValue(info.record) : info.transitionStart);
+      scrub.max = String(info.trackDuration);
+      scrub.value = String(clamp(value, 0, info.trackDuration));
+      setRangeProgress(scrub, scrub.value, scrub.max);
+    });
   }
   function syncAudioUi() {
     previewAudioPlaying = !!(els.audio && !els.audio.paused && !els.audio.ended);
@@ -1631,6 +2262,7 @@
     updateTransitionTrackPlayButtons();
     updateGlobalPlayer();
     drawMainWaveform();
+    requestTransitionEditorDraw();
   }
   function requestAudioProgressFrame() {
     if (audioProgressFrame !== null || !window.requestAnimationFrame) return;
@@ -1650,6 +2282,8 @@
   function playRecordAt(record, startSeconds, context='point') {
     record = canonicalRecord(record);
     if (!record || !els.audio) return;
+    const renderedTransition = transitionAudioElement();
+    if (renderedTransition && !renderedTransition.paused && !renderedTransition.ended) renderedTransition.pause();
     const url = audioUri(record);
     if (!url) return;
     const start = Math.max(0, Number(startSeconds) || 0);
@@ -1658,6 +2292,7 @@
     previewAudioIdx = idx;
     previewAudioContext = context;
     previewAudioStart = start;
+    applySharedAudioLoudness({ smooth: !sourceChanged });
     if (sourceChanged) {
       previewAudioUrl = url;
       els.audio.src = url;
@@ -1704,22 +2339,37 @@
     lastClickedIdx = null;
     lastClickMs = 0;
     hideSongPopover({ stopAudio: false });
+    schedulePlanningSave();
     renderSelectionOnly();
   }
-  function setCandidateTrack(idx, { autoplay=true, showPopover=true, render=true } = {}) {
+  function setCandidateTrack(idx, { autoplay=true, showPopover=true, render=true, setRecommendationReference=true, setTransitionCandidate=true } = {}) {
     idx = Number(idx);
     if (!byIdx.has(idx)) return;
-    if (transitionFromIdx === null && selectedIdx !== idx) pinnedRecommendationIdxs.clear();
+    if (setRecommendationReference && transitionFromIdx === null && recommendationReferenceIdx !== idx) pinnedRecommendationIdxs.clear();
     selectedIdx = idx;
-    if (transitionFromIdx !== null && Number(transitionFromIdx) !== idx) {
+    if (setRecommendationReference) recommendationReferenceIdx = idx;
+    if (setTransitionCandidate && transitionFromIdx !== null && Number(transitionFromIdx) !== idx) {
+      if (transitionToIdx === null || Number(transitionToIdx) !== idx) resetDeckAlignment('to');
       transitionToIdx = idx;
       resetTransitionRenderState();
+      resetTransitionAutomationState();
       previewFormState.to_cue = '';
+      scheduleLivePreparation();
     }
     const record = byIdx.get(idx);
     if (showPopover) showSongPopover(record, { autoplay });
     else hideSongPopover({ stopAudio: false });
+    schedulePlanningSave();
     if (render) renderSelectionOnly();
+  }
+  function focusTrack(idx, { autoplay=true, showPopover=true, render=true } = {}) {
+    setCandidateTrack(idx, {
+      autoplay,
+      showPopover,
+      render,
+      setRecommendationReference: false,
+      setTransitionCandidate: false,
+    });
   }
   function showSongPopover(record, { autoplay=true } = {}) {
     if (!els.songPopover || !record) return;
@@ -1740,6 +2390,7 @@
         els.audio.src = previewAudioUrl;
         try { els.audio.load(); } catch (err) {}
       }
+      applySharedAudioLoudness({ smooth: true });
       if (els.audio) seekSharedAudio(start);
     }
     syncAudioUi();
@@ -1776,8 +2427,13 @@
   function toggleTrackPreview(idx, { mode='point' } = {}) {
     idx = Number(idx);
     if (!byIdx.has(idx)) return;
+    if (mode === 'recommendation') {
+      // Auditioning a recommendation changes the transient selection only; the
+      // recommendation source remains the current anchor track.
+      focusTrack(idx, { autoplay: false, showPopover: false });
+    }
     const record = byIdx.get(idx);
-    const context = mode === 'library' || mode === 'diagnostics' ? mode : 'point';
+    const context = mode === 'library' || mode === 'diagnostics' || mode === 'recommendation' ? mode : 'point';
     if (previewAudioIdx === idx && previewAudioContext === context && els.audio && !els.audio.paused) {
       pauseSharedAudio();
       return;
@@ -1794,7 +2450,8 @@
       pauseSharedAudio();
       return;
     }
-    playRecordAt(info.record, Math.max(0, Number(info.transitionStart) || 0), context);
+    const start = rowScrubPositions.has(idx) ? rowScrubValue(info.record) : Math.max(0, Number(info.transitionStart) || 0);
+    playRecordAt(info.record, start, context);
   }
   function normalizeWaveformValues(values) {
     if (!Array.isArray(values)) return [];
@@ -2322,7 +2979,7 @@
     if (mode === 'eq:none') return 1;
     if (mode === 'eq:start-bass-swap') return deck === 'a' ? 0.15 : 1;
     if (mode === 'eq:end-bass-swap') return deck === 'b' ? 0.15 : 1;
-    if (mode === 'eq:center-bass-swap') return deck === 'a' ? (half ? 1 : 0.15) : (half ? 0.15 : 1);
+    if (mode === 'eq:center-bass-swap') return deck === 'a' ? (half ? 1 : 0) : (half ? 0 : 1);
     if (mode === 'eq:long-bass-cut') return 0.15;
     if (mode === 'filter:none') return null;
     if (mode === 'filter:low-pass-filter-out') return deck === 'a' ? 1 - x : null;
@@ -2567,10 +3224,11 @@
   }
   function applyAppSettingsToControls() {
     if (els.colorMode) els.colorMode.value = normalizePointColorMode(appSetting('point_color', 'genre'));
-    if (els.mapRenderer) els.mapRenderer.value = selectedMapRenderer();
     if (els.mapEffectsEnabled) els.mapEffectsEnabled.checked = Boolean(appSetting('map_fx', true));
     if (els.showScoreValues) els.showScoreValues.checked = showScoreValues();
     if (els.figureLightMode) els.figureLightMode.checked = figureLightMode();
+    if (els.loudnessMatchSetting) els.loudnessMatchSetting.hidden = !config.app_mode;
+    if (els.loudnessMatchMode) els.loudnessMatchMode.value = loudnessMatchMode();
     if (els.latentLinksPerTrack) els.latentLinksPerTrack.value = String(latentLinksPerTrack());
     if (els.recommendedLinksHighlight) els.recommendedLinksHighlight.value = String(recommendedLinksHighlight());
     applyFigureTheme();
@@ -2848,6 +3506,7 @@
       ctx.stroke();
     };
     drawRing(selectedIdx, theme.selected, 4.5);
+    if (transitionFromIdx === null && recommendationReferenceIdx !== selectedIdx) drawRing(recommendationReferenceIdx, roleColors.reference, 5.2);
     drawRing(transitionFromIdx, roleColors.track1, 5.5);
     drawRing(transitionToIdx, roleColors.track2, 5.5);
     const view = mapViewRanges();
@@ -3088,6 +3747,9 @@
       drawStaticMapBadge(ctx, plotPointPx(currentPoint(hoveredIdx)), '', mapTheme().selected, 13);
     }
     if (selectedIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(selectedIdx)), '', mapTheme().selected, 13);
+    if (transitionFromIdx === null && recommendationReferenceIdx !== null && Number(recommendationReferenceIdx) !== Number(selectedIdx)) {
+      drawStaticMapBadge(ctx, plotPointPx(currentPoint(recommendationReferenceIdx)), 'R', roleColors.reference, 13, 'diamond');
+    }
     if (transitionFromIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(transitionFromIdx)), '1', roleColors.track1, 15);
     if (transitionToIdx !== null) drawStaticMapBadge(ctx, plotPointPx(currentPoint(transitionToIdx)), '2', roleColors.track2, 15);
 
@@ -3222,13 +3884,16 @@
   function energyPenaltyScale() {
     return clamp(Number(els.penaltyScale ? els.penaltyScale.value : 0), 0, 1);
   }
-  function energyAdjustment(rawError, baseline) {
+  function energyAdjustment(rawError, baseline, { active=true } = {}) {
+    const numericBaseline = Number(baseline);
+    const hasBaseline = Number.isFinite(numericBaseline);
+    if (!active || !Number.isFinite(Number(rawError))) {
+      return { energyErrorPower: NaN, penaltyScale: 0, energyScore: 1, penalty: hasBaseline ? 0 : NaN, finalScore: hasBaseline ? numericBaseline : NaN };
+    }
     const scale = energyPenaltyScale();
     const errorMagnitude = Math.abs(Number(rawError) || 0);
     const energyErrorPower = errorMagnitude * errorMagnitude;
     const energyScore = 1 / (1 + scale * energyErrorPower);
-    const numericBaseline = Number(baseline);
-    const hasBaseline = Number.isFinite(numericBaseline);
     const finalScore = hasBaseline ? numericBaseline * energyScore : NaN;
     const penalty = hasBaseline ? numericBaseline - finalScore : NaN;
     return { energyErrorPower, penaltyScale: scale, energyScore, penalty, finalScore };
@@ -3352,8 +4017,8 @@
     if (transitionFromIdx !== null && byIdx.has(Number(transitionFromIdx))) {
       return { mode: 'track1', slot, sourceIdx: Number(transitionFromIdx), sourceSlot: null };
     }
-    if (selectedIdx !== null && byIdx.has(Number(selectedIdx))) {
-      return { mode: 'selected', slot, sourceIdx: Number(selectedIdx), sourceSlot: null };
+    if (recommendationReferenceIdx !== null && byIdx.has(Number(recommendationReferenceIdx))) {
+      return { mode: 'selected', slot, sourceIdx: Number(recommendationReferenceIdx), sourceSlot: null };
     }
     const sourceSlot = previousFilledSlot(slot);
     if (sourceSlot >= 0) {
@@ -3386,17 +4051,34 @@
     idx = Number(idx);
     if (!Number.isFinite(idx) || !byIdx.has(idx)) return;
     resetTransitionRenderState();
-    previewFormState.from_cue = '';
-    previewFormState.to_cue = '';
+    resetTransitionAutomationState();
     if (kind === 'out') {
       const nextFrom = toggle && transitionFromIdx === idx ? null : idx;
       if (transitionFromIdx !== nextFrom) pinnedRecommendationIdxs.clear();
+      if (transitionFromIdx !== nextFrom) {
+        resetDeckAlignment('from');
+        previewFormState.from_cue = '';
+      }
       transitionFromIdx = nextFrom;
-      if (transitionToIdx === idx) transitionToIdx = null;
+      if (transitionToIdx === idx) {
+        transitionToIdx = null;
+        resetDeckAlignment('to');
+        previewFormState.to_cue = '';
+      }
     } else {
-      transitionToIdx = toggle && transitionToIdx === idx ? null : idx;
-      if (transitionFromIdx === idx) transitionFromIdx = null;
+      const nextTo = toggle && transitionToIdx === idx ? null : idx;
+      if (transitionToIdx !== nextTo) {
+        resetDeckAlignment('to');
+        previewFormState.to_cue = '';
+      }
+      transitionToIdx = nextTo;
+      if (transitionFromIdx === idx) {
+        transitionFromIdx = null;
+        resetDeckAlignment('from');
+        previewFormState.from_cue = '';
+      }
     }
+    schedulePlanningSave();
     renderAll();
   }
   function assignTransitionFromDoubleClick(idx) {
@@ -3444,9 +4126,14 @@
     const oldFrom = transitionFromIdx;
     transitionFromIdx = transitionToIdx;
     transitionToIdx = oldFrom;
+    [['from_cue', 'to_cue'], ['from_nudge_beats', 'to_nudge_beats'], ['from_beatgrid_ms', 'to_beatgrid_ms'], ['from_pitch_shift', 'to_pitch_shift']].forEach(([fromField, toField]) => {
+      const value = previewFormState[fromField];
+      previewFormState[fromField] = previewFormState[toField];
+      previewFormState[toField] = value;
+    });
     resetTransitionRenderState();
-    previewFormState.from_cue = '';
-    previewFormState.to_cue = '';
+    resetTransitionAutomationState();
+    schedulePlanningSave();
     renderAll();
   }
   function clearTransitionPair() {
@@ -3458,23 +4145,26 @@
     lastPointDoubleClickMs = 0;
     lastPointDoubleClickIdx = null;
     resetTransitionRenderState();
+    resetTransitionAutomationState();
     previewFormState.from_cue = '';
     previewFormState.to_cue = '';
+    schedulePlanningSave();
     renderAll();
   }
-  function setSequenceLength(n) {
+  function setSequenceLength(n, shouldRender=true) {
     n = clamp(Math.round(Number(n || 10)), 2, 40);
     const old = sequence.slice();
     const oldTargets = targetValues.slice();
     sequenceLength = n;
     sequence = Array.from({ length: n }, (_, i) => i < old.length ? old[i] : null);
     targetValues = Array.from({ length: n }, (_, i) => i < oldTargets.length
-      ? normalizeTargetEnergy(oldTargets[i])
+      ? normalizeTargetEnergy(oldTargets[i], null)
       : DEFAULT_TARGET_ENERGY);
     selectedSlot = selectedSlot !== null && selectedSlot < n ? selectedSlot : null;
-    renderAll();
+    if (shouldRender) renderAll();
   }
   function normalizeTargetEnergy(value, fallback=DEFAULT_TARGET_ENERGY) {
+    if (value === null || value === undefined || value === '') return fallback;
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
     return Math.round(clamp(n, 1, 9) * 10) / 10;
@@ -3482,7 +4172,7 @@
   function setTargetSlotValue(slot, value, shouldRender=true) {
     slot = Math.round(Number(slot));
     value = normalizeTargetEnergy(value, NaN);
-    if (!Number.isFinite(slot) || !Number.isFinite(value)) return;
+    if (!Number.isFinite(slot) || slot < 0 || slot >= targetValues.length || !Number.isFinite(value)) return;
     targetValues[slot] = value;
     selectedSlot = slot;
     if (shouldRender) renderAll();
@@ -3490,30 +4180,57 @@
   function targetAnchors() {
     const anchors = [];
     for (let slot = 0; slot < targetValues.length; slot += 1) {
-      const val = Number(targetValues[slot]);
-      if (Number.isFinite(val)) anchors.push({ slot, value: clamp(val, 1, 9) });
+      const value = targetValues[slot];
+      if (hasNumericValue(value)) anchors.push({ slot, value: clamp(Number(value), 1, 9) });
     }
     return anchors.sort((a,b) => a.slot - b.slot);
   }
-  function targetCurve() {
+  function targetGuide() {
     const anchors = targetAnchors();
-    const out = [];
-    if (!anchors.length) {
-      for (let i = 0; i < sequenceLength; i += 1) out.push(5);
-      return out;
-    }
-    if (anchors.length === 1) return Array.from({ length: sequenceLength }, () => anchors[0].value);
+    const out = Array.from({ length: sequenceLength }, () => null);
+    if (anchors.length < 2) return out;
     for (let i = 0; i < sequenceLength; i += 1) {
-      if (i <= anchors[0].slot) { out.push(anchors[0].value); continue; }
-      if (i >= anchors[anchors.length - 1].slot) { out.push(anchors[anchors.length - 1].value); continue; }
-      let left = anchors[0], right = anchors[anchors.length - 1];
       for (let j = 0; j < anchors.length - 1; j += 1) {
-        if (anchors[j].slot <= i && i <= anchors[j+1].slot) { left = anchors[j]; right = anchors[j+1]; break; }
+        const left = anchors[j];
+        const right = anchors[j + 1];
+        if (left.slot <= i && i <= right.slot) {
+          const t = (i - left.slot) / Math.max(1, right.slot - left.slot);
+          out[i] = left.value + t * (right.value - left.value);
+          break;
+        }
       }
-      const t = (i - left.slot) / Math.max(1, right.slot - left.slot);
-      out.push(left.value + t * (right.value - left.value));
     }
     return out;
+  }
+  function targetGuideSlots() {
+    const guide = targetGuide();
+    return guide.map((value, slot) => ({ value, slot }))
+      .filter(item => Number.isFinite(item.value) && !hasNumericValue(targetValues[item.slot]))
+      .map(item => item.slot);
+  }
+  function targetCurve() {
+    return targetValues.map(value => hasNumericValue(value) ? Number(value) : null);
+  }
+  function targetForSlot(slot) {
+    const value = targetValues[Math.round(Number(slot))];
+    return hasNumericValue(value) ? Number(value) : null;
+  }
+  function clearTargetSlotValue(slot, shouldRender=true) {
+    slot = Math.round(Number(slot));
+    if (!Number.isFinite(slot) || slot < 0 || slot >= targetValues.length) return;
+    targetValues[slot] = null;
+    selectedSlot = slot;
+    if (shouldRender) renderAll();
+  }
+  function applyTargetGuides() {
+    mutatePlanning(() => {
+      const guide = targetGuide();
+      guide.forEach((value, slot) => {
+        if (!hasNumericValue(targetValues[slot]) && Number.isFinite(value)) {
+          targetValues[slot] = normalizeTargetEnergy(value, null);
+        }
+      });
+    });
   }
   function scoreCandidate(c, slot) {
     const w = weights();
@@ -3525,17 +4242,17 @@
     );
     const record = byIdx.get(Number(c.idx));
     const e = energyOf(record);
-    const target = targetCurve()[slot] ?? 5;
-    const rawError = Number.isFinite(e) ? e - target : 0;
-    const adjustment = energyAdjustment(rawError, baseline);
-    return { baseline, ...scores, energy: e, target, rawError, ...adjustment };
+    const target = targetForSlot(slot);
+    const rawError = Number.isFinite(e) && Number.isFinite(target) ? e - target : NaN;
+    const adjustment = energyAdjustment(rawError, baseline, { active: Number.isFinite(target) });
+    return { baseline, ...scores, energy: e, target, hasEnergyTarget: Number.isFinite(target), rawError, ...adjustment };
   }
   function scoreInitialCandidate(idx, slot) {
     const record = byIdx.get(Number(idx));
     const e = energyOf(record);
-    const target = targetCurve()[slot] ?? 5;
-    const rawError = Number.isFinite(e) ? e - target : 0;
-    const adjustment = energyAdjustment(rawError, 1);
+    const target = targetForSlot(slot);
+    const rawError = Number.isFinite(e) && Number.isFinite(target) ? e - target : NaN;
+    const adjustment = energyAdjustment(rawError, 1, { active: Number.isFinite(target) });
     return {
       ...(record || {}),
       idx: Number(idx),
@@ -3555,6 +4272,7 @@
       grooveScore: NaN,
       energy: e,
       target,
+      hasEnergyTarget: Number.isFinite(target),
       rawError,
       energyErrorPower: adjustment.energyErrorPower,
       penaltyScale: adjustment.penaltyScale,
@@ -3573,9 +4291,9 @@
 
     const record = byIdx.get(Number(destIdx));
     const e = energyOf(record);
-    const target = targetCurve()[slot] ?? 5;
-    const rawError = Number.isFinite(e) ? e - target : 0;
-    const adjustment = energyAdjustment(rawError, NaN);
+    const target = targetForSlot(slot);
+    const rawError = Number.isFinite(e) && Number.isFinite(target) ? e - target : NaN;
+    const adjustment = energyAdjustment(rawError, NaN, { active: Number.isFinite(target) });
     return {
       idx: Number(destIdx),
       maest_similarity: NaN,
@@ -3594,6 +4312,7 @@
       grooveScore: NaN,
       energy: e,
       target,
+      hasEnergyTarget: Number.isFinite(target),
       rawError,
       energyErrorPower: adjustment.energyErrorPower,
       penaltyScale: adjustment.penaltyScale,
@@ -3627,10 +4346,10 @@
         if (recFilters.excludeUsed && used.has(idx)) continue;
         const record = byIdx.get(idx);
         if (!record) continue;
-        const targetEnergy = targetCurve()[slot] ?? 5;
+        const targetEnergy = targetForSlot(slot);
         const energyRange = Number(recFilters.energyRange);
         const hasEnergyRange = String(recFilters.energyRange || '').trim() !== '' && Number.isFinite(energyRange) && energyRange >= 0;
-        if (hasEnergyRange && Math.abs(energyOf(record) - targetEnergy) > energyRange) continue;
+        if (hasEnergyRange && Number.isFinite(targetEnergy) && Math.abs(energyOf(record) - targetEnergy) > energyRange) continue;
         rows.push({ ...scoreInitialCandidate(idx, slot), recommendationSourceMode: ctx.mode });
       }
       if (penaltyScale > 0) {
@@ -3645,7 +4364,7 @@
     const hasBpmRange = String(recFilters.bpmRange || '').trim() !== '' && Number.isFinite(bpmRange) && bpmRange >= 0;
     const energyRange = Number(recFilters.energyRange);
     const hasEnergyRange = String(recFilters.energyRange || '').trim() !== '' && Number.isFinite(energyRange) && energyRange >= 0;
-    const targetEnergy = targetCurve()[slot] ?? 5;
+    const targetEnergy = targetForSlot(slot);
     const genreMode = recFilters.genreMode || 'any';
     const srcGenre = String((srcRecord && (srcRecord.raw_genre || srcRecord.genre)) || '').toLowerCase();
     const entry = simMap[String(sourceIdx)] || {};
@@ -3663,7 +4382,7 @@
         const candBpm = Number(record.est_bpm);
         if (!Number.isFinite(srcBpm) || !Number.isFinite(candBpm) || Math.abs(candBpm - srcBpm) > bpmRange) continue;
       }
-      if (hasEnergyRange && Math.abs(energyOf(record) - targetEnergy) > energyRange) continue;
+      if (hasEnergyRange && Number.isFinite(targetEnergy) && Math.abs(energyOf(record) - targetEnergy) > energyRange) continue;
       if (genreMode !== 'any') {
         const candGenre = String(record.raw_genre || record.genre || '').toLowerCase();
         if (genreMode === 'same' && candGenre !== srcGenre) continue;
@@ -3695,6 +4414,13 @@
     restyleTrace('Selected', {
       x: [selectedPt ? [selectedPt[0]] : []],
       y: [selectedPt ? [selectedPt[1]] : []],
+    });
+    const referenceIdx = transitionFromIdx === null ? recommendationReferenceIdx : null;
+    const referencePt = referenceIdx === null || Number(referenceIdx) === Number(selectedIdx) ? null : currentPoint(referenceIdx);
+    restyleTrace('Recommendation source', {
+      x: [referencePt ? [referencePt[0]] : []],
+      y: [referencePt ? [referencePt[1]] : []],
+      text: [referencePt ? ['R'] : []],
     });
     const fromPt = transitionFromIdx === null ? null : currentPoint(transitionFromIdx);
     const toPt = transitionToIdx === null ? null : currentPoint(transitionToIdx);
@@ -3773,33 +4499,32 @@
     setCandidateTrack(idx, { autoplay: true, showPopover: true, render: true });
   }
   function setCurrentTrack(idx) {
-    idx = Number(idx);
-    if (!byIdx.has(idx)) return;
-    if (transitionFromIdx === null && selectedIdx !== idx) pinnedRecommendationIdxs.clear();
-    selectedIdx = idx;
-    hideSongPopover({ stopAudio: false });
-    renderSelectionOnly();
+    setCandidateTrack(idx, { autoplay: false, showPopover: false, render: true, setRecommendationReference: true, setTransitionCandidate: false });
   }
   function appendTrack(idx) {
     const slot = targetSlot();
     if (slot < 0) return;
     idx = Number(idx);
     if (!canPlaceTrack(idx, slot)) return;
-    sequence[slot] = idx;
-    selectedSlot = null;
-    pinnedRecommendationIdxs.clear();
-    transitionFromIdx = idx;
-    transitionToIdx = null;
-    resetTransitionRenderState();
-    previewFormState.from_cue = '';
-    previewFormState.to_cue = '';
-    setCandidateTrack(idx, { autoplay: true, showPopover: true, render: false });
-    renderAll();
+    mutatePlanning(() => {
+      sequence[slot] = idx;
+      selectedSlot = null;
+      pinnedRecommendationIdxs.clear();
+      transitionFromIdx = idx;
+      transitionToIdx = null;
+      resetDeckAlignment('from');
+      resetDeckAlignment('to');
+      resetTransitionRenderState();
+      resetTransitionAutomationState();
+      previewFormState.from_cue = '';
+      previewFormState.to_cue = '';
+      setCandidateTrack(idx, { autoplay: true, showPopover: true, render: false });
+    });
   }
   function removeSlot(slot) {
     slot = Number(slot);
-    if (slot >= 0 && slot < sequence.length) sequence[slot] = null;
-    renderAll();
+    if (slot < 0 || slot >= sequence.length || sequence[slot] === null) return;
+    mutatePlanning(() => { sequence[slot] = null; });
   }
   function moveSequenceSlot(fromSlot, toSlot) {
     fromSlot = Math.round(Number(fromSlot));
@@ -3811,17 +4536,18 @@
       safeUi('sequence render', renderSequence);
       return;
     }
-    const movedTrack = sequence.splice(fromSlot, 1)[0];
-    const movedTarget = targetValues.splice(fromSlot, 1)[0];
-    sequence.splice(toSlot, 0, movedTrack);
-    targetValues.splice(toSlot, 0, movedTarget);
-    if (selectedSlot === fromSlot) selectedSlot = toSlot;
-    else if (selectedSlot !== null) {
-      if (fromSlot < selectedSlot && selectedSlot <= toSlot) selectedSlot -= 1;
-      else if (toSlot <= selectedSlot && selectedSlot < fromSlot) selectedSlot += 1;
-    }
-    sequenceDragSlot = null;
-    renderAll();
+    mutatePlanning(() => {
+      const movedTrack = sequence.splice(fromSlot, 1)[0];
+      const movedTarget = targetValues.splice(fromSlot, 1)[0];
+      sequence.splice(toSlot, 0, movedTrack);
+      targetValues.splice(toSlot, 0, movedTarget);
+      if (selectedSlot === fromSlot) selectedSlot = toSlot;
+      else if (selectedSlot !== null) {
+        if (fromSlot < selectedSlot && selectedSlot <= toSlot) selectedSlot -= 1;
+        else if (toSlot <= selectedSlot && selectedSlot < fromSlot) selectedSlot += 1;
+      }
+      sequenceDragSlot = null;
+    });
   }
   function compareLibraryRecords(a, b) {
     const key = librarySort;
@@ -3875,12 +4601,13 @@
         '<td>' + esc(r.artists) + '</td>' +
         '<td class="center">' + keyHtml(r.key) + '</td>' +
         '<td class="center">' + roundedBpm(r) + '</td>' +
-        '<td class="center">' + (Number.isFinite(Number(r.human_energy)) ? fmt(r.human_energy, 2) : '') + '</td>' +
-        '<td class="center">' + (Number.isFinite(Number(r.glm_energy)) ? fmt(r.glm_energy, 2) : '') + '</td>' +
+        '<td class="center">' + fmtEnergy(r.human_energy) + '</td>' +
+        '<td class="center">' + fmtEnergy(r.glm_energy) + '</td>' +
         '<td class="center">' + esc(durationText(r)) + '</td>' +
         '<td>' + esc(rawGenre(r)) + '</td>' +
         '<td><div class="library-actions">' +
         rowPlayerHtml(r) +
+        '<button data-focus-track="' + r.idx + '">Select</button>' +
         '<button data-library-current="' + r.idx + '">Current</button>' +
         '<button class="track-one" data-library-outgoing="' + r.idx + '">Track 1</button>' +
         '<button class="track-two" data-library-incoming="' + r.idx + '">Track 2</button>' +
@@ -3893,7 +4620,7 @@
     updateRowScrubbers();
   }
   function renderSequence() {
-    const targets = targetCurve();
+    const guide = targetGuide();
     let html = '<table><thead><tr><th class="num slot-col">Slot</th><th>Track</th><th class="target-col">Target</th><th class="num actual-col">Actual</th><th class="actions-col"></th></tr></thead><tbody>';
     for (let i = 0; i < sequence.length; i += 1) {
       const idx = sequence[i];
@@ -3905,9 +4632,13 @@
       html += '<tr' + cls + ' data-sequence-drop-slot="' + i + '"><td class="num"><span class="sequence-drag-handle" draggable="true" data-sequence-drag-slot="' + i + '" title="Drag to reorder">↕</span> ' + (i + 1) + '</td><td>';
       if (r) html += trackSummaryHtml(r, { size: 'compact', showArt: true, slot: i });
       else html += '<span class="muted">empty</span>';
-      const targetValue = Number(targetValues[i]);
-      const targetInput = '<input class="target-edit" data-target-slot="' + i + '" type="number" min="1" max="9" step="0.1" placeholder="' + fmt(targets[i], 2) + '" value="' + (Number.isFinite(targetValue) ? fmt(targetValue, 2) : '') + '">';
-      html += '</td><td class="target-col">' + targetInput + '</td><td class="num actual-col">' + (r ? fmt(energyOf(r), 2) : '') + '</td><td class="actions-col"><div class="table-actions">';
+      const targetValue = hasNumericValue(targetValues[i]) ? Number(targetValues[i]) : NaN;
+      const guideValue = guide[i];
+      const targetInput = '<input class="target-edit' + (Number.isFinite(targetValue) ? '' : ' is-unset') + '" data-target-slot="' + i + '" type="number" min="1" max="9" step="0.1" placeholder="—" title="' + esc(Number.isFinite(guideValue) ? 'Free target. Guide: ' + fmtEnergy(guideValue) : 'No energy target') + '" value="' + (Number.isFinite(targetValue) ? fmtEnergy(targetValue) : '') + '">';
+      const clearTarget = Number.isFinite(targetValue)
+        ? actionSymbolButton('data-clear-target-slot="' + i + '"', '×', 'Clear energy target', 'target-clear')
+        : '';
+      html += '</td><td class="target-col"><div class="target-cell">' + targetInput + clearTarget + '</div></td><td class="num actual-col">' + (r ? fmtEnergy(energyOf(r)) : '—') + '</td><td class="actions-col"><div class="table-actions">';
       if (r) html += '<button class="play-button" data-play-idx="' + r.idx + '" aria-label="Play">▶</button> ';
       html += actionSymbolButton('data-seq-slot="' + i + '"', selectedSlot === i ? '●' : '○', selectedSlot === i ? 'Selected slot' : 'Select slot', selectedSlot === i ? 'is-active' : '') + ' ';
       if (selectedIdx !== null && canPlaceTrack(selectedIdx, i)) {
@@ -3923,24 +4654,33 @@
     const text = fmt(v, d);
     return text || '<span class="muted">n/a</span>';
   }
-  function scoreFeatureRows(score) {
-    return [
+  function scoreFeatureRows(score, { includeRhythmComponents=false } = {}) {
+    const rows = [
       { key: 'style', label: 'Style', value: Number(score && score.styleScore), weight: weights().style },
       { key: 'rhythm', label: 'Rhythm', value: Number(score && score.rhythmScore), weight: weights().rhythm },
       { key: 'harmonic', label: 'Harmony', value: Number(score && score.harmonyScore), weight: weights().harmony },
-      { key: 'energy', label: 'Energy fit', value: Number(score && score.energyScore), weight: energyPenaltyScale() },
+      { key: 'energy', label: 'Energy fit', value: score && score.hasEnergyTarget ? Number(score.energyScore) : NaN, weight: score && score.hasEnergyTarget ? energyPenaltyScale() : 0 },
     ];
+    if (includeRhythmComponents) {
+      const rhythmIndex = rows.findIndex(row => row.key === 'rhythm');
+      rows.splice(rhythmIndex + 1, 0,
+        { key: 'tempo', label: 'Tempo similarity', value: Number(score && score.tempoScore), weight: RHYTHM_TEMPO_WEIGHT, rhythmComponent: true },
+        { key: 'groove', label: 'Groove similarity', value: Number(score && score.grooveScore), weight: 1 - RHYTHM_TEMPO_WEIGHT, rhythmComponent: true },
+      );
+    }
+    return rows;
   }
-  function featureBarsHtml(score, keys=null) {
-    const rows = scoreFeatureRows(score).filter(row => !keys || keys.includes(row.key));
+  function featureBarsHtml(score, keys=null, options={}) {
+    const rows = scoreFeatureRows(score, options).filter(row => !keys || keys.includes(row.key));
     return '<div class="diagnostic-feature-bars">' + rows.map(row => {
       const finite = Number.isFinite(row.value);
       const pct = finite ? clamp(row.value, 0, 1) * 100 : 0;
-      return '<div class="diagnostic-feature-bar ' + esc(row.key) + '">' +
+      const weightLabel = row.rhythmComponent ? 'within rhythm ' : 'w ';
+      return '<div class="diagnostic-feature-bar ' + esc(row.key) + (row.rhythmComponent ? ' rhythm-component' : '') + '">' +
         '<span>' + esc(row.label) + '</span>' +
         '<div class="diagnostic-bar-track"><i style="width:' + pct.toFixed(1) + '%"></i></div>' +
         '<b>' + (finite ? fmt(row.value, 3) : 'n/a') + '</b>' +
-        '<em>w ' + metricValue(row.weight, 2) + '</em>' +
+        '<em>' + weightLabel + metricValue(row.weight, 2) + '</em>' +
         '</div>';
     }).join('') + '</div>';
   }
@@ -4145,7 +4885,7 @@
       '</div>' +
       '<div class="diagnostic-subhead">Slot ' + (slot + 1) + (score && score.missing ? ' <span class="warn">missing direct similarity row</span>' : '') + '</div>' +
       scoreSummaryBarsHtml(score) +
-      featureBarsHtml(score) +
+      featureBarsHtml(score, null, { includeRhythmComponents: true }) +
       '<div class="focused-transition-section">' + diagnosticEmbeddingComparisonHtml(from, to) + '</div>' +
       '<div class="focused-transition-waveforms"><h3>Full track waveforms</h3>' +
       '<div class="diagnostic-subhead">Click or drag either waveform to play and scrub the full track.</div>' +
@@ -4295,13 +5035,14 @@
       '<table><thead><tr><th class="num">#</th><th>Actions</th><th>Waveform</th><th>Track</th><th class="num">Final</th><th class="num">Mix</th><th class="num">Loss</th><th class="num">Style</th><th class="num">Rhythm</th><th class="num">Harmony</th><th class="num">Energy fit</th></tr></thead><tbody>';
     rows.forEach((r, i) => {
       const isPinned = pinnedRecommendationIdxs.has(Number(r.idx));
-      html += '<tr' + (isPinned ? ' class="pinned-row"' : '') + '><td class="num">' + (isPinned ? '★ ' : '') + (r.globalRank || (i + 1)) + '</td>' +
+      const rowClass = [isPinned ? 'pinned-row' : '', Number(r.idx) === selectedIdx ? 'selected-slot' : ''].filter(Boolean).join(' ');
+      html += '<tr' + (rowClass ? ' class="' + rowClass + '"' : '') + '><td class="num">' + (isPinned ? '★ ' : '') + (r.globalRank || (i + 1)) + '</td>' +
         '<td><div class="table-actions">' +
         actionSymbolButton('data-pin-rec-idx="' + r.idx + '"', isPinned ? '★' : '☆', isPinned ? 'Unpin candidate' : 'Pin candidate', isPinned ? 'pin-active' : 'pin-button') +
         actionSymbolButton('data-append-idx="' + r.idx + '"', actionSymbol, actionLabel + ' to sequence', 'primary') +
         actionSymbolButton('data-library-outgoing="' + r.idx + '"', '1', 'Set as Track 1', 'track-one') +
         actionSymbolButton('data-library-incoming="' + r.idx + '"', '2', 'Set as Track 2', 'track-two') +
-        '<button class="play-button" data-play-idx="' + r.idx + '" data-play-mode="library" aria-label="Play">▶</button>' +
+        '<button class="play-button" data-play-idx="' + r.idx + '" data-play-mode="recommendation" aria-label="Play and highlight">▶</button>' +
         '</div></td>' +
         '<td class="waveform-cell">' + rowWaveformScrubberHtml(r, { showTime: false }) + '</td>' +
         '<td>' + trackSummaryHtml(r, { size: 'compact', showArt: true, slot: r.slot ?? slot }) + '</td>' +
@@ -4311,7 +5052,7 @@
         recommendationMetricCell(r.styleScore, 'style', r.styleScore, 2, 'Style score') +
         recommendationMetricCell(r.rhythmScore, 'rhythm', r.rhythmScore, 2, 'Rhythm score') +
         recommendationMetricCell(r.harmonyScore, 'harmonic', r.harmonyScore, 2, 'Harmony score') +
-        recommendationMetricCell(r.energyScore, 'energy', r.energyScore, 2, 'Energy fit score') +
+        recommendationMetricCell(r.hasEnergyTarget ? r.energyScore : NaN, 'energy', r.energyScore, 2, r.hasEnergyTarget ? 'Energy fit score' : 'No energy target for this slot') +
         '</tr>';
     });
     if (!rows.length) {
@@ -4332,17 +5073,19 @@
   }
   function renderEnergyCurve() {
     const targets = targetCurve();
+    const guide = targetGuide();
     const x = Array.from({ length: sequence.length }, (_, i) => i + 1);
     const actual = sequence.map(idx => idx === null ? null : energyOf(byIdx.get(idx)));
     const theme = mapTheme();
     const traces = [
-      { x, y: targets, type: 'scatter', mode: 'lines+markers', name: 'Target energy', line: { color: theme.ink, width: 2 }, marker: { size: 10 } },
-      { x, y: actual, type: 'scatter', mode: 'lines+markers', name: 'Selected energy', line: { color: '#14b8a6', width: 2 }, marker: { size: 9 } }
+      { x, y: guide, type: 'scatter', mode: 'lines', name: 'Energy guide', connectgaps: false, line: { color: theme.muted, width: 2, dash: 'dash' }, hovertemplate: 'Guide %{y:.1f}<extra></extra>' },
+      { x, y: targets, type: 'scatter', mode: 'markers', name: 'Explicit target', marker: { size: 10, color: theme.ink, line: { color: theme.panel, width: 1 } }, hovertemplate: 'Target %{y:.1f}<extra></extra>' },
+      { x, y: actual, type: 'scatter', mode: 'lines+markers', name: 'Selected energy', line: { color: '#14b8a6', width: 2 }, marker: { size: 9 }, hovertemplate: 'Track %{y:.1f}<extra></extra>' }
     ];
     const slot = targetSlot();
-    if (slot >= 0) traces.push({ x: [slot + 1], y: [targets[slot]], type: 'scatter', mode: 'markers', name: 'Next slot', marker: { size: 14, color: '#f59e0b', symbol: 'x' } });
+    if (slot >= 0 && Number.isFinite(targets[slot])) traces.push({ x: [slot + 1], y: [targets[slot]], type: 'scatter', mode: 'markers', name: 'Active target', marker: { size: 14, color: '#f59e0b', symbol: 'x' }, hoverinfo: 'skip' });
     Plotly.react('energy-curve', traces, {
-      title: { text: 'Drag target points to edit the energy curve', font: { size: 13, color: theme.ink } },
+      title: { text: 'Drag to set targets · dashed guide is not scored until applied', font: { size: 13, color: theme.ink } },
       margin: { t: 48, r: 20, b: 46, l: 48 },
       template: figureLightMode() ? 'plotly_white' : 'plotly_dark',
       paper_bgcolor: theme.panel,
@@ -4396,72 +5139,117 @@
       return '<div class="transition-editor"><div class="transition-editor-empty">Assign Track 1 and Track 2 to align cue points and preview windows.</div></div>';
     }
     const pitchValues = [-3, -2, -1, 0, 1, 2, 3];
-    const laneInfoHtml = deck => {
+    const compactMetaHtml = deck => {
       const info = transitionWindowInfo(deck);
       if (!info) return '';
+      const direction = deck === 'from' ? 'Outgoing' : 'Incoming';
       const cfg = info.cfg;
-      const cueName = info.cue ? (info.cue.name || 'cue') : 'no cue';
-      return '<div class="transition-lane-head">' +
-        '<b>' + esc(cfg.label) + '</b>' +
-        '<div class="transition-lane-title">' + esc(info.record.title || 'Untitled') + '</div>' +
-        '<div class="transition-lane-meta">' +
-        '<span>' + esc(cueName) + '</span>' +
-        '<span>' + fmt(info.bpm, 2) + ' BPM</span>' +
-        '<span><span data-transition-nudge-label="' + esc(deck) + '">' + fmt(info.nudgeBeats, 2) + '</span> beats</span>' +
+      const pitchField = deck === 'from' ? 'from_pitch_shift' : 'to_pitch_shift';
+      const pitchShift = Number(previewFormState[pitchField]) || 0;
+      const locked = deck === 'from' && transitionReferenceLocked;
+      return '<div class="transition-track-meta transition-track-meta-compact">' +
+        '<div class="transition-track-label">' + esc(info.cfg.label) + ' · ' + direction + '</div>' +
+        '<div class="transition-track-artwork">' + artworkHtml(info.record) + '</div>' +
+        '<div class="transition-track-title">' + esc(info.record.title || 'Untitled') + '</div>' +
+        '<div class="transition-track-artist muted">' + esc(info.record.artists || '') + '</div>' +
+        '<div class="transition-track-facts">' + transitionDeckMetaHtml(info.record, pitchShift) + '</div>' +
+        '<div class="transition-track-facts">' + loudnessMetaHtml(info.record, 'transition') + '</div>' +
+        '<div class="transition-meta-controls' + (locked ? ' locked' : '') + '">' +
+        selectInput(pitchField, 'Repitch', pitchValues, previewFormState[pitchField], v => (Number(v) > 0 ? '+' : '') + v + ' st') +
         '</div>' +
+        '</div>';
+    };
+    const beatJumpLabel = value => value < 1 ? (value === .5 ? '½' : value === .25 ? '¼' : '⅛') : String(value);
+    const beatJumpHtml = deck => {
+      const selected = transitionBeatJumpSizes[deck] || 4;
+      const index = Math.max(0, BEAT_JUMP_SIZES.indexOf(selected));
+      const start = clamp(index - 1, 0, Math.max(0, BEAT_JUMP_SIZES.length - 4));
+      const visible = BEAT_JUMP_SIZES.slice(start, start + 4);
+      return '<div class="transition-beat-jump" aria-label="Beat jump controls">' +
+        '<div class="transition-beat-size-strip"><button type="button" data-transition-beat-size-step="' + deck + ':-1" aria-label="Smaller beat jump">‹</button>' +
+        visible.map(value => '<button type="button" class="' + (value === selected ? 'active' : '') + '" data-transition-beat-size="' + deck + ':' + value + '" aria-pressed="' + (value === selected ? 'true' : 'false') + '">' + beatJumpLabel(value) + '</button>').join('') +
+        '<button type="button" data-transition-beat-size-step="' + deck + ':1" aria-label="Larger beat jump">›</button></div>' +
+        '<div class="transition-beat-jump-actions"><button type="button" data-transition-beat-jump="' + deck + ':-1" aria-label="Jump backward ' + beatJumpLabel(selected) + ' beats">‹</button><button type="button" data-transition-beat-jump="' + deck + ':1" aria-label="Jump forward ' + beatJumpLabel(selected) + ' beats">›</button></div>' +
         '</div>';
     };
     const laneToolsHtml = deck => {
       const info = transitionWindowInfo(deck);
       if (!info) return '';
       const cfg = info.cfg;
-      const pitchField = deck === 'from' ? 'from_pitch_shift' : 'to_pitch_shift';
       const bounds = transitionNudgeBounds(info);
-      return '<div class="transition-lane-tools">' +
-        cueSelectHtml(info.record, cfg.role, cfg.cueField, 'Cue') +
-        numericInput(cfg.nudgeField, 'Nudge beats', previewFormState[cfg.nudgeField], bounds.min, bounds.max, 0.05) +
-        selectInput(pitchField, 'Repitch', pitchValues, previewFormState[pitchField], v => (Number(v) > 0 ? '+' : '') + v + ' st') +
+      const locked = deck === 'from' && transitionReferenceLocked;
+      const disabled = locked ? ' disabled' : '';
+      const nudgeLabel = locked ? 'Reference locked' : ('<span data-transition-nudge-label="' + esc(deck) + '">' + fmt(info.nudgeBeats, 3) + ' beats</span>');
+      return '<div class="transition-lane-tools' + (locked ? ' locked' : '') + '" data-transition-tools="' + esc(deck) + '">' +
+        '<div class="transition-adjustment-readout">' + nudgeLabel + ' · <span data-transition-beatgrid-label="' + esc(deck) + '">' + fmt(info.beatgridMs, 0) + ' ms</span></div>' +
+        cueSelectHtml(info.record, cfg.role, cfg.cueField, 'Cue section') +
+        beatJumpHtml(deck) +
+        '<details class="transition-fine-tune"><summary>Fine tune <span>ⓘ</span></summary><div class="transition-fine-controls">' +
+        numericInput(cfg.nudgeField, 'Nudge beats', previewFormState[cfg.nudgeField], bounds.min, bounds.max, .125) +
+        numericInput(cfg.beatgridField, 'Adjust Beatgrid', previewFormState[cfg.beatgridField], -250, 250, 5) +
+        '<div class="transition-beatgrid-nudge"><button type="button" data-transition-beatgrid-adjust="' + esc(deck) + ':-5"' + disabled + '>−5 ms</button><button type="button" data-transition-beatgrid-adjust="' + esc(deck) + ':5"' + disabled + '>+5 ms</button><button type="button" class="transition-align-reset" data-transition-reset-align="' + esc(deck) + '"' + disabled + '>Reset</button></div></div></details>' +
         '</div>';
     };
     const overviewHtml = deck => {
       const info = transitionWindowInfo(deck);
-      if (!info) return '';
-      return '<div class="transition-overview-card ' + esc(deck) + '" data-transition-card="' + esc(deck) + '-overview">' +
-        laneInfoHtml(deck) +
-        '<div class="transition-overview-row">' +
-        '<button type="button" class="transition-track-play" data-transition-track-play="' + esc(deck) + '" aria-label="Play ' + esc(info.cfg.label) + '">▶</button>' +
-        '<canvas class="transition-overview-canvas" data-transition-surface="overview" data-transition-deck="' + esc(deck) + '" height="76"></canvas>' +
+      const duration = Math.max(1, audioDuration(info && info.record));
+      const initial = info && info.record && rowScrubPositions.has(Number(info.record.idx))
+        ? rowScrubValue(info.record)
+        : Math.max(0, Number(info && info.transitionStart) || 0);
+      return '<div class="transition-overview-strip ' + esc(deck) + '">' +
+        '<button class="transition-track-play" type="button" data-transition-track-play="' + esc(deck) + '" aria-label="Play ' + esc(info && info.cfg ? info.cfg.label : 'track') + '">▶</button>' +
+        '<div class="transition-overview-track">' +
+        '<canvas class="transition-overview-canvas" data-transition-surface="overview" data-transition-deck="' + esc(deck) + '" height="58"></canvas>' +
+        '<input class="transition-track-scrub scrub-range" data-transition-track-scrub="' + esc(deck) + '" type="range" min="0" max="' + esc(duration) + '" step="0.01" value="' + esc(initial) + '" aria-label="' + esc(info && info.cfg ? info.cfg.label : 'Track') + ' playback position">' +
         '</div>' +
         '</div>';
     };
-    const sectionHtml = deck => {
-      const info = transitionWindowInfo(deck);
-      if (!info) return '';
-      const cfg = info.cfg;
-      return '<div class="transition-window-card ' + esc(deck) + '" data-transition-card="' + esc(deck) + '-section">' +
-        '<div class="transition-window-main">' +
-        '<canvas class="transition-section-canvas" data-transition-surface="section" data-transition-deck="' + esc(deck) + '" height="245"></canvas>' +
-        '</div>' +
-        '<aside class="transition-track-side">' +
-        '<div class="transition-track-meta"><div class="transition-track-label">' + esc(cfg.label) + '</div>' + trackPreviewMetaHtml(info.record) + '</div>' +
-        laneToolsHtml(deck) +
-        '</aside>' +
-        '</div>';
-    };
+    const seamPlayHtml = () => '<div class="transition-seam-play">' +
+      '<button id="transition-play-toggle" class="play-button" type="button" aria-label="Play"' + (transportCanPlay() ? '' : ' disabled') + '>▶</button>' +
+      '</div>';
+    const seamActionsHtml = () => '<div class="transition-seam-actions">' +
+      '<span id="transition-scrub-time" class="scrub-time">0:00 / ' + esc(timeText(Number(transitionRender && transitionRender.transition && transitionRender.transition.duration_seconds) || 0)) + '</span>' +
+      '<button id="transition-loop-toggle" class="transition-seam-action transition-loop-toggle' + (transitionLoopEnabled ? ' active' : '') + '" type="button" aria-pressed="' + (transitionLoopEnabled ? 'true' : 'false') + '" title="' + (transitionLoopEnabled ? 'Disable transition loop' : 'Enable transition loop') + '" aria-label="' + (transitionLoopEnabled ? 'Disable transition loop' : 'Enable transition loop') + '">↻</button>' +
+      (config.app_mode
+        ? '<button id="transition-render-button" class="transition-seam-action transition-render-action" type="button" data-preview-action="render" title="Render transition" aria-label="Render transition"' + (transitionRenderPending ? ' disabled' : '') + '>↻</button>'
+        : '') +
+      '<button class="transition-seam-action" type="button" data-preview-action="swap" title="Swap Track 1 and Track 2" aria-label="Swap Track 1 and Track 2">⇅</button>' +
+      '</div>';
+    const viewportHtml = () => '<div class="transition-viewport" aria-label="Transition view range"><div class="transition-viewport-controls"><div class="transition-viewport-track" data-transition-viewport-track><i data-transition-viewport-selection></i><button type="button" data-transition-viewport-handle="start" aria-label="Move start of view"></button><button type="button" data-transition-viewport-handle="end" aria-label="Move end of view"></button></div></div></div>';
     return '<div class="transition-editor">' +
       '<div class="transition-editor-head">' +
       '<h2>Transition Alignment</h2>' +
       '<div class="transition-editor-tools">' +
       '<label><input id="transition-snap-to-beat" type="checkbox"' + (transitionSnapToBeat ? ' checked' : '') + '> Snap to beat</label>' +
+      '<label><input id="transition-lock-track-one" type="checkbox"' + (transitionReferenceLocked ? ' checked' : '') + '> Lock Track 1 reference</label>' +
       '<span id="transition-editor-dirty" class="transition-editor-hint"></span>' +
       '</div>' +
       '</div>' +
-      '<div class="transition-editor-hint">Drag a transition lane or overview window to shift timing. Cue markers can be clicked directly; snap locks movement to beats.</div>' +
-      '<div class="transition-native-stage">' +
+      '<div class="transition-editor-help"><button type="button" class="transition-help-button" aria-label="Transition alignment help">ⓘ<span role="tooltip">Drag either waveform to move its section; click a cue marker to select it. The connected beat and bar lines show alignment. Beatgrid offsets are local preview adjustments.</span></button></div>' +
+      '<div class="transition-connected-stage">' +
+      '<aside class="transition-from-meta">' + compactMetaHtml('from') + '</aside>' +
+      '<section class="transition-from-section transition-track-section">' +
       overviewHtml('from') +
-      '<div class="transition-window-stack">' + sectionHtml('from') + transitionTransportHtml() + sectionHtml('to') + '</div>' +
-      overviewHtml('to') +
+      '<canvas class="transition-connected-canvas transition-connected-from" data-transition-surface="connected" data-transition-deck="from" height="176"></canvas>' +
+      '</section>' +
+      '<aside class="transition-from-tools">' + laneToolsHtml('from') + '</aside>' +
+      seamPlayHtml() +
+      '<div class="transition-seam">' +
+      '<canvas class="transition-seam-grid" data-transition-surface="seam-grid" height="26"></canvas>' +
+      '<div class="transition-seam-transport">' + transitionTransportHtml() + '</div>' +
       '</div>' +
+      seamActionsHtml() +
+      '<aside class="transition-to-tools">' + laneToolsHtml('to') + '</aside>' +
+      '<section class="transition-to-section transition-track-section">' +
+      '<canvas class="transition-connected-canvas transition-connected-to" data-transition-surface="connected" data-transition-deck="to" height="176"></canvas>' +
+      overviewHtml('to') +
+      '</section>' +
+      '<aside class="transition-to-meta">' + compactMetaHtml('to') + '</aside>' +
+      '<div class="transition-viewport-left"><button type="button" data-transition-viewport-zoom="out" title="Zoom out" aria-label="Zoom out">−</button></div>' +
+      viewportHtml() +
+      '<div class="transition-viewport-actions"><button type="button" data-transition-viewport-zoom="in" title="Zoom in" aria-label="Zoom in">+</button><button type="button" data-transition-viewport-reset>Fit</button></div>' +
+      '</div>' +
+      liveMixerHtml() +
       '</div>';
   }
   function cueMarkerColor(role) {
@@ -4513,7 +5301,8 @@
     return clamp(a + ((b - a) * frac), -1, 1);
   }
   function transitionLaneRect(width, height, surface) {
-    if (surface === 'overview') return { x: 8, y: 7, w: Math.max(1, width - 16), h: Math.max(1, height - 14) };
+    if (surface === 'overview') return { x: 0, y: 7, w: Math.max(1, width), h: Math.max(1, height - 14) };
+    if (surface === 'connected') return { x: 0, y: 0, w: Math.max(1, width), h: Math.max(1, height) };
     return { x: 10, y: 10, w: Math.max(1, width - 20), h: Math.max(1, height - 20) };
   }
   function transitionVisibleRange(info, surface) {
@@ -4521,6 +5310,28 @@
     if (surface === 'overview') return { start: 0, end: trackDuration, duration: trackDuration };
     const start = info.contextStart;
     const end = info.contextEnd;
+    return { start, end, duration: Math.max(info.beatSec, end - start) };
+  }
+  function transitionViewportDefaults(reference) {
+    const totalBeats = Math.max(8, reference.totalBars * reference.beatsPerBar);
+    return { start: -reference.frontBars * reference.beatsPerBar, end: totalBeats - reference.frontBars * reference.beatsPerBar };
+  }
+  function transitionViewportState(reference) {
+    const defaults = transitionViewportDefaults(reference);
+    const minSpan = 8;
+    const start = Number(transitionViewport && transitionViewport.start);
+    const end = Number(transitionViewport && transitionViewport.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < minSpan) {
+      transitionViewport = Object.assign({}, defaults);
+    }
+    transitionViewport.start = clamp(Number(transitionViewport.start), defaults.start, defaults.end - minSpan);
+    transitionViewport.end = clamp(Number(transitionViewport.end), transitionViewport.start + minSpan, defaults.end);
+    return transitionViewport;
+  }
+  function transitionSharedView(info, reference) {
+    const viewport = transitionViewportState(reference);
+    const start = info.transitionStart + viewport.start * info.beatSec;
+    const end = info.transitionStart + viewport.end * info.beatSec;
     return { start, end, duration: Math.max(info.beatSec, end - start) };
   }
   function xForTransitionTime(time, view, lane) {
@@ -4632,62 +5443,293 @@
     }
     ctx.restore();
   }
-  function transitionAutomationValue(info, family, timeSec) {
-    const modes = resolvedPreviewModes();
-    const mode = family + ':' + (modes[family] || 'none');
-    const deck = info.cfg.deck === 'from' ? 'a' : 'b';
-    const duration = Math.max(1e-9, info.transitionEnd - info.transitionStart);
-    const x = clamp((Number(timeSec) - info.transitionStart) / duration, 0, 1);
-    if (timeSec < info.transitionStart) {
-      if (family === 'volume') return deck === 'a' ? 1 : 0;
-      if (family === 'eq') return 1;
-      return null;
-    }
-    if (timeSec > info.transitionEnd) {
-      if (family === 'volume') return deck === 'a' ? 0 : 1;
-      if (family === 'eq') return 1;
-      return null;
-    }
-    return previewValueFor(mode, deck, x);
+  function automationCurveProgress(t, curve) {
+    if (curve === 'smooth') return t * t * (3 - 2 * t);
+    if (curve === 'exponential') return (Math.exp(4 * t) - 1) / (Math.exp(4) - 1);
+    return t;
   }
-  function drawTransitionAutomationCurve(ctx, info, view, lane, family, color) {
-    const samples = Math.max(90, Math.floor(lane.w / 5));
-    let started = false;
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = family === 'filter' ? 2.0 : 2.4;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    for (let i = 0; i <= samples; i += 1) {
-      const pct = i / samples;
-      const timeSec = view.start + (pct * view.duration);
-      const value = transitionAutomationValue(info, family, timeSec);
-      if (value == null || !Number.isFinite(Number(value))) {
-        started = false;
-        continue;
-      }
-      const x = lane.x + (pct * lane.w);
-      const y = lane.y + ((1 - clamp(Number(value), 0, 1)) * lane.h);
-      if (!started) {
-        ctx.moveTo(x, y);
-        started = true;
-      } else {
-        ctx.lineTo(x, y);
-      }
+  function automationValueAt(points, beat, laneName='volume') {
+    const list = Array.isArray(points) ? points : [];
+    if (!list.length) return 0;
+    let index = -1;
+    for (let i = 0; i < list.length; i += 1) {
+      if (Number(list[i].beat) <= beat + .000001) index = i;
+      else break;
     }
-    ctx.stroke();
+    if (index < 0) return Number(list[0].value) || 0;
+    if (index >= list.length - 1) return Number(list[list.length - 1].value) || 0;
+    const a = list[index], b = list[index + 1];
+    const span = Number(b.beat) - Number(a.beat);
+    if (span <= .000001) return Number(b.value) || 0;
+    const t = clamp((beat - Number(a.beat)) / span, 0, 1);
+    const progress = automationCurveProgress(t, a.curve);
+    if (usesDawAutomationScale(laneName)) {
+      const start = automationScalePosition(laneName, Number(a.value));
+      const end = automationScalePosition(laneName, Number(b.value));
+      return automationValueFromScalePosition(laneName, start + ((end - start) * progress));
+    }
+    return Number(a.value) + ((Number(b.value) - Number(a.value)) * progress);
+  }
+  function automationValueLabel(laneName, value) {
+    const n = Number(value) || 0;
+    if (laneName === 'filter') {
+      return filterCutoffLabel(n);
+    }
+    if (laneName === 'delay' || laneName === 'reverb') return Math.round(clamp(n, 0, 1) * 100) + '%';
+    if (n <= -95) return laneName === 'volume' ? 'MUTE' : 'KILL';
+    return n.toFixed(1) + ' dB';
+  }
+  function formatFilterFrequency(hz) {
+    const value = Math.max(1, Number(hz) || 0);
+    return value >= 1000 ? (value / 1000).toFixed(value >= 10000 ? 0 : 1) + ' kHz' : Math.round(value) + ' Hz';
+  }
+  function filterCutoffForAmount(value) {
+    const amount = clamp(Number(value) || 0, -1, 1);
+    const wet = Math.abs(amount);
+    if (wet < .001) return null;
+    if (amount < 0) return 20000 * Math.pow(20 / 20000, wet);
+    return 20 * Math.pow(20000 / 20, wet);
+  }
+  function filterCutoffLabel(value) {
+    const amount = clamp(Number(value) || 0, -1, 1);
+    const cutoff = filterCutoffForAmount(amount);
+    if (cutoff === null) return 'Bypass';
+    return (amount < 0 ? 'LPF ' : 'HPF ') + formatFilterFrequency(cutoff) + (Math.abs(amount) >= .995 ? ' · KILL' : '');
+  }
+  function automationValueUnit(laneName) {
+    return laneName === 'filter' ? 'filter' : (laneName === 'delay' || laneName === 'reverb' ? 'depth' : 'dB');
+  }
+  function selectedAutomationSegmentParts() {
+    const selected = transitionAutomationSelectedSegment;
+    if (!selected) return null;
+    const points = automationLane(selected.deck, selected.lane);
+    if (!points || selected.index < 0 || selected.index >= points.length - 1) return null;
+    return { ...selected, points, start: points[selected.index], end: points[selected.index + 1] };
+  }
+  function setAutomationPointSelection(deck, lane, index) {
+    const points = automationLane(deck, lane);
+    if (!points || index < 0 || index >= points.length) return;
+    transitionAutomationSelectedPoint = { deck, lane, index };
+    const segmentIndex = index > 0 && sameAutomationBeat(points[index - 1].beat, points[index].beat)
+      ? index - 1
+      : (index < points.length - 1 ? index : points.length - 2);
+    transitionAutomationSelectedSegment = points.length < 2 ? null : { deck, lane, index: segmentIndex };
+  }
+  function setAutomationSegmentSelection(deck, lane, index) {
+    const points = automationLane(deck, lane);
+    if (!points || index < 0 || index >= points.length - 1) return;
+    transitionAutomationSelectedPoint = null;
+    transitionAutomationSelectedSegment = { deck, lane, index };
+  }
+  function syncAutomationEditorControls() {
+    const active = transitionAutomationActiveLane;
+    document.querySelectorAll('[data-automation-lane]').forEach(button => {
+      button.classList.toggle('active', button.getAttribute('data-automation-lane') === active);
+    });
+    const segment = selectedAutomationSegmentParts();
+    const isJump = !!(segment && Math.abs(Number(segment.start.beat) - Number(segment.end.beat)) < .000001);
+    const curveSelect = document.querySelector('[data-automation-curve]');
+    if (curveSelect) {
+      curveSelect.disabled = !segment || isJump;
+      curveSelect.value = segment ? (segment.start.curve || 'linear') : 'linear';
+    }
+    const unit = segment ? automationValueUnit(segment.lane) : 'value';
+    document.querySelectorAll('[data-automation-segment-label]').forEach(label => {
+      const [endpoint, field] = String(label.getAttribute('data-automation-segment-label')).split(':');
+      const valueLabel = segment && segment.lane === 'filter' ? 'position' : unit;
+      label.textContent = field === 'beat' && isJump ? 'Jump beat' : (endpoint === 'start' ? 'Start ' : 'End ') + (field === 'beat' ? 'beat' : valueLabel);
+    });
+    document.querySelectorAll('[data-automation-segment-field]').forEach(input => {
+      const [endpoint, field] = String(input.getAttribute('data-automation-segment-field')).split(':');
+      const point = segment && (endpoint === 'start' ? segment.start : segment.end);
+      const pointIndex = segment ? segment.index + (endpoint === 'end' ? 1 : 0) : -1;
+      const fixedBeat = field === 'beat' && segment && (pointIndex === 0 || pointIndex === segment.points.length - 1);
+      const hiddenDuplicateJumpBeat = isJump && field === 'beat' && endpoint === 'end';
+      const wrapper = input.closest('label');
+      if (wrapper) wrapper.hidden = hiddenDuplicateJumpBeat;
+      input.disabled = !point || fixedBeat || hiddenDuplicateJumpBeat;
+      input.value = point ? String(field === 'beat' ? Number(point.beat).toFixed(2) : Number(point.value).toFixed(segment.lane === 'filter' || segment.lane === 'delay' || segment.lane === 'reverb' ? 2 : 1)) : '';
+      input.min = field === 'beat' ? '0' : String(automationLaneLimits(segment ? segment.lane : 'volume')[0]);
+      input.max = field === 'beat' ? String(transitionAutomationBeats()) : String(automationLaneLimits(segment ? segment.lane : 'volume')[1]);
+      input.step = field === 'beat' ? '.01' : (segment && (segment.lane === 'filter' || segment.lane === 'delay' || segment.lane === 'reverb') ? '.01' : '.1');
+    });
+    document.querySelectorAll('[data-automation-filter-readout]').forEach(readout => {
+      const endpoint = readout.getAttribute('data-automation-filter-readout');
+      const point = segment && (endpoint === 'start' ? segment.start : segment.end);
+      readout.textContent = segment && segment.lane === 'filter' && point ? filterCutoffLabel(point.value) : '';
+      readout.hidden = !(segment && segment.lane === 'filter' && point);
+    });
+    const deleteButton = document.querySelector('[data-automation-action="delete-segment-keyframe"]');
+    if (deleteButton) deleteButton.disabled = !segment || segment.index + 1 >= segment.points.length - 1;
+  }
+  function automationValueY(laneName, value, lane) {
+    return lane.y + ((1 - automationScalePosition(laneName, value)) * lane.h);
+  }
+  function automationPointXY(info, view, lane, laneName, point) {
+    const time = info.transitionStart + Number(point.beat) * info.beatSec;
+    return { x: xForTransitionTime(time, view, lane), y: automationValueY(laneName, point.value, lane) };
+  }
+  function automationLaneColor(laneName) {
+    if (laneName === 'volume') return '#48c8f2';
+    if (laneName === 'filter') return '#e58cff';
+    if (laneName === 'delay') return '#60a5fa';
+    if (laneName === 'reverb') return '#a78bfa';
+    if (laneName === 'eq_low') return '#ffca3a';
+    if (laneName === 'eq_mid') return '#f59e0b';
+    return '#fb7185';
+  }
+  function automationLaneButtonHtml(deck, lane) {
+    const label = lane === 'eq_low' ? 'Low EQ'
+      : lane === 'eq_mid' ? 'Mid EQ'
+      : lane === 'eq_high' ? 'High EQ'
+      : lane[0].toUpperCase() + lane.slice(1);
+    const icon = lane === 'volume' ? 'VOL'
+      : lane === 'filter' ? 'FLT'
+      : lane === 'delay' ? 'DLY'
+      : lane === 'reverb' ? 'REV'
+      : lane.replace('eq_', '').toUpperCase();
+    return '<button type="button" class="fx-item lane-' + lane + (transitionAutomationActiveLane === deck + ':' + lane ? ' active' : '') + '" style="--automation-lane-color:' + automationLaneColor(lane) + '" data-automation-lane="' + deck + ':' + lane + '"><span class="fx-icon lane-' + lane + '">' + icon + '</span><span class="fx-line lane-' + lane + '"></span>' + label + '</button>';
+  }
+  function automationDeckLegendHtml(deck) {
+    const trackLabel = deck === 'from' ? 'Track 1' : 'Track 2';
+    return '<div class="automation-deck-legend"><b>' + trackLabel + '</b><div class="automation-lane-groups"><div class="automation-lane-group">' + LIVE_CHANNEL_LANES.map(lane => automationLaneButtonHtml(deck, lane)).join('') + '</div><div class="automation-lane-group automation-fx-lane-group"><span>FX</span>' + LIVE_FX_LANES.map(lane => automationLaneButtonHtml(deck, lane)).join('') + '</div></div></div>';
+  }
+  function drawAutomationScaleTicks(ctx, laneName, lane) {
+    if (!usesDawAutomationScale(laneName)) return;
+    const labels = [[laneName === 'volume' ? 'MUTE' : 'KILL', -96], ['−30', -30], ['−13', -13], ['0', 0], ['+6', 6]];
+    ctx.save();
+    ctx.font = '9px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'left';
+    labels.forEach(([label, value]) => {
+      const y = automationValueY(laneName, value, lane);
+      ctx.strokeStyle = 'rgba(226,232,240,.15)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(lane.x, y); ctx.lineTo(lane.x + lane.w, y); ctx.stroke();
+      ctx.fillStyle = 'rgba(226,232,240,.62)';
+      ctx.fillText(label, lane.x + 4, clamp(y - 3, lane.y + 9, lane.y + lane.h - 3));
+    });
+    ctx.restore();
+  }
+  function drawFilterScaleTicks(ctx, lane) {
+    const labels = [-1, -.5, 0, .5, 1].map(value => [filterCutoffLabel(value), value]);
+    ctx.save();
+    ctx.font = '9px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'left';
+    labels.forEach(([label, value]) => {
+      const y = automationValueY('filter', value, lane);
+      ctx.strokeStyle = value === 0 ? 'rgba(229,140,255,.34)' : 'rgba(226,232,240,.15)';
+      ctx.lineWidth = value === 0 ? 1.3 : 1;
+      ctx.beginPath(); ctx.moveTo(lane.x, y); ctx.lineTo(lane.x + lane.w, y); ctx.stroke();
+      ctx.fillStyle = value === 0 ? 'rgba(245,208,254,.84)' : 'rgba(226,232,240,.62)';
+      ctx.fillText(label, lane.x + 4, clamp(y - 3, lane.y + 9, lane.y + lane.h - 3));
+    });
     ctx.restore();
   }
   function drawTransitionAutomationCurves(ctx, info, view, lane) {
     if (!info || !view || !lane) return;
-    drawTransitionAutomationCurve(ctx, info, view, lane, 'volume', 'rgba(72,200,242,.94)');
-    drawTransitionAutomationCurve(ctx, info, view, lane, 'eq', 'rgba(255,209,61,.90)');
-    drawTransitionAutomationCurve(ctx, info, view, lane, 'filter', 'rgba(229,140,255,.88)');
+    ensureTransitionAutomation();
+    const deck = info.cfg.deck;
+    const lanes = ['volume', 'eq_low', 'eq_mid', 'eq_high', 'filter'];
+    const transitionStart = Math.max(view.start, info.transitionStart);
+    const transitionEnd = Math.min(view.end, info.transitionEnd);
+    if (transitionEnd <= transitionStart) return;
     ctx.save();
-    ctx.fillStyle = 'rgba(242,242,242,.70)';
-    ctx.font = '10px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    ctx.fillText('volume / EQ / filter', lane.x + 8, lane.y + 14);
+    if (transitionAutomationActiveLane && transitionAutomationActiveLane.endsWith(':filter')) {
+      const y = automationValueY('filter', 0, lane);
+      ctx.strokeStyle = 'rgba(229,140,255,.48)';
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(lane.x, y); ctx.lineTo(lane.x + lane.w, y); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    lanes.forEach(laneName => {
+      const points = automationLane(deck, laneName);
+      if (!points) return;
+      const active = transitionAutomationActiveLane === deck + ':' + laneName;
+      const color = automationLaneColor(laneName);
+      if (active) {
+        if (laneName === 'filter') drawFilterScaleTicks(ctx, lane);
+        else drawAutomationScaleTicks(ctx, laneName, lane);
+      }
+      const samples = Math.max(32, Math.floor(lane.w / 8));
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = active ? 1 : .30;
+      ctx.lineWidth = active ? 2.8 : 1.2;
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      let previousBeat = null;
+      for (let i = 0; i <= samples; i += 1) {
+        const time = transitionStart + (i / samples) * (transitionEnd - transitionStart);
+        const beat = (time - info.transitionStart) / info.beatSec;
+        const x = xForTransitionTime(time, view, lane);
+        const y = automationValueY(laneName, automationValueAt(points, beat, laneName), lane);
+        const crossesJump = previousBeat !== null && points.some((point, index) => index > 0 && sameAutomationBeat(point.beat, points[index - 1].beat) && Number(point.beat) > previousBeat && Number(point.beat) <= beat);
+        if (i === 0 || crossesJump) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        previousBeat = beat;
+      }
+      ctx.stroke();
+      points.forEach((point, index) => {
+        if (index === 0 || Math.abs(Number(point.beat) - Number(points[index - 1].beat)) >= .000001) return;
+        const x = automationPointXY(info, view, lane, laneName, point).x;
+        const y0 = automationValueY(laneName, points[index - 1].value, lane);
+        const y1 = automationValueY(laneName, point.value, lane);
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = active ? 1 : .30;
+        ctx.lineWidth = active ? 2.8 : 1.2;
+        ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
+        ctx.restore();
+      });
+      if (active) {
+        const selectedSegment = selectedAutomationSegmentParts();
+        if (selectedSegment && selectedSegment.deck === deck && selectedSegment.lane === laneName) {
+          const startBeat = Number(selectedSegment.start.beat);
+          const endBeat = Number(selectedSegment.end.beat);
+          const segmentSamples = 24;
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255,255,255,.92)';
+          ctx.lineWidth = 4.4;
+          ctx.globalAlpha = .72;
+          ctx.beginPath();
+          if (Math.abs(endBeat - startBeat) < .000001) {
+            const x = automationPointXY(info, view, lane, laneName, selectedSegment.start).x;
+            ctx.moveTo(x, automationValueY(laneName, selectedSegment.start.value, lane));
+            ctx.lineTo(x, automationValueY(laneName, selectedSegment.end.value, lane));
+          } else {
+            for (let i = 0; i <= segmentSamples; i += 1) {
+              const beat = startBeat + ((i / segmentSamples) * (endBeat - startBeat));
+              const time = info.transitionStart + beat * info.beatSec;
+              const x = xForTransitionTime(time, view, lane);
+              const y = automationValueY(laneName, automationValueAt(points, beat, laneName), lane);
+              if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+        points.forEach((point, index) => {
+          const xy = automationPointXY(info, view, lane, laneName, point);
+          if (xy.x < lane.x - 8 || xy.x > lane.x + lane.w + 8) return;
+          const selected = transitionAutomationSelectedPoint && transitionAutomationSelectedPoint.deck === deck && transitionAutomationSelectedPoint.lane === laneName && transitionAutomationSelectedPoint.index === index;
+          ctx.fillStyle = selected ? '#fff' : color;
+          ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(xy.x, xy.y, selected ? 5.5 : 4.2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+          if (selected) {
+            const label = Number(point.beat).toFixed(2) + ' · ' + automationValueLabel(laneName, point.value);
+            ctx.save();
+            ctx.font = '11px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+            const width = Math.ceil(ctx.measureText(label).width) + 10;
+            const lx = clamp(xy.x + 9, lane.x + 3, lane.x + lane.w - width - 3);
+            const ly = clamp(xy.y - 25, lane.y + 3, lane.y + lane.h - 20);
+            ctx.fillStyle = 'rgba(15,23,42,.94)';
+            ctx.strokeStyle = color; ctx.lineWidth = 1;
+            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(lx, ly, width, 19, 4); ctx.fill(); ctx.stroke(); }
+            else { ctx.fillRect(lx, ly, width, 19); ctx.strokeRect(lx, ly, width, 19); }
+            ctx.fillStyle = '#f8fafc'; ctx.fillText(label, lx + 5, ly + 13);
+            ctx.restore();
+          }
+        });
+      }
+    });
     ctx.restore();
   }
   function drawTransitionWaveform(ctx, info, view, lane, surface) {
@@ -4746,10 +5788,21 @@
   function drawTransitionSelection(ctx, info, view, lane) {
     const selectedStart = Math.max(view.start, info.transitionStart);
     const selectedEnd = Math.min(view.end, info.transitionEnd);
-    if (selectedEnd <= selectedStart) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,.36)';
+    const visibleStart = Math.max(view.start, info.contextStart);
+    const visibleEnd = Math.min(view.end, info.contextEnd);
+    if (visibleEnd > visibleStart) {
+      const x0 = xForTransitionTime(visibleStart, view, lane);
+      const x1 = xForTransitionTime(Math.max(visibleStart, selectedStart), view, lane);
+      const x2 = xForTransitionTime(Math.min(visibleEnd, selectedEnd), view, lane);
+      const x3 = xForTransitionTime(visibleEnd, view, lane);
+      if (x1 > x0) ctx.fillRect(x0, lane.y, x1 - x0, lane.h);
+      if (x3 > x2) ctx.fillRect(x2, lane.y, x3 - x2, lane.h);
+    }
+    if (selectedEnd <= selectedStart) { ctx.restore(); return; }
     const x0 = xForTransitionTime(selectedStart, view, lane);
     const x1 = xForTransitionTime(selectedEnd, view, lane);
-    ctx.save();
     ctx.fillStyle = info.cfg.deck === 'from' ? roleColors.track1Fill : roleColors.track2Fill;
     ctx.fillRect(x0, lane.y, Math.max(2, x1 - x0), lane.h);
     ctx.strokeStyle = info.cfg.color;
@@ -4782,20 +5835,28 @@
     });
   }
   function transitionPlaybackProgress() {
-    if (!transitionRender || !transitionRender.ok) return null;
-    const audio = transitionAudioElement();
-    const scrub = document.getElementById('transition-scrub');
-    const duration = transitionDuration(audio);
-    if (!Number.isFinite(duration) || duration <= 0) return null;
-    let current = audio && Number.isFinite(Number(audio.currentTime)) ? Number(audio.currentTime) : NaN;
-    if (!Number.isFinite(current) && scrub) current = Number(scrub.value);
-    if (!Number.isFinite(current)) return null;
-    return clamp(current / duration, 0, 1);
+    const duration = activeTransportDuration();
+    const position = activeTransportPosition();
+    if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(position)) return null;
+    return clamp(position / duration, 0, 1);
+  }
+  function transitionDeckPlaybackTime(info) {
+    if (activeTransportMode() === 'live' && livePlayback && livePlayback.sourceContextStarts) {
+      const sourceStart = Number(livePlayback.sourceContextStarts[info.cfg.deck]);
+      if (Number.isFinite(sourceStart)) return sourceStart + activeTransportPosition();
+    }
+    const progress = transitionPlaybackProgress();
+    return progress == null ? null : info.contextStart + (progress * info.duration);
+  }
+  function livePlaybackProgress() {
+    if (!livePlayback || !liveAudioContext || !Number.isFinite(livePlayback.duration) || livePlayback.duration <= 0) return null;
+    const elapsed = Math.max(0, liveAudioContext.currentTime - livePlayback.startAt);
+    return ((livePlayback.startPosition + elapsed) % livePlayback.duration) / livePlayback.duration;
   }
   function drawTransitionPlaybackHead(ctx, info, view, lane, surface) {
-    const progress = transitionPlaybackProgress();
-    if (progress == null) return;
-    const trackTime = info.contextStart + (progress * info.duration);
+    if (surface === 'overview' && previewAudioIdx === Number(info.record.idx) && previewAudioContext === 'transition-' + info.cfg.deck) return;
+    const trackTime = transitionDeckPlaybackTime(info);
+    if (trackTime == null) return;
     if (trackTime < view.start || trackTime > view.end) return;
     const x = xForTransitionTime(trackTime, view, lane);
     ctx.save();
@@ -4817,6 +5878,98 @@
       ctx.fill();
     }
     ctx.restore();
+  }
+  function drawTransitionDeckPlaybackHead(ctx, info, view, lane, surface) {
+    if (surface !== 'overview' || previewAudioIdx !== Number(info.record.idx) || previewAudioContext !== 'transition-' + info.cfg.deck || !els.audio) return;
+    const trackTime = Number(els.audio.currentTime);
+    if (!Number.isFinite(trackTime) || trackTime < view.start || trackTime > view.end) return;
+    const x = xForTransitionTime(trackTime, view, lane);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(103,232,249,.98)';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = 'rgba(34,211,238,.72)';
+    ctx.shadowBlur = 7;
+    ctx.beginPath(); ctx.moveTo(x, lane.y + 1); ctx.lineTo(x, lane.y + lane.h - 1); ctx.stroke();
+    ctx.restore();
+  }
+  function transitionPlaybackBounds(reference) {
+    const duration = activeTransportDuration();
+    if (!reference || !Number.isFinite(duration) || duration <= 0) return null;
+    return { start: 0, end: duration, duration };
+  }
+  function transitionVisiblePlaybackProgress(reference) {
+    const view = transitionSharedView(reference, reference);
+    const trackTime = transitionDeckPlaybackTime(reference);
+    if (!Number.isFinite(trackTime)) return null;
+    return clamp((trackTime - view.start) / view.duration, 0, 1);
+  }
+  function drawConnectedTransitionPlaybackHead(ctx, lane, reference) {
+    const progress = transitionVisiblePlaybackProgress(reference);
+    if (progress == null) return;
+    const x = lane.x + progress * lane.w;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,.96)';
+    ctx.lineWidth = 2.1;
+    ctx.shadowColor = 'rgba(103,232,249,.65)';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(x, lane.y);
+    ctx.lineTo(x, lane.y + lane.h);
+    ctx.stroke();
+    ctx.restore();
+  }
+  function drawConnectedTransitionSurface(canvas, info, reference) {
+    const rect = canvas.getBoundingClientRect();
+    const widthCss = Math.max(1, rect.width || canvas.clientWidth || 420);
+    const heightCss = Math.max(1, rect.height || 160);
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.floor(widthCss * dpr);
+    canvas.height = Math.floor(heightCss * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, widthCss, heightCss);
+    ctx.fillStyle = '#141414';
+    ctx.fillRect(0, 0, widthCss, heightCss);
+    const lane = transitionLaneRect(widthCss, heightCss, 'connected');
+    const view = transitionSharedView(info, reference);
+    const gridView = transitionSharedView(reference, reference);
+    drawTransitionGrid(ctx, reference, gridView, lane, 'connected');
+    drawTransitionWaveform(ctx, info, view, lane, 'connected');
+    drawTransitionSelection(ctx, info, view, lane);
+    drawTransitionAutomationCurves(ctx, info, view, lane);
+    drawTransitionCueMarkers(ctx, info, view, lane, 'connected');
+    drawConnectedTransitionPlaybackHead(ctx, lane, reference);
+  }
+  function drawTransitionSeamGrid(canvas, reference) {
+    if (!canvas || !reference) return;
+    const rect = canvas.getBoundingClientRect();
+    const widthCss = Math.max(1, rect.width || canvas.clientWidth || 420);
+    const heightCss = Math.max(1, rect.height || 24);
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.floor(widthCss * dpr);
+    canvas.height = Math.floor(heightCss * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, widthCss, heightCss);
+    ctx.fillStyle = '#141414';
+    ctx.fillRect(0, 0, widthCss, heightCss);
+    const lane = { x: 0, y: 0, w: widthCss, h: heightCss };
+    const view = transitionSharedView(reference, reference);
+    const firstBeat = Math.floor((view.start - reference.transitionStart) / reference.beatSec) - 1;
+    const lastBeat = Math.ceil((view.end - reference.transitionStart) / reference.beatSec) + 1;
+    for (let beat = firstBeat; beat <= lastBeat; beat += 1) {
+      const time = reference.transitionStart + beat * reference.beatSec;
+      if (time < view.start || time > view.end) continue;
+      const x = xForTransitionTime(time, view, lane);
+      const isBar = beat % reference.beatsPerBar === 0;
+      const isPhrase = beat % (reference.beatsPerBar * 4) === 0;
+      ctx.strokeStyle = isPhrase ? '#555' : (isBar ? '#3e3e3e' : '#2d2d2d');
+      ctx.lineWidth = isPhrase ? 1.25 : 1;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, heightCss);
+      ctx.stroke();
+    }
   }
   function drawTransitionSurface(canvas, info, surface) {
     const rect = canvas.getBoundingClientRect();
@@ -4846,6 +5999,7 @@
     if (surface === 'section') drawTransitionAutomationCurves(ctx, info, view, lane);
     drawTransitionCueMarkers(ctx, info, view, lane, surface);
     drawTransitionPlaybackHead(ctx, info, view, lane, surface);
+    drawTransitionDeckPlaybackHead(ctx, info, view, lane, surface);
     if (surface === 'section') {
       ctx.fillStyle = 'rgba(242,242,242,.84)';
       ctx.font = '11px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
@@ -4865,7 +6019,8 @@
     const x = Number(ev.clientX) - rect.left;
     const y = Number(ev.clientY) - rect.top;
     if (x < lane.x || x > lane.x + lane.w || y < lane.y - 6 || y > lane.y + lane.h + 6) return null;
-    const view = transitionVisibleRange(info, surface);
+    const reference = transitionWindowInfo('from') || info;
+    const view = surface === 'connected' ? transitionSharedView(info, reference) : transitionVisibleRange(info, surface);
     const threshold = surface === 'overview' ? 8 : 10;
     let best = null;
     let bestDx = Infinity;
@@ -4883,36 +6038,62 @@
   }
   function drawTransitionEditor() {
     safeUi('transition editor draw', () => {
+      const reference = transitionWindowInfo('from');
+      const seamGrid = document.querySelector('[data-transition-surface="seam-grid"]');
+      if (seamGrid && reference) drawTransitionSeamGrid(seamGrid, reference);
       ['from', 'to'].forEach(deck => {
         const info = transitionWindowInfo(deck);
         if (!info) return;
         ensureDetailedWaveform(info.record, { redrawTransition: true });
         const overview = document.querySelector('[data-transition-surface="overview"][data-transition-deck="' + deck + '"]');
         const section = document.querySelector('[data-transition-surface="section"][data-transition-deck="' + deck + '"]');
+        const connected = document.querySelector('[data-transition-surface="connected"][data-transition-deck="' + deck + '"]');
         if (overview) drawTransitionOverview(overview, info);
         if (section) drawTransitionSection(section, info);
+        if (connected && reference) drawConnectedTransitionSurface(connected, info, reference);
         const label = document.querySelector('[data-transition-nudge-label="' + deck + '"]');
-        if (label) label.textContent = fmt(info.nudgeBeats, 2);
+        if (label) label.textContent = fmt(info.nudgeBeats, 3) + ' beats';
+        const beatgridLabel = document.querySelector('[data-transition-beatgrid-label="' + deck + '"]');
+        if (beatgridLabel) beatgridLabel.textContent = fmt(info.beatgridMs, 0) + ' ms';
       });
+      if (reference) syncTransitionViewportControls(reference);
       updateTransitionTrackPlayButtons();
       updateTransitionDirtyUi();
     });
   }
   function renderTransitionPreview() {
     if (!els.transitionPreview) return;
+    const playbackState = captureTransitionPlaybackState();
     const from = transitionFromIdx === null ? null : byIdx.get(transitionFromIdx);
     const to = transitionToIdx === null ? null : byIdx.get(transitionToIdx);
+    if (config.app_mode && from && to) scheduleLivePreparation();
     let scoreHtml = '';
     if (from && to) {
       const slot = Math.max(0, targetSlot());
       const score = scoreTransition(transitionFromIdx, transitionToIdx, slot);
+      const rankInfo = transitionRecommendationRank(transitionFromIdx, transitionToIdx, slot);
       scoreHtml =
-        '<section class="transition-preview-score"><h3>Transition score</h3>' +
-        scoreSummaryBarsHtml(score) +
-        featureBarsHtml(score) +
-        '</section>';
+        '<section class="transition-preview-score transition-score-compact"><div><span>Match</span><b>' + esc(fmt(score.finalScore, 0)) + '</b></div>' +
+        '<button type="button" class="transition-help-button" aria-label="Transition score details">ⓘ<span role="tooltip">Energy ' + esc(fmt(score.energyScore, 0)) + ' · Style ' + esc(fmt(score.styleScore, 0)) + ' · Rhythm ' + esc(fmt(score.rhythmScore, 0)) + ' · Harmony ' + esc(fmt(score.harmonicScore, 0)) + ' · Rank ' + esc(fmt(rankInfo, 0)) + '</span></button></section>';
     }
     let controlsHtml = '';
+    const topStatus = transitionPreviewMode === 'live'
+      ? liveStatusText()
+      : transitionRenderStatusInfo().text;
+    const nowActionsHtml = config.app_mode ?
+      '<div class="transition-now-actions">' +
+      '<label class="transition-now-mode">Mode<select data-preview-mode><option value="verified"' + (transitionPreviewMode === 'verified' ? ' selected' : '') + '>Verified</option><option value="live"' + (transitionPreviewMode === 'live' ? ' selected' : '') + '>Live</option></select></label>' +
+      '<span class="transition-now-status" data-live-status title="' + esc(topStatus) + '">' + esc(topStatus) + '</span>' +
+      '<button type="button" class="transition-now-icon' + (transitionLoopEnabled ? ' active' : '') + '" data-transition-loop-top aria-pressed="' + (transitionLoopEnabled ? 'true' : 'false') + '" title="' + (transitionLoopEnabled ? 'Disable transition loop' : 'Enable transition loop') + '" aria-label="' + (transitionLoopEnabled ? 'Disable transition loop' : 'Enable transition loop') + '">↻</button>' +
+      '<button type="button" class="transition-now-action" data-preview-action="render">Render</button>' +
+      '<button type="button" class="transition-now-icon" data-preview-action="swap" title="Swap Track 1 and Track 2" aria-label="Swap Track 1 and Track 2">⇅</button>' +
+      '</div>' : '';
+    const nowPlayingHtml = from && to ?
+      '<section class="transition-now-playing">' +
+      '<div class="transition-now-track from">' + artworkHtml(from) + '<div><span>Track 1 · Out</span><b>' + esc(from.title || 'Untitled') + '</b><small>' + esc(from.artists || '') + '</small></div></div>' +
+      '<span class="transition-now-arrow">→</span>' +
+      '<div class="transition-now-track to">' + artworkHtml(to) + '<div><span>Track 2 · In</span><b>' + esc(to.title || 'Untitled') + '</b><small>' + esc(to.artists || '') + '</small></div></div>' +
+      scoreHtml + nowActionsHtml + '</section>' : scoreHtml;
     if (config.app_mode) {
       if (!appLoadStarted) loadAppRuntime();
       if (appOptions && appOptions.error) {
@@ -4926,32 +6107,38 @@
         const volumeModes = appOptions.volume_modes || [];
         const eqModes = appOptions.eq_modes || [];
         const filterModes = appOptions.filter_modes || [];
+        const qualityOptions = appOptions.transition_qualities || [
+          { id: 'preview', label: 'Preview — faster R2, 44.1 kHz' },
+          { id: 'final', label: 'Final — higher-quality R3, 44.1 kHz' },
+        ];
+        const qualityLabels = new Map(qualityOptions.map(option => [String(option.id), String(option.label || option.id)]));
         const renderStatus = transitionRenderStatusInfo();
         controlsHtml =
           '<div class="transition-settings-panel">' +
-          '<section class="preview-render-section"><h3>Render Controls</h3><div class="preview-render-grid preview-timing-grid">' +
-          numericInput('overlap_bars', 'Overlap', previewFormState.overlap_bars, 1, 64, 1) +
-          numericInput('front_padding_bars', 'Front', previewFormState.front_padding_bars, 0, 16, 1) +
-          numericInput('back_padding_bars', 'Back', previewFormState.back_padding_bars, 0, 16, 1) +
-          '</div></section>' +
-          '<section class="preview-render-section"><h3>Transition FX</h3><div class="preview-mode-controls">' +
-          selectInput('preset', 'Preset', presets, previewFormState.preset) +
-          selectInput('volume_mode', 'Volume', volumeModes, previewFormState.volume_mode) +
-          selectInput('eq_mode', 'EQ', eqModes, previewFormState.eq_mode) +
-          selectInput('filter_mode', 'Filter', filterModes, previewFormState.filter_mode) +
+          '<section class="preview-render-section preview-live-card"><div class="preview-card-title"><h3>Preview</h3><button type="button" class="transition-help-button" aria-label="Preview mode help">ⓘ<span role="tooltip">Live uses prepared Web Audio decks. Verified render is the export-quality preview.</span></button></div><div class="preview-live-toolbar">' +
+          selectInput('preset', 'Preset', presets, previewFormState.preset, titleCaseOption) +
+          '<div class="preview-status" data-live-status>' + esc(liveStatusText()) + '</div></div>' +
+          '<div class="preview-render-grid preview-timing-grid">' +
+          steppedTimingInput('overlap_bars', 'Overlap', previewFormState.overlap_bars) +
+          steppedTimingInput('padding_bars', 'Padding', previewFormState.padding_bars) +
+          '</div><details class="preview-drawer"><summary>Render quality <span>ⓘ</span></summary><div>' + selectInput('quality', 'Quality', qualityOptions.map(option => String(option.id)), previewFormState.quality, value => qualityLabels.get(String(value)) || String(value)) + '</div></details></section>' +
+          '<section class="preview-render-section preview-automation-card"><details class="preview-drawer"><summary>Automation <span>ⓘ</span></summary><div class="preview-mode-controls">' +
+          selectInput('volume_mode', 'Volume', volumeModes, previewFormState.volume_mode, titleCaseOption) +
+          selectInput('eq_mode', 'Low EQ', eqModes, previewFormState.eq_mode, titleCaseOption) +
+          selectInput('filter_mode', 'Filter', filterModes, previewFormState.filter_mode, titleCaseOption) +
+          '<label>Time snap<select data-automation-snap="time"><option value="off"' + (transitionAutomationSnapTime === 'off' ? ' selected' : '') + '>Off</option><option value="quarter"' + (transitionAutomationSnapTime === 'quarter' ? ' selected' : '') + '>¼ beat</option><option value="half"' + (transitionAutomationSnapTime === 'half' ? ' selected' : '') + '>½ beat</option><option value="beat"' + (transitionAutomationSnapTime === 'beat' ? ' selected' : '') + '>Beat</option><option value="bar"' + (transitionAutomationSnapTime === 'bar' ? ' selected' : '') + '>Bar</option></select></label>' +
+          '<label>Value snap<select data-automation-snap="value"><option value="off"' + (transitionAutomationSnapValue === 'off' ? ' selected' : '') + '>Off</option><option value="1"' + (transitionAutomationSnapValue === '1' ? ' selected' : '') + '>1 dB</option><option value="3"' + (transitionAutomationSnapValue === '3' ? ' selected' : '') + '>3 dB</option></select></label>' +
+          '<button type="button" data-automation-action="restore">Restore preset</button>' +
           '</div>' +
-          '<div class="fx-legend" aria-label="Automation curve legend">' +
-          '<span class="fx-item"><span class="fx-icon" aria-hidden="true">VOL</span><span class="fx-line volume"></span>Volume line</span>' +
-          '<span class="fx-item"><span class="fx-icon" aria-hidden="true">EQ</span><span class="fx-line eq"></span>EQ line</span>' +
-          '<span class="fx-item"><span class="fx-icon" aria-hidden="true">FLT</span><span class="fx-line filter"></span>Filter line</span>' +
-          '</div></section>' +
+          '<div class="fx-legend automation-legend" aria-label="Select an automation lane to edit">' +
+          ['from', 'to'].map(automationDeckLegendHtml).join('') +
+          '</div>' +
+          '<div class="automation-actions"><button type="button" data-automation-action="reset-lane">Reset lane</button><button type="button" data-automation-action="copy-lane">Copy to other deck</button><button type="button" data-automation-action="mirror-lane">Time mirror</button><label>Segment<select data-automation-curve disabled><option value="linear">Linear</option><option value="smooth">Smooth</option><option value="exponential">Exponential</option></select></label><label><span data-automation-segment-label="start:beat">Start beat</span><input data-automation-segment-field="start:beat" type="number" step="0.01" disabled></label><label><span data-automation-segment-label="start:value">Start value</span><input data-automation-segment-field="start:value" type="number" step="0.1" disabled><small data-automation-filter-readout="start"></small></label><label><span data-automation-segment-label="end:beat">End beat</span><input data-automation-segment-field="end:beat" type="number" step="0.01" disabled></label><label><span data-automation-segment-label="end:value">End value</span><input data-automation-segment-field="end:value" type="number" step="0.1" disabled><small data-automation-filter-readout="end"></small></label><button type="button" data-automation-action="delete-segment-keyframe" disabled>Delete keyframe</button></div>' +
+          '<div class="automation-editor-hint">Select a lane, then double-click to add points or drag points. Filter: LPF ↓ · bypass — · HPF ↑.</div></details></section>' +
           '<div class="preview-render-actions">' +
           automationSummaryHtml() +
           '<div class="preview-actions">' +
-          '<button id="transition-render-button" type="button" class="primary" data-preview-action="render" onclick="return window.__djRenderTransition ? window.__djRenderTransition(event) : false;"' + (transitionRenderPending ? ' disabled' : '') + '>' +
-          (transitionRenderPending ? 'Rendering...' : (transitionRender && previewSettingsDirty() ? 'Render again' : 'Render transition')) +
-          '</button>' +
-          '<button type="button" data-preview-action="swap">Swap</button>' +
+          '<button type="button" data-preview-action="reset-alignments">Reset both alignments</button>' +
           '<button type="button" data-preview-action="clear">Clear transition</button>' +
           '</div>' +
           transitionLoadingHtml(transitionRenderPending) +
@@ -4962,7 +6149,6 @@
     } else {
       controlsHtml =
         '<div class="preview-actions">' +
-        '<button type="button" data-preview-action="swap">Swap</button>' +
         '<button type="button" data-preview-action="clear">Clear transition</button>' +
         '</div>';
     }
@@ -4978,42 +6164,837 @@
     els.transitionPreview.innerHTML =
       '<div class="transition-workbench">' +
       '<section class="transition-main">' +
-      scoreHtml +
+      nowPlayingHtml +
       '<section class="transition-controls">' + controlsHtml + '</section>' +
       editorHtml +
       '<div class="transition-topbar"><div class="transition-meta">' + esc(metaText) + '</div><div class="transition-links">' + linksHtml + '</div></div>' +
       '</section>' +
       '</div>';
     safeUi('transition preview bind', bindTransitionPreviewOverlay);
+    restoreTransitionPlaybackState(playbackState);
+  }
+  function liveMixerLaneLabel(lane) {
+    return lane === 'volume' ? 'Volume' : lane === 'eq_low' ? 'Low' : lane === 'eq_mid' ? 'Mid' : lane === 'eq_high' ? 'High' : lane === 'delay' ? 'Delay' : lane === 'reverb' ? 'Reverb' : 'Filter';
+  }
+  function liveMixerValueText(lane, value) {
+    return automationValueLabel(lane, value);
+  }
+  function liveManualValue(deck, lane) {
+    const value = liveManualOverrides[deck] && liveManualOverrides[deck][lane];
+    return Number.isFinite(value) ? value : null;
+  }
+  function liveMixerKnobPosition(lane, value) {
+    const numeric = Number(value) || 0;
+    if (lane === 'filter') return clamp((numeric + 1) * .5, 0, 1);
+    if (lane === 'delay' || lane === 'reverb') return clamp(numeric, 0, 1);
+    return numeric <= 0
+      ? clamp(.5 * ((numeric + 96) / 96), 0, .5)
+      : clamp(.5 + (.5 * (numeric / 6)), .5, 1);
+  }
+  function liveMixerControlHtml(deck, lane) {
+    const override = liveManualValue(deck, lane);
+    const value = override === null ? liveLaneValueAt(deck, lane, liveTransportPosition) : override;
+    const limits = automationLaneLimits(lane);
+    const percent = lane === 'volume'
+      ? clamp((value - limits[0]) / Math.max(.001, limits[1] - limits[0]), 0, 1)
+      : liveMixerKnobPosition(lane, value);
+    const automated = override === null;
+    const control = lane === 'volume'
+      ? '<input class="live-mixer-fader" data-live-mixer-control="' + deck + ':' + lane + '" type="range" min="' + limits[0] + '" max="' + limits[1] + '" step="0.1" value="' + value + '" title="Double-click to reset to 0 dB" aria-label="' + (deck === 'from' ? 'Track 1' : 'Track 2') + ' volume">'
+      : '<div class="live-mixer-knob" style="--live-knob-fill:' + (percent * 270).toFixed(2) + 'deg;--live-knob-angle:' + (-135 + percent * 270).toFixed(2) + 'deg"><input data-live-mixer-control="' + deck + ':' + lane + '" type="range" min="' + limits[0] + '" max="' + limits[1] + '" step="' + (lane === 'filter' || lane === 'delay' || lane === 'reverb' ? '.01' : '.1') + '" value="' + value + '" title="Double-click to reset" aria-label="' + (deck === 'from' ? 'Track 1' : 'Track 2') + ' ' + liveMixerLaneLabel(lane) + '"><i></i></div>';
+    return '<label class="live-mixer-control ' + (lane === 'volume' ? 'live-mixer-volume' : '') + '" data-live-mixer-lane="' + deck + ':' + lane + '">' +
+      '<span>' + liveMixerLaneLabel(lane) + '</span>' + control +
+      '<output data-live-mixer-value="' + deck + ':' + lane + '">' + esc(liveMixerValueText(lane, value)) + '</output>' +
+      '<button type="button" class="live-mixer-auto' + (automated ? ' active' : '') + '" data-live-mixer-auto="' + deck + ':' + lane + '" aria-pressed="' + (automated ? 'true' : 'false') + '">AUTO</button>' +
+      '</label>';
+  }
+  function liveAllAutomationEnabled() {
+    return ['from', 'to'].every(deck => LIVE_MIXER_LANES.every(lane => liveManualValue(deck, lane) === null));
+  }
+  function liveFxSettingValueText(setting, value) {
+    const numeric = Number(value) || 0;
+    return setting === 'reverb_decay' ? numeric.toFixed(2) + ' s' : Math.round(numeric * 100) + '%';
+  }
+  function liveFxSettingKnobHtml(deck, effect, setting, label, value, min, max, step) {
+    const numeric = clamp(Number(value) || 0, min, max);
+    const percent = clamp((numeric - min) / Math.max(.001, max - min), 0, 1);
+    const track = deck === 'from' ? 'Track 1' : 'Track 2';
+    return '<label class="live-fx-setting"><span>' + label + '</span>' +
+      '<div class="live-mixer-knob live-fx-setting-knob" data-live-fx-setting-knob="' + deck + ':' + setting + '" style="--live-knob-fill:' + (percent * 270).toFixed(2) + 'deg;--live-knob-angle:' + (-135 + percent * 270).toFixed(2) + 'deg">' +
+      '<input data-live-fx-setting="' + deck + ':' + setting + '" type="range" min="' + min + '" max="' + max + '" step="' + step + '" value="' + numeric + '" title="Double-click to reset" aria-label="' + track + ' ' + effect + ' ' + label.toLowerCase() + '"><i></i></div>' +
+      '<output data-live-fx-setting-value="' + deck + ':' + setting + '">' + esc(liveFxSettingValueText(setting, numeric)) + '</output></label>';
+  }
+  function liveMixerHtml() {
+    if (!config.app_mode || transitionPreviewMode !== 'live') return '';
+    const fxUnit = (deck, effect) => {
+      const settings = (previewFormState.effects && previewFormState.effects[deck]) || {};
+      const isDelay = effect === 'delay';
+      const setting = isDelay ? 'delay_beats' : 'reverb_decay';
+      const tone = isDelay ? 'delay_tone' : 'reverb_tone';
+      const value = Number(settings[setting]) || (isDelay ? .5 : 1.2);
+      const toneValue = Number(settings[tone]);
+      const timeControl = isDelay
+        ? '<label class="live-fx-select"><span>Beats</span><select data-live-fx-setting="' + deck + ':' + setting + '" aria-label="' + (deck === 'from' ? 'Track 1' : 'Track 2') + ' delay beats">' + [.125,.25,.5,.75,1,2,4].map(beats => '<option value="' + beats + '"' + (beats === value ? ' selected' : '') + '>' + (beats === .125 ? '⅛' : beats === .25 ? '¼' : beats === .5 ? '½' : beats === .75 ? '¾' : beats) + '</option>').join('') + '</select></label>'
+        : liveFxSettingKnobHtml(deck, effect, setting, 'Decay', value, .25, 4, .05);
+      return '<div class="live-fx-unit ' + effect + '"><b>' + (isDelay ? 'Echo' : 'Reverb') + '</b>' + liveMixerControlHtml(deck, effect) + timeControl + liveFxSettingKnobHtml(deck, effect, tone, 'Tone', Number.isFinite(toneValue) ? toneValue : .5, 0, 1, .01) + '</div>';
+    };
+    const deckHtml = deck => '<section class="live-mixer-deck ' + deck + '"><h3>' + (deck === 'from' ? 'Track 1 · outgoing' : 'Track 2 · incoming') + '</h3><div class="live-mixer-deck-controls">' + LIVE_CHANNEL_LANES.map(lane => liveMixerControlHtml(deck, lane)).join('') + '</div><div class="live-mixer-fx">' + fxUnit(deck, 'delay') + fxUnit(deck, 'reverb') + '</div></section>';
+    return '<section class="live-mixer-dock' + (liveMixerOpen ? '' : ' collapsed') + '">' +
+      '<div class="live-mixer-head"><button type="button" data-live-mixer-toggle aria-expanded="' + (liveMixerOpen ? 'true' : 'false') + '">Live mixer ' + (liveMixerOpen ? '▾' : '▸') + '</button><span>Manual moves suspend only that lane’s automation. AUTO resumes it; double-click a control for neutral.</span></div>' +
+      (liveMixerOpen ? '<div class="live-mixer-body">' + deckHtml('from') + '<section class="live-crossfader"><label>Crossfader<input data-live-crossfader type="range" min="-1" max="1" step="0.01" value="' + liveCrossfader + '" aria-label="Live crossfader"></label><button type="button" class="live-mixer-auto-all' + (liveAllAutomationEnabled() ? ' active' : '') + '" data-live-mixer-auto-all aria-pressed="' + (liveAllAutomationEnabled() ? 'true' : 'false') + '" title="Toggle all deck automation">AUTO</button><div><span>1</span><button type="button" data-live-crossfader-reset title="Reset crossfader">Center</button><span>2</span></div></section>' + deckHtml('to') + '</div>' : '') +
+      '</section>';
   }
   function transitionTransportHtml() {
-    const result = renderResultHtml();
-    const body = result || '<div class="transition-scrubbar transition-scrubbar-empty">' +
-      (transitionRenderPending ? transitionLoadingHtml(true, '') + '<div>Rendering transition audio...</div>' : '<div>Render transition to enable playback.</div>') +
-      '</div>';
-    const status = transitionRenderStatusInfo();
-    return '<div class="transition-transport-row">' +
+    const mode = activeTransportMode();
+    const duration = activeTransportDuration();
+    const ready = transportCanPlay();
+    const status = mode === 'live'
+      ? liveStatusText()
+      : (transitionRenderPending ? 'Rendering transition audio…' : (ready ? 'Verified render ready' : 'Render transition to enable verified playback.'));
+    const body = '<div class="transition-scrubbar' + (ready ? '' : ' transition-scrubbar-empty') + '">' +
+      '<input id="transition-scrub" class="scrub-range" aria-label="' + esc(status) + '" type="range" min="0" max="' + esc(Math.max(.01, duration || 1)) + '" step="0.01" value="' + esc(clamp(activeTransportPosition(), 0, Math.max(.01, duration || 1))) + '"' + (ready ? '' : ' disabled') + '>' +
+      renderResultHtml() + '</div>';
+    return '<div class="transition-transport-row transition-seam-transport-row">' +
       '<div class="transition-transport-main">' + body + '</div>' +
-      '<div class="transition-transport-side' + (status.warn ? ' warn' : '') + '">' + esc(status.text) + '</div>' +
       '</div>';
   }
   function renderResultHtml() {
     if (!transitionRender || !transitionRender.ok || !transitionRender.urls) return '';
-    const t = transitionRender.transition || {};
-    const duration = Math.max(1, Number(t.duration_seconds) || 1);
     const stamp = esc(transitionRender.rendered_at || '');
-    return '<div class="transition-scrubbar">' +
-      '<div class="transition-transport-controls">' +
-      '<button id="transition-play-toggle" class="play-button" type="button" aria-label="Play">▶</button>' +
-      '<div class="transition-transport-title">Rendered transition</div>' +
-      '<span id="transition-scrub-time" class="scrub-time">0:00 / ' + esc(timeText(duration)) + '</span>' +
-      '</div>' +
-      '<input id="transition-scrub" class="scrub-range" type="range" min="0" max="' + esc(duration) + '" step="0.01" value="0">' +
-      '<audio id="transition-preview-audio" preload="metadata" src="' + esc(transitionRender.urls.preview) + '?t=' + stamp + '"></audio>' +
-      '</div>';
+    return '<audio id="transition-preview-audio" preload="metadata" src="' + esc(transitionRender.urls.preview) + '?t=' + stamp + '"></audio>';
+  }
+  function activeTransportMode() {
+    return transitionPreviewMode === 'live' ? 'live' : 'verified';
+  }
+  function liveTimingFromPayload(payload) {
+    if (!payload) return null;
+    const start = Math.max(0, Number(payload.transport_start_seconds != null ? payload.transport_start_seconds : payload.loop_start_seconds) || 0);
+    const end = Math.max(start + .01, Number(payload.transport_end_seconds != null ? payload.transport_end_seconds : payload.loop_end_seconds) || 0);
+    const transitionStart = clamp(Number(payload.transition_start_seconds), start, end);
+    const transitionEnd = clamp(Number(payload.transition_end_seconds), transitionStart, end);
+    return { start, end, duration: end - start, transitionStart, transitionEnd, fromBpm: Number(payload.from_bpm) || 120, beatsPerBar: Number(payload.beats_per_bar) || 4 };
+  }
+  function liveTransportTiming() {
+    // A newer HQ preparation must never redefine an active source's loop or
+    // automation clock. Keep the previous timing snapshot until the user
+    // pauses/restarts, then the new prepared context becomes authoritative.
+    if (livePlayback && livePlayback.timing) return livePlayback.timing;
+    return liveTimingFromPayload(liveTransition && liveTransition.live);
+  }
+  function activeTransportDuration() {
+    if (activeTransportMode() === 'live') {
+      const timing = liveTransportTiming();
+      return timing ? timing.duration : 0;
+    }
+    return transitionDuration(transitionAudioElement());
+  }
+  function activeTransportPosition() {
+    if (activeTransportMode() === 'live') {
+      if (liveSeekPending) return liveSeekPending.position;
+      if (!livePlayback || !liveAudioContext || !Number.isFinite(livePlayback.duration)) return liveTransportPosition;
+      const elapsed = Math.max(0, liveAudioContext.currentTime - livePlayback.startAt);
+      const position = livePlayback.startPosition + elapsed;
+      return transitionLoopEnabled ? position % livePlayback.duration : Math.min(position, livePlayback.duration);
+    }
+    const audio = transitionAudioElement();
+    return audio && Number.isFinite(Number(audio.currentTime)) ? Number(audio.currentTime) : 0;
+  }
+  function transportCanPlay() {
+    if (activeTransportMode() === 'live') {
+      // A background HQ preparation must not disable the central pause control
+      // for an already-running guarded rough preview.
+      if (livePlayback || liveSeekInFlight) return !!liveTransportTiming();
+      return !!(liveTransition && liveTransition.ok && !liveTransitionPending && liveTransportTiming());
+    }
+    return !!(transitionRender && transitionRender.ok && transitionRender.urls && transitionDuration(transitionAudioElement()) >= 0);
+  }
+  function transportIsPlaying() {
+    if (activeTransportMode() === 'live') return !!(livePlayback || liveSeekInFlight);
+    const audio = transitionAudioElement();
+    return !!(audio && !audio.paused && !audio.ended);
+  }
+  function livePreparationKey() {
+    const from = transitionFromIdx === null ? null : byIdx.get(transitionFromIdx);
+    const to = transitionToIdx === null ? null : byIdx.get(transitionToIdx);
+    if (!from || !to) return '';
+    const s = previewFormState;
+    return JSON.stringify({
+      from: trackId(from), to: trackId(to), from_cue: s.from_cue || '', to_cue: s.to_cue || '',
+      overlap_bars: Number(s.overlap_bars) || 0, front_padding_bars: Number(s.front_padding_bars) || 0,
+      back_padding_bars: Number(s.back_padding_bars) || 0, from_nudge_beats: Number(s.from_nudge_beats) || 0,
+      to_nudge_beats: Number(s.to_nudge_beats) || 0, from_beatgrid_ms: Number(s.from_beatgrid_ms) || 0,
+      to_beatgrid_ms: Number(s.to_beatgrid_ms) || 0, from_pitch_shift: Number(s.from_pitch_shift) || 0,
+      to_pitch_shift: Number(s.to_pitch_shift) || 0,
+    });
+  }
+  function livePreparationBody() {
+    const from = transitionFromIdx === null ? null : byIdx.get(transitionFromIdx);
+    const to = transitionToIdx === null ? null : byIdx.get(transitionToIdx);
+    if (!from || !to) return null;
+    syncPreviewFormStateFromDom();
+    return Object.assign({}, previewFormState, {
+      from_track: trackId(from), to_track: trackId(to), live_guard_bars: 4,
+      loudness_match_mode: loudnessMatchMode(),
+    });
+  }
+  function livePreparedOffsetSeconds(deck) {
+    const prepared = liveTransition && liveTransition._preparation;
+    const timing = liveTransportTiming();
+    if (!prepared || !timing) return 0;
+    const nudgeField = deck === 'from' ? 'from_nudge_beats' : 'to_nudge_beats';
+    const gridField = deck === 'from' ? 'from_beatgrid_ms' : 'to_beatgrid_ms';
+    const beatSeconds = 60 / Math.max(1, Number(timing.fromBpm) || 120);
+    return ((Number(previewFormState[nudgeField]) || 0) - (Number(prepared[nudgeField]) || 0)) * beatSeconds
+      + (((Number(previewFormState[gridField]) || 0) - (Number(prepared[gridField]) || 0)) / 1000);
+  }
+  function refreshLiveRoughOffsets() {
+    ['from', 'to'].forEach(deck => { liveRoughOffsets[deck] = livePreparedOffsetSeconds(deck); });
+    return liveRoughOffsets;
+  }
+  function liveRoughOffsetsAreSafe() {
+    const timing = liveTransportTiming();
+    const payload = liveTransition && liveTransition.live;
+    const prepared = liveTransition && liveTransition._preparation;
+    const current = livePreparationBody();
+    if (!timing || !payload || !prepared || !current) return false;
+    const stableFields = ['from_track', 'to_track', 'from_cue', 'to_cue', 'overlap_bars', 'front_padding_bars', 'back_padding_bars', 'from_pitch_shift', 'to_pitch_shift'];
+    if (stableFields.some(field => String(prepared[field] || '') !== String(current[field] || ''))) return false;
+    const guardSeconds = Math.max(0, Number(payload.guard_bars) || 0) * Math.max(1, Number(payload.beats_per_bar) || 4) * 60 / Math.max(1, Number(payload.from_bpm) || 120);
+    return ['from', 'to'].every(deck => Math.abs(Number(liveRoughOffsets[deck]) || 0) <= Math.max(0, guardSeconds - .02));
+  }
+  function liveDeckRoughOffset(deck) {
+    const key = livePreparationKey();
+    if (liveTransition && liveTransition._key === key) return 0;
+    return Number(liveRoughOffsets[deck]) || 0;
+  }
+  function liveStatusText() {
+    if (livePlayback) {
+      if (liveTransitionPending) return 'Preparing updated HQ audio · current live transport continues';
+      if (liveTransitionError) return 'Updated HQ preparation failed · current live transport continues';
+      if (liveTransition && livePlayback.key !== liveTransition._key) return 'Updated HQ ready · pause and play the central transport to use it';
+      return transitionLoopEnabled ? 'Live loop playing · live mixer automation' : 'Live transport playing · live mixer automation';
+    }
+    if (liveTransitionPending) return 'Preparing high-quality live deck audio…';
+    if (liveTransitionMessage) return liveTransitionMessage;
+    if (liveTransition && liveTransition.ok) return 'HQ live deck audio ready';
+    return 'Select two tracks to prepare live audition.';
+  }
+  function updateLiveAuditionUi() {
+    document.querySelectorAll('[data-live-status]').forEach(el => {
+      el.textContent = liveStatusText();
+      el.classList.toggle('warn', liveTransitionError);
+    });
+    syncLiveMixerUi();
+    updateTransitionScrubber();
+  }
+  function syncLiveMixerUi() {
+    document.querySelectorAll('[data-live-mixer-control]').forEach(input => {
+      const [deck, lane] = String(input.getAttribute('data-live-mixer-control') || '').split(':');
+      if (!deck || !lane) return;
+      const override = liveManualValue(deck, lane);
+      const value = override === null ? liveLaneValueAt(deck, lane, liveTransportPosition) : override;
+      input.value = String(value);
+      const limits = automationLaneLimits(lane);
+      const knob = input.closest('.live-mixer-knob');
+      if (knob) {
+        const percent = liveMixerKnobPosition(lane, value);
+        knob.style.setProperty('--live-knob-fill', (percent * 270).toFixed(2) + 'deg');
+        knob.style.setProperty('--live-knob-angle', (-135 + percent * 270).toFixed(2) + 'deg');
+      }
+      const wrapper = input.closest('[data-live-mixer-lane]');
+      if (wrapper) wrapper.classList.toggle('manual', override !== null);
+      const readout = document.querySelector('[data-live-mixer-value="' + deck + ':' + lane + '"]');
+      if (readout) readout.textContent = liveMixerValueText(lane, value);
+      const auto = document.querySelector('[data-live-mixer-auto="' + deck + ':' + lane + '"]');
+      if (auto) {
+        auto.classList.toggle('active', override === null);
+        auto.setAttribute('aria-pressed', override === null ? 'true' : 'false');
+      }
+    });
+    document.querySelectorAll('[data-live-crossfader]').forEach(input => { input.value = String(liveCrossfader); });
+    document.querySelectorAll('[data-live-mixer-auto-all]').forEach(button => {
+      const active = liveAllAutomationEnabled();
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      button.setAttribute('title', active ? 'Suspend all deck automation' : 'Resume all deck automation');
+    });
+    syncLiveFxSettingUi();
+  }
+  function syncLiveFxSettingUi() {
+    document.querySelectorAll('[data-live-fx-setting]').forEach(input => {
+      const [deck, setting] = String(input.getAttribute('data-live-fx-setting') || '').split(':');
+      const settings = previewFormState.effects && previewFormState.effects[deck];
+      if (!settings || !Object.prototype.hasOwnProperty.call(settings, setting)) return;
+      const value = Number(settings[setting]);
+      if (!Number.isFinite(value)) return;
+      input.value = String(value);
+      const knob = input.closest('.live-fx-setting-knob');
+      if (knob) {
+        const min = Number(input.min);
+        const max = Number(input.max);
+        const percent = clamp((value - min) / Math.max(.001, max - min), 0, 1);
+        knob.style.setProperty('--live-knob-fill', (percent * 270).toFixed(2) + 'deg');
+        knob.style.setProperty('--live-knob-angle', (-135 + percent * 270).toFixed(2) + 'deg');
+      }
+      const output = document.querySelector('[data-live-fx-setting-value="' + deck + ':' + setting + '"]');
+      if (output) output.textContent = liveFxSettingValueText(setting, value);
+    });
+  }
+  function setLiveManualOverride(deck, lane, rawValue) {
+    if (!LIVE_MIXER_LANES.includes(lane) || !liveManualOverrides[deck]) return;
+    const limits = automationLaneLimits(lane);
+    liveManualOverrides[deck][lane] = clamp(Number(rawValue) || 0, limits[0], limits[1]);
+    requestLiveAutomationReschedule();
+    syncLiveMixerUi();
+  }
+  function setLiveFxSetting(deck, setting, rawValue) {
+    if (!['from', 'to'].includes(deck) || !['delay_beats', 'delay_tone', 'reverb_decay', 'reverb_tone'].includes(setting)) return;
+    if (!previewFormState.effects) previewFormState.effects = { from: {}, to: {} };
+    if (!previewFormState.effects[deck]) previewFormState.effects[deck] = {};
+    const raw = Number(rawValue);
+    if (!Number.isFinite(raw)) return;
+    const value = setting === 'delay_beats'
+      ? [.125, .25, .5, .75, 1, 2, 4].reduce((best, candidate) => Math.abs(candidate - raw) < Math.abs(best - raw) ? candidate : best, .5)
+      : setting === 'reverb_decay' ? clamp(raw, .25, 4) : clamp(raw, 0, 1);
+    previewFormState.effects[deck][setting] = value;
+    if (livePlayback && livePlayback.decks[deck]) applyLiveFxSettings(livePlayback.decks[deck], deck);
+    syncLiveFxSettingUi();
+    updateTransitionDirtyUi();
+  }
+  function restoreLiveLaneAutomation(deck, lane) {
+    if (!liveManualOverrides[deck]) return;
+    delete liveManualOverrides[deck][lane];
+    requestLiveAutomationReschedule();
+    syncLiveMixerUi();
+  }
+  function toggleAllLiveAutomation() {
+    if (liveAllAutomationEnabled()) {
+      const position = activeTransportPosition();
+      ['from', 'to'].forEach(deck => {
+        LIVE_MIXER_LANES.forEach(lane => {
+          liveManualOverrides[deck][lane] = liveAutomationLaneValueAt(deck, lane, position);
+        });
+      });
+    } else {
+      liveManualOverrides.from = {};
+      liveManualOverrides.to = {};
+    }
+    requestLiveAutomationReschedule();
+    syncLiveMixerUi();
+  }
+  function setTransitionLoopEnabled(enabled) {
+    const next = !!enabled;
+    if (transitionLoopEnabled === next) return;
+    const currentLivePosition = livePlayback && liveAudioContext
+      ? (livePlayback.startPosition + Math.max(0, liveAudioContext.currentTime - livePlayback.startAt)) % livePlayback.duration
+      : activeTransportPosition();
+    transitionLoopEnabled = next;
+    const rendered = transitionAudioElement();
+    if (rendered) rendered.loop = next;
+    if (activeTransportMode() === 'live' && (livePlayback || liveSeekInFlight)) seekLiveTransport(currentLivePosition, { restart: true });
+    updateTransitionScrubber();
+  }
+  async function prepareLiveTransition({ playWhenReady=false } = {}) {
+    if (!config.app_mode || liveTransitionPending) return null;
+    const body = livePreparationBody();
+    if (!body) return null;
+    const key = livePreparationKey();
+    if (liveTransition && liveTransition._key === key) {
+      if (playWhenReady) await startLiveAudition();
+      return liveTransition;
+    }
+    const requestId = liveTransitionRequestId + 1;
+    const previousLiveTransition = liveTransition;
+    liveTransitionRequestId = requestId;
+    liveTransitionPending = true;
+    liveTransitionMessage = '';
+    liveTransitionError = false;
+    updateLiveAuditionUi();
+    try {
+      const res = await fetch('/api/prepare-live-transition', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (requestId !== liveTransitionRequestId) return null;
+      if (!data.ok) throw new Error(data.error || 'Live preparation failed');
+      data._key = key;
+      data._preparation = { ...body };
+      liveTransition = data;
+      liveTransitionMessage = 'HQ ready — restart to use prepared audio.';
+      liveTransitionError = false;
+      if (playWhenReady) await startLiveAudition();
+      return data;
+    } catch (err) {
+      if (requestId === liveTransitionRequestId) {
+        liveTransition = previousLiveTransition && previousLiveTransition.ok ? previousLiveTransition : null;
+        liveTransitionMessage = err && err.message ? err.message : 'Live preparation failed';
+        liveTransitionError = true;
+      }
+      return null;
+    } finally {
+      if (requestId === liveTransitionRequestId) {
+        liveTransitionPending = false;
+        updateLiveAuditionUi();
+      }
+    }
+  }
+  function scheduleLivePreparation() {
+    if (!config.app_mode || transitionFromIdx === null || transitionToIdx === null) return;
+    if (livePreparationTimer !== null) clearTimeout(livePreparationTimer);
+    livePreparationTimer = setTimeout(() => {
+      livePreparationTimer = null;
+      const key = livePreparationKey();
+      if (key && (!liveTransition || liveTransition._key !== key)) prepareLiveTransition();
+    }, 350);
+  }
+  function liveAudioEngine() {
+    if (liveAudioContext) return liveAudioContext;
+    const Constructor = window.AudioContext || window.webkitAudioContext;
+    if (!Constructor) throw new Error('Web Audio is unavailable in this browser.');
+    liveAudioContext = new Constructor();
+    liveMasterGain = liveAudioContext.createGain();
+    liveMasterGain.gain.value = Math.pow(10, -3 / 20);
+    liveCompressor = liveAudioContext.createDynamicsCompressor();
+    liveCompressor.threshold.value = -12;
+    liveCompressor.knee.value = 12;
+    liveCompressor.ratio.value = 12;
+    liveCompressor.attack.value = 0.003;
+    liveCompressor.release.value = 0.08;
+    liveMasterGain.connect(liveCompressor);
+    liveCompressor.connect(liveAudioContext.destination);
+    return liveAudioContext;
+  }
+  async function liveBuffer(url) {
+    const key = String(url || '');
+    if (!key) throw new Error('Prepared deck audio is unavailable.');
+    if (liveBufferCache.has(key)) {
+      const value = liveBufferCache.get(key);
+      liveBufferCache.delete(key); liveBufferCache.set(key, value);
+      return value;
+    }
+    const context = liveAudioEngine();
+    const response = await fetch(key);
+    if (!response.ok) throw new Error('Could not load prepared deck audio.');
+    const value = await context.decodeAudioData(await response.arrayBuffer());
+    liveBufferCache.set(key, value);
+    while (liveBufferCache.size > 6) liveBufferCache.delete(liveBufferCache.keys().next().value);
+    return value;
+  }
+  const LIVE_ISOLATOR_LOW_HZ = 275;
+  const LIVE_ISOLATOR_HIGH_HZ = 3000;
+  const LIVE_FILTER_MIN_HZ = 20;
+  function livePositionInTransport(position, timing) {
+    const raw = Number(position) || 0;
+    if (!timing || !transitionLoopEnabled) return clamp(raw, 0, Math.max(0, timing ? timing.duration : 0));
+    return ((raw % timing.duration) + timing.duration) % timing.duration;
+  }
+  function liveContextGatedValue(deck, lane, position, value) {
+    if (lane !== 'volume') return value;
+    const timing = liveTransportTiming();
+    if (!timing) return value;
+    const local = livePositionInTransport(position, timing);
+    const overlapStart = timing.transitionStart - timing.start;
+    const overlapEnd = timing.transitionEnd - timing.start;
+    if (local < overlapStart) return deck === 'from' ? 0 : -96;
+    if (local >= overlapEnd) return deck === 'from' ? -96 : 0;
+    return value;
+  }
+  function liveAutomationLaneValueAt(deck, lane, position) {
+    ensureTransitionAutomation();
+    const timing = liveTransportTiming();
+    if (!timing) return 0;
+    const points = automationLane(deck, lane) || [];
+    const totalBeats = Math.max(.001, transitionAutomationBeats());
+    const overlapStart = timing.transitionStart - timing.start;
+    const overlapDuration = Math.max(.001, timing.transitionEnd - timing.transitionStart);
+    const local = livePositionInTransport(position, timing);
+    const beat = local <= overlapStart ? 0 : (local >= overlapStart + overlapDuration
+      ? totalBeats
+      : totalBeats * ((local - overlapStart) / overlapDuration));
+    const automatic = Number(automationValueAt(points, beat, lane));
+    const limits = automationLaneLimits(lane);
+    return clamp(Number.isFinite(automatic) ? automatic : 0, limits[0], limits[1]);
+  }
+  function liveLaneValueAt(deck, lane, position) {
+    const automatic = liveAutomationLaneValueAt(deck, lane, position);
+    const override = liveManualValue(deck, lane);
+    const value = override === null ? automatic : override;
+    const limits = automationLaneLimits(lane);
+    const normalized = clamp(Number.isFinite(value) ? value : 0, limits[0], limits[1]);
+    return liveContextGatedValue(deck, lane, position, normalized);
+  }
+  function liveDbToGain(value) {
+    const db = Number(value);
+    return db <= -95.5 ? 0 : Math.pow(10, (Number.isFinite(db) ? db : 0) / 20);
+  }
+  function liveLaneEnvelope(deck, lane, startPosition, duration, transform=value => value, samples=1025) {
+    const values = new Float32Array(samples);
+    for (let i = 0; i < samples; i += 1) {
+      values[i] = transform(liveLaneValueAt(deck, lane, startPosition + (duration * (i / (samples - 1)))));
+    }
+    return values;
+  }
+  function liveCrossfaderGain(deck) {
+    const value = clamp(Number(liveCrossfader) || 0, -1, 1);
+    const travel = deck === 'from' ? Math.max(0, value) : Math.max(0, -value);
+    return Math.cos(travel * Math.PI * .5);
+  }
+  function applyLiveCrossfader({ smooth=true } = {}) {
+    if (!livePlayback || !liveAudioContext) return;
+    const now = liveAudioContext.currentTime;
+    ['from', 'to'].forEach(deck => {
+      const param = livePlayback.decks[deck] && livePlayback.decks[deck].performance && livePlayback.decks[deck].performance.gain;
+      if (!param) return;
+      if (typeof param.cancelAndHoldAtTime === 'function') param.cancelAndHoldAtTime(now);
+      else param.cancelScheduledValues(now);
+      param.setTargetAtTime(liveCrossfaderGain(deck), now, smooth ? .012 : .001);
+    });
+  }
+  function liveAutomationWindow(startAt, startPosition, smooth) {
+    const timing = liveTransportTiming();
+    if (!timing) return null;
+    const horizon = Math.min(LIVE_AUTOMATION_HORIZON_SECONDS, Math.max(2, timing.duration));
+    const rampSeconds = smooth ? .02 : .008;
+    const curveStart = startAt + rampSeconds + .001;
+    const curvePosition = startPosition + (curveStart - startAt);
+    return { startAt, curveStart, curvePosition, horizon, smooth };
+  }
+  function scheduleLiveParameter(param, values, window) {
+    if (!param || !window) return window ? window.startAt : 0;
+    const { startAt, curveStart, horizon } = window;
+    if (typeof param.cancelAndHoldAtTime === 'function') param.cancelAndHoldAtTime(startAt);
+    else {
+      param.cancelScheduledValues(startAt);
+      param.setValueAtTime(param.value, startAt);
+    }
+    param.linearRampToValueAtTime(values[0], curveStart - .001);
+    param.setValueCurveAtTime(values, curveStart, horizon);
+    return curveStart + horizon;
+  }
+  function liveFilterValues(deck, window) {
+    const amount = liveLaneEnvelope(deck, 'filter', window.curvePosition, window.horizon);
+    const dry = new Float32Array(amount.length);
+    const lowWet = new Float32Array(amount.length);
+    const highWet = new Float32Array(amount.length);
+    const lowFrequency = new Float32Array(amount.length);
+    const highFrequency = new Float32Array(amount.length);
+    const kill = new Float32Array(amount.length);
+    const maxFrequency = Math.min(20000, ((liveAudioContext && liveAudioContext.sampleRate) || 44100) * .5 - 100);
+    for (let i = 0; i < amount.length; i += 1) {
+      const value = amount[i];
+      const wet = Math.abs(value);
+      dry[i] = 1 - wet;
+      lowWet[i] = value < 0 ? wet : 0;
+      highWet[i] = value > 0 ? wet : 0;
+      lowFrequency[i] = value < 0 ? maxFrequency * Math.pow(LIVE_FILTER_MIN_HZ / maxFrequency, wet) : maxFrequency;
+      highFrequency[i] = value > 0 ? LIVE_FILTER_MIN_HZ * Math.pow(maxFrequency / LIVE_FILTER_MIN_HZ, wet) : LIVE_FILTER_MIN_HZ;
+      const edge = clamp((wet - .975) / .02, 0, 1);
+      kill[i] = wet >= .995 ? 0 : 1 - smoothstep(edge);
+    }
+    return { dry, lowWet, highWet, lowFrequency, highFrequency, kill };
+  }
+  function liveFxSettings(deck) {
+    const settings = previewFormState.effects && previewFormState.effects[deck] || {};
+    const delayBeats = [.125, .25, .5, .75, 1, 2, 4].reduce((best, value) => Math.abs(value - Number(settings.delay_beats || .5)) < Math.abs(best - Number(settings.delay_beats || .5)) ? value : best, .5);
+    return {
+      delayBeats,
+      delayTone: clamp(Number.isFinite(Number(settings.delay_tone)) ? Number(settings.delay_tone) : .5, 0, 1),
+      reverbDecay: clamp(Number(settings.reverb_decay) || 1.2, .25, 4),
+      reverbTone: clamp(Number.isFinite(Number(settings.reverb_tone)) ? Number(settings.reverb_tone) : .5, 0, 1),
+    };
+  }
+  function applyLiveFxSettings(graph, deck, { smooth=true } = {}) {
+    if (!graph || !liveAudioContext) return;
+    const settings = liveFxSettings(deck);
+    const now = liveAudioContext.currentTime;
+    const target = (param, value) => {
+      if (!param) return;
+      param.cancelScheduledValues(now);
+      param.setTargetAtTime(value, now, smooth ? .018 : .001);
+    };
+    target(graph.delay.delayTime, (60 / Math.max(1, Number(liveTransportTiming() && liveTransportTiming().fromBpm) || 120)) * settings.delayBeats);
+    target(graph.delayTone.frequency, 1800 * Math.pow(6, settings.delayTone));
+    const feedback = clamp(.32 + (settings.reverbDecay / 4) * .48, .32, .8);
+    graph.reverbFeedbacks.forEach(param => target(param.gain, feedback));
+    graph.reverbTones.forEach(node => target(node.frequency, 1400 * Math.pow(7.5, settings.reverbTone)));
+  }
+  function applyLiveLoudnessGain(graph, deck, { smooth=true } = {}) {
+    if (!graph || !graph.loudness || !liveAudioContext) return;
+    const record = transitionDeckConfig(deck).record;
+    const target = loudnessGainLinear(record, 'transition');
+    const now = liveAudioContext.currentTime;
+    graph.loudness.gain.cancelScheduledValues(now);
+    graph.loudness.gain.setTargetAtTime(target, now, smooth ? .018 : .001);
+  }
+  function applyLiveLoudnessGains({ smooth=true } = {}) {
+    if (!livePlayback) return;
+    ['from', 'to'].forEach(deck => applyLiveLoudnessGain(livePlayback.decks[deck], deck, { smooth }));
+  }
+  function createLiveDeckGraph(context, source) {
+    const loudness = context.createGain();
+    const low = context.createBiquadFilter(); low.type = 'lowpass'; low.frequency.value = LIVE_ISOLATOR_LOW_HZ; low.Q.value = Math.SQRT1_2;
+    const high = context.createBiquadFilter(); high.type = 'highpass'; high.frequency.value = LIVE_ISOLATOR_HIGH_HZ; high.Q.value = Math.SQRT1_2;
+    const midBase = context.createGain();
+    const lowDelta = context.createGain();
+    const highDelta = context.createGain();
+    const eqOutput = context.createGain();
+    source.connect(loudness);
+    loudness.connect(midBase); midBase.connect(eqOutput);
+    loudness.connect(low); low.connect(lowDelta); lowDelta.connect(eqOutput);
+    loudness.connect(high); high.connect(highDelta); highDelta.connect(eqOutput);
+
+    const dry = context.createGain();
+    const filterLow = context.createBiquadFilter(); filterLow.type = 'lowpass'; filterLow.Q.value = Math.SQRT1_2;
+    const filterHigh = context.createBiquadFilter(); filterHigh.type = 'highpass'; filterHigh.Q.value = Math.SQRT1_2;
+    const lowWet = context.createGain();
+    const highWet = context.createGain();
+    const filterOutput = context.createGain();
+    const filterKill = context.createGain();
+    const volume = context.createGain();
+    const performance = context.createGain();
+    const fxOutput = context.createGain();
+    const delay = context.createDelay(4);
+    const delayTone = context.createBiquadFilter(); delayTone.type = 'lowpass';
+    const delayHighPass = context.createBiquadFilter(); delayHighPass.type = 'highpass'; delayHighPass.frequency.value = 180;
+    const delayFeedback = context.createGain();
+    const delayWet = context.createGain();
+    const reverbWet = context.createGain();
+    const reverbFeedbacks = [];
+    const reverbTones = [];
+    eqOutput.connect(dry); dry.connect(filterOutput);
+    eqOutput.connect(filterLow); filterLow.connect(lowWet); lowWet.connect(filterOutput);
+    eqOutput.connect(filterHigh); filterHigh.connect(highWet); highWet.connect(filterOutput);
+    filterOutput.connect(filterKill); filterKill.connect(volume);
+    volume.connect(fxOutput);
+    volume.connect(delay); delay.connect(delayTone); delayTone.connect(delayHighPass); delayHighPass.connect(delayWet); delayWet.connect(fxOutput);
+    delayHighPass.connect(delayFeedback); delayFeedback.connect(delay);
+    [0.0297, 0.0371, 0.0411, 0.0437].forEach(seconds => {
+      const comb = context.createDelay(.1); comb.delayTime.value = seconds;
+      const tone = context.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = 4000;
+      const feedback = context.createGain(); feedback.gain.value = .45;
+      const returnGain = context.createGain(); returnGain.gain.value = .25;
+      volume.connect(comb); comb.connect(tone); tone.connect(returnGain); returnGain.connect(reverbWet); tone.connect(feedback); feedback.connect(comb);
+      reverbFeedbacks.push(feedback); reverbTones.push(tone);
+    });
+    // The reverb comb returns share one wet bus, just like the delay return.
+    // Without this connection the macro was scheduled but inaudible.
+    reverbWet.connect(fxOutput);
+    fxOutput.connect(performance); performance.connect(liveMasterGain);
+    const graph = { loudness, volume, performance, midBase, lowDelta, highDelta, dry, lowWet, highWet, filterLow, filterHigh, filterKill, delay, delayTone, delayFeedback, delayWet, reverbWet, reverbFeedbacks, reverbTones };
+    return graph;
+  }
+  function scheduleLiveDeckAutomation(graph, deck, startAt, startPosition, { smooth=false } = {}) {
+    const window = liveAutomationWindow(startAt, startPosition, smooth);
+    if (!window) return startAt;
+    const volume = liveLaneEnvelope(deck, 'volume', window.curvePosition, window.horizon, liveDbToGain);
+    const low = liveLaneEnvelope(deck, 'eq_low', window.curvePosition, window.horizon, liveDbToGain);
+    const mid = liveLaneEnvelope(deck, 'eq_mid', window.curvePosition, window.horizon, liveDbToGain);
+    const high = liveLaneEnvelope(deck, 'eq_high', window.curvePosition, window.horizon, liveDbToGain);
+    const lowDelta = new Float32Array(low.length);
+    const highDelta = new Float32Array(high.length);
+    for (let i = 0; i < low.length; i += 1) {
+      lowDelta[i] = low[i] - mid[i];
+      highDelta[i] = high[i] - mid[i];
+    }
+    const filter = liveFilterValues(deck, window);
+    const delay = liveLaneEnvelope(deck, 'delay', window.curvePosition, window.horizon);
+    const reverb = liveLaneEnvelope(deck, 'reverb', window.curvePosition, window.horizon);
+    const until = [
+      scheduleLiveParameter(graph.volume.gain, volume, window),
+      scheduleLiveParameter(graph.midBase.gain, mid, window),
+      scheduleLiveParameter(graph.lowDelta.gain, lowDelta, window),
+      scheduleLiveParameter(graph.highDelta.gain, highDelta, window),
+      scheduleLiveParameter(graph.dry.gain, filter.dry, window),
+      scheduleLiveParameter(graph.lowWet.gain, filter.lowWet, window),
+      scheduleLiveParameter(graph.highWet.gain, filter.highWet, window),
+      scheduleLiveParameter(graph.filterLow.frequency, filter.lowFrequency, window),
+      scheduleLiveParameter(graph.filterHigh.frequency, filter.highFrequency, window),
+      scheduleLiveParameter(graph.filterKill.gain, filter.kill, window),
+      scheduleLiveParameter(graph.delayWet.gain, delay.map(value => value * .52), window),
+      scheduleLiveParameter(graph.delayFeedback.gain, delay.map(value => .18 + (value * .38)), window),
+      scheduleLiveParameter(graph.reverbWet.gain, reverb.map(value => value * .46), window),
+    ];
+    return Math.min(...until);
+  }
+  function rescheduleLiveAutomation({ smooth=true } = {}) {
+    if (!livePlayback || !liveAudioContext) return;
+    const startAt = liveAudioContext.currentTime + .005;
+    const position = activeTransportPosition();
+    const until = ['from', 'to'].map(deck => scheduleLiveDeckAutomation(livePlayback.decks[deck], deck, startAt, position, { smooth }));
+    livePlayback.volumeScheduledUntil = Math.min(...until);
+  }
+  function requestLiveAutomationReschedule() {
+    if (!livePlayback || liveAutomationRescheduleFrame !== null) return;
+    const update = () => {
+      liveAutomationRescheduleFrame = null;
+      rescheduleLiveAutomation({ smooth: true });
+    };
+    liveAutomationRescheduleFrame = window.requestAnimationFrame ? window.requestAnimationFrame(update) : setTimeout(update, 0);
+  }
+  function stopLiveAudition({ clear=false, invalidateStart=true } = {}) {
+    if (clear) cancelLiveSeekQueue();
+    if (invalidateStart) livePlaybackStartRequestId += 1;
+    if (livePlayback) {
+      if (!liveSeekPending) liveTransportPosition = activeTransportPosition();
+      livePlayback.sources.forEach(source => { try { source.stop(); } catch (err) {} try { source.disconnect(); } catch (err) {} });
+      livePlayback.gains.forEach(gain => { try { gain.disconnect(); } catch (err) {} });
+    }
+    livePlayback = null;
+    if (clear) {
+      liveTransition = null;
+      liveTransitionMessage = '';
+      liveTransitionError = false;
+      liveTransportPosition = 0;
+      liveTransitionRequestId += 1;
+      if (livePreparationTimer !== null) { clearTimeout(livePreparationTimer); livePreparationTimer = null; }
+      liveManualOverrides.from = {};
+      liveManualOverrides.to = {};
+      liveCrossfader = 0;
+      liveRoughOffsets.from = 0;
+      liveRoughOffsets.to = 0;
+    }
+    updateLiveAuditionUi();
+  }
+  async function startLiveAudition({ position=liveTransportPosition, restartToken=null } = {}) {
+    if (!liveTransition || !liveTransition.ok) {
+      await prepareLiveTransition({ playWhenReady: true });
+      return;
+    }
+    const startRequestId = livePlaybackStartRequestId + 1;
+    livePlaybackStartRequestId = startRequestId;
+    let startedSources = [];
+    let startedGains = [];
+    try {
+      const context = liveAudioEngine();
+      await context.resume();
+      liveTransitionMessage = 'Loading prepared deck audio…';
+      liveTransitionError = false;
+      updateLiveAuditionUi();
+      const timing = liveTransportTiming();
+      if (!timing) throw new Error('Prepared live timing is unavailable. Prepare the deck audio again.');
+      const [fromBuffer, toBuffer] = await Promise.all([liveBuffer(liveTransition.urls.from), liveBuffer(liveTransition.urls.to)]);
+      if (startRequestId !== livePlaybackStartRequestId || (restartToken !== null && (!liveSeekPending || restartToken !== liveSeekPending.token))) {
+        startedSources.forEach(source => { try { source.stop(); } catch (err) {} try { source.disconnect(); } catch (err) {} });
+        return;
+      }
+      const loopStart = timing.start;
+      const loopEnd = timing.end;
+      if (!Number.isFinite(loopEnd) || loopEnd <= loopStart + .005) {
+        throw new Error('Prepared deck window is too short for the requested loop. Restart HQ preparation.');
+      }
+      const loopDuration = loopEnd - loopStart;
+      const startPosition = clamp(Number(position) || 0, 0, Math.max(0, loopDuration - .001));
+      stopLiveAudition({ clear: false, invalidateStart: false });
+      const startAt = context.currentTime + .045;
+      const makeDeck = (deck, buffer) => {
+        const roughOffset = liveDeckRoughOffset(deck);
+        const deckLoopStart = loopStart + roughOffset;
+        const deckLoopEnd = loopEnd + roughOffset;
+        if (deckLoopStart < 0 || deckLoopEnd > buffer.duration - .005 || deckLoopEnd <= deckLoopStart + .005) {
+          throw new Error('The requested beat jump is outside prepared guard audio. Wait for HQ preparation.');
+        }
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.loop = transitionLoopEnabled;
+        source.loopStart = deckLoopStart;
+        source.loopEnd = deckLoopEnd;
+        const graph = createLiveDeckGraph(context, source);
+        applyLiveFxSettings(graph, deck, { smooth: false });
+        applyLiveLoudnessGain(graph, deck, { smooth: false });
+        const sourceWindow = transitionWindowInfo(deck);
+        return { source, graph, loopStart: deckLoopStart, sourceContextStart: sourceWindow ? sourceWindow.contextStart : 0 };
+      };
+      const from = makeDeck('from', fromBuffer);
+      const to = makeDeck('to', toBuffer);
+      startedSources = [from.source, to.source];
+      startedGains = [from.graph.volume, from.graph.performance, to.graph.volume, to.graph.performance];
+      if (els.audio && !els.audio.paused) pauseSharedAudio();
+      const rendered = transitionAudioElement();
+      if (rendered && !rendered.paused) rendered.pause();
+      const volumeScheduledUntil = Math.min(
+        scheduleLiveDeckAutomation(from.graph, 'from', startAt, startPosition),
+        scheduleLiveDeckAutomation(to.graph, 'to', startAt, startPosition),
+      );
+      from.source.start(startAt, from.loopStart + startPosition);
+      to.source.start(startAt, to.loopStart + startPosition);
+      if (!transitionLoopEnabled) {
+        const remaining = Math.max(.001, loopDuration - startPosition);
+        from.source.stop(startAt + remaining);
+        to.source.stop(startAt + remaining);
+      }
+      if (startRequestId !== livePlaybackStartRequestId || (restartToken !== null && (!liveSeekPending || restartToken !== liveSeekPending.token))) {
+        startedSources.forEach(source => { try { source.stop(); } catch (err) {} try { source.disconnect(); } catch (err) {} });
+        return;
+      }
+      liveTransportPosition = startPosition;
+      livePlayback = {
+        sources: [from.source, to.source],
+        gains: [from.graph.volume, from.graph.performance, to.graph.volume, to.graph.performance],
+        decks: { from: from.graph, to: to.graph },
+        sourceContextStarts: { from: from.sourceContextStart, to: to.sourceContextStart },
+        timing: Object.assign({}, timing),
+        startAt, startPosition, duration: loopDuration, volumeScheduledUntil, key: liveTransition._key,
+      };
+      if (liveTransition._key === livePreparationKey()) {
+        liveRoughOffsets.from = 0;
+        liveRoughOffsets.to = 0;
+      }
+      applyLiveCrossfader({ smooth: false });
+      from.source.onended = () => {
+        if (livePlayback && livePlayback.sources.includes(from.source) && !transitionLoopEnabled) {
+          liveTransportPosition = loopDuration;
+          stopLiveAudition({ invalidateStart: false });
+          updateTransitionScrubber();
+        }
+      };
+      liveTransitionMessage = transitionLoopEnabled ? 'Live loop playing · live mixer automation' : 'Live transport playing · live mixer automation';
+      liveTransitionError = false;
+      updateLiveAuditionUi();
+      requestLivePlaybackFrame();
+    } catch (err) {
+      startedSources.forEach(source => { try { source.stop(); } catch (stopErr) {} try { source.disconnect(); } catch (disconnectErr) {} });
+      startedGains.forEach(gain => { try { gain.disconnect(); } catch (disconnectErr) {} });
+      if (startRequestId !== livePlaybackStartRequestId) return;
+      liveTransitionMessage = 'Live audition failed: ' + (err && err.message ? err.message : 'Could not start prepared audio.');
+      liveTransitionError = true;
+      updateLiveAuditionUi();
+    }
+  }
+  function requestLivePlaybackFrame() {
+    if (!livePlayback || !window.requestAnimationFrame) return;
+    window.requestAnimationFrame(() => {
+      if (!livePlayback || !liveAudioContext) return;
+      liveTransportPosition = activeTransportPosition();
+      if (livePlayback.volumeScheduledUntil - liveAudioContext.currentTime < LIVE_AUTOMATION_REFRESH_SECONDS) rescheduleLiveAutomation({ smooth: false });
+      requestTransitionEditorDraw();
+      updateTransitionScrubber();
+      updateLiveAuditionUi();
+      requestLivePlaybackFrame();
+    });
   }
   function transitionAudioElement() {
     return document.getElementById('transition-preview-audio');
+  }
+  function captureTransitionPlaybackState() {
+    const audio = transitionAudioElement();
+    if (!audio || !Number.isFinite(Number(audio.currentTime))) return null;
+    return { time: Number(audio.currentTime), playing: !audio.paused && !audio.ended };
+  }
+  function restoreTransitionPlaybackState(state) {
+    if (!state) return;
+    const audio = transitionAudioElement();
+    if (!audio) return;
+    const restore = () => {
+      const duration = transitionDuration(audio);
+      try { audio.currentTime = clamp(state.time, 0, Number.isFinite(duration) && duration > 0 ? duration : state.time); } catch (err) {}
+      if (state.playing) {
+        const promise = audio.play();
+        if (promise && promise.catch) promise.catch(() => {});
+      }
+      updateTransitionScrubber();
+    };
+    if (audio.readyState >= 1) restore();
+    else audio.addEventListener('loadedmetadata', restore, { once: true });
   }
   function transitionDuration(audio) {
     const audioDuration = Number(audio && audio.duration);
@@ -5041,21 +7022,96 @@
     });
   }
   function updateTransitionScrubber() {
-    const audio = transitionAudioElement();
     const button = document.getElementById('transition-play-toggle');
     const scrub = document.getElementById('transition-scrub');
     const time = document.getElementById('transition-scrub-time');
     if (!button || !scrub || !time) return;
-    const duration = transitionDuration(audio);
-    const current = audio && Number.isFinite(Number(audio.currentTime)) ? Number(audio.currentTime) : 0;
-    button.textContent = audio && !audio.paused && !audio.ended ? '⏸' : '▶';
-    button.setAttribute('aria-label', audio && !audio.paused && !audio.ended ? 'Pause' : 'Play');
-    if (Number.isFinite(duration) && duration > 0) scrub.max = String(duration);
-    if (!transitionScrubDragging) scrub.value = String(clamp(current, 0, Number(scrub.max) || duration || 1));
+    const duration = activeTransportDuration();
+    const current = activeTransportPosition();
+    const ready = transportCanPlay();
+    button.disabled = !ready;
+    button.textContent = transportIsPlaying() ? '⏸' : '▶';
+    button.setAttribute('aria-label', transportIsPlaying() ? 'Pause' : 'Play');
+    const loop = document.getElementById('transition-loop-toggle');
+    if (loop) {
+      loop.classList.toggle('active', transitionLoopEnabled);
+      loop.setAttribute('aria-pressed', transitionLoopEnabled ? 'true' : 'false');
+      loop.setAttribute('title', transitionLoopEnabled ? 'Disable transition loop' : 'Enable transition loop');
+      loop.setAttribute('aria-label', transitionLoopEnabled ? 'Disable transition loop' : 'Enable transition loop');
+    }
+    scrub.disabled = !ready;
+    scrub.min = '0';
+    scrub.max = String(Math.max(.01, duration || 1));
+    if (!transitionScrubDragging) scrub.value = String(clamp(current, 0, Number(scrub.max) || 1));
     setRangeProgress(scrub, scrub.value, scrub.max);
     time.textContent = timeText(current) + ' / ' + timeText(duration);
     requestTransitionEditorDraw();
-    if (audio && !audio.paused && !audio.ended) scheduleTransitionScrubber();
+    if (transportIsPlaying()) scheduleTransitionScrubber();
+  }
+  function seekLiveTransport(position, { restart=true } = {}) {
+    const duration = activeTransportDuration();
+    liveTransportPosition = clamp(Number(position) || 0, 0, Math.max(0, duration - .001));
+    if (!restart || (!livePlayback && !liveSeekInFlight)) return;
+    const token = (liveSeekPending ? liveSeekPending.token : 0) + 1;
+    liveSeekPending = { position: liveTransportPosition, token };
+    if (liveSeekInFlight || liveSeekFrame !== null) return;
+    const queue = () => {
+      liveSeekFrame = null;
+      processLiveSeekQueue();
+    };
+    liveSeekFrame = window.requestAnimationFrame ? window.requestAnimationFrame(queue) : setTimeout(queue, 0);
+  }
+  async function processLiveSeekQueue() {
+    if (liveSeekInFlight) return;
+    liveSeekInFlight = true;
+    try {
+      while (liveSeekPending) {
+        const request = liveSeekPending;
+        stopLiveAudition({ clear: false, invalidateStart: true });
+        await startLiveAudition({ position: request.position, restartToken: request.token });
+        if (liveSeekPending && liveSeekPending.token === request.token) liveSeekPending = null;
+      }
+    } finally {
+      liveSeekInFlight = false;
+      updateTransitionScrubber();
+    }
+  }
+  function cancelLiveSeekQueue() {
+    liveSeekPending = null;
+    livePlaybackStartRequestId += 1;
+    if (liveSeekFrame !== null) {
+      if (window.cancelAnimationFrame) window.cancelAnimationFrame(liveSeekFrame);
+      else clearTimeout(liveSeekFrame);
+      liveSeekFrame = null;
+    }
+  }
+  async function toggleCentralTransport() {
+    if (!transportCanPlay()) return;
+    if (activeTransportMode() === 'live') {
+      if (livePlayback || liveSeekInFlight) {
+        cancelLiveSeekQueue();
+        stopLiveAudition();
+      } else {
+        const duration = activeTransportDuration();
+        if (!transitionLoopEnabled && liveTransportPosition >= duration - .002) liveTransportPosition = 0;
+        await startLiveAudition({ position: liveTransportPosition });
+      }
+      updateTransitionScrubber();
+      return;
+    }
+    const audio = transitionAudioElement();
+    if (!audio) return;
+    audio.loop = transitionLoopEnabled;
+    if (audio.paused || audio.ended) {
+      if (els.audio && !els.audio.paused) pauseSharedAudio();
+      stopLiveAudition();
+      if (!transitionLoopEnabled && audio.ended) audio.currentTime = 0;
+      const promise = audio.play();
+      if (promise && promise.catch) promise.catch(() => {});
+    } else {
+      audio.pause();
+    }
+    updateTransitionScrubber();
   }
   function bindTransitionScrubber() {
     const audio = transitionAudioElement();
@@ -5063,27 +7119,25 @@
     const scrub = document.getElementById('transition-scrub');
     if (!button || !scrub) return;
     applyMasterVolume();
+    if (audio) audio.loop = transitionLoopEnabled;
     if (!button.__seqBound) {
       button.__seqBound = true;
-      button.addEventListener('click', () => {
-        const activeAudio = transitionAudioElement();
-        if (!activeAudio) return;
-        if (activeAudio.paused || activeAudio.ended) {
-          const promise = activeAudio.play();
-          if (promise && promise.catch) promise.catch(() => {});
-        } else {
-          activeAudio.pause();
-        }
-        updateTransitionScrubber();
-      });
+      button.addEventListener('click', () => { toggleCentralTransport(); });
+    }
+    const loop = document.getElementById('transition-loop-toggle');
+    if (loop && !loop.__seqBound) {
+      loop.__seqBound = true;
+      loop.addEventListener('click', () => setTransitionLoopEnabled(!transitionLoopEnabled));
     }
     if (!scrub.__seqBound) {
       scrub.__seqBound = true;
       scrub.addEventListener('input', () => {
         transitionScrubDragging = true;
-        const activeAudio = transitionAudioElement();
         const value = Number(scrub.value || 0);
-        if (activeAudio && Number.isFinite(value)) {
+        if (activeTransportMode() === 'live') {
+          seekLiveTransport(value, { restart: true });
+        } else {
+          const activeAudio = transitionAudioElement();
           try { activeAudio.currentTime = value; } catch (err) {}
         }
         setRangeProgress(scrub, value, scrub.max);
@@ -5091,9 +7145,11 @@
       });
       scrub.addEventListener('change', () => {
         transitionScrubDragging = false;
-        const activeAudio = transitionAudioElement();
         const value = Number(scrub.value || 0);
-        if (activeAudio && Number.isFinite(value)) {
+        if (activeTransportMode() === 'live') {
+          seekLiveTransport(value, { restart: true });
+        } else {
+          const activeAudio = transitionAudioElement();
           try { activeAudio.currentTime = value; } catch (err) {}
         }
         updateTransitionScrubber();
@@ -5113,18 +7169,347 @@
     if (!transitionEditorDrag) return;
     const info = transitionWindowInfo(transitionEditorDrag.deck);
     if (!info) return;
+    if (transitionEditorDrag.deck === 'from' && transitionReferenceLocked) return;
     const dx = Number(ev.clientX) - transitionEditorDrag.startX;
     const secondsPerPixel = transitionEditorDrag.secondsPerPixel;
-    const deltaSeconds = dx * secondsPerPixel;
+    const deltaSeconds = -dx * secondsPerPixel;
     let nudge = transitionEditorDrag.startNudge + (deltaSeconds / info.beatSec);
-    nudge = transitionSnapToBeat ? Math.round(nudge) : Math.round(nudge * 100) / 100;
+    nudge = Math.round(nudge * 8) / 8;
     nudge = clampTransitionNudge(transitionEditorDrag.deck, nudge);
     previewFormState[info.cfg.nudgeField] = nudge;
     syncPreviewFieldElements(info.cfg.nudgeField, nudge);
     drawTransitionEditor();
     updatePreviewEffectDisplay({ dirty: true });
   }
+  function syncTransitionViewportControls(reference) {
+    if (!reference) return;
+    const viewport = transitionViewportState(reference);
+    const bounds = transitionViewportDefaults(reference);
+    const span = Math.max(1, bounds.end - bounds.start);
+    const startPct = clamp((viewport.start - bounds.start) / span, 0, 1) * 100;
+    const endPct = clamp((viewport.end - bounds.start) / span, 0, 1) * 100;
+    document.querySelectorAll('[data-transition-viewport-track]').forEach(el => {
+      el.style.setProperty('--viewport-start', startPct.toFixed(3) + '%');
+      el.style.setProperty('--viewport-end', endPct.toFixed(3) + '%');
+    });
+  }
+  function updateTransitionAlignment(deck, beats=0, beatgridMs=0, reset=false) {
+    const info = transitionWindowInfo(deck);
+    if (!info || (deck === 'from' && transitionReferenceLocked)) return;
+    if (reset) {
+      previewFormState[info.cfg.nudgeField] = 0;
+      previewFormState[info.cfg.beatgridField] = 0;
+    } else {
+      previewFormState[info.cfg.nudgeField] = clampTransitionNudge(deck, (Number(previewFormState[info.cfg.nudgeField]) || 0) + Number(beats || 0));
+      previewFormState[info.cfg.beatgridField] = clamp(Math.round(((Number(previewFormState[info.cfg.beatgridField]) || 0) + Number(beatgridMs || 0)) / 5) * 5, -250, 250);
+    }
+    syncPreviewFieldElements(info.cfg.nudgeField, previewFormState[info.cfg.nudgeField]);
+    syncPreviewFieldElements(info.cfg.beatgridField, previewFormState[info.cfg.beatgridField]);
+    updatePreviewEffectDisplay({ dirty: true });
+  }
+  function setTransitionBeatJumpSize(deck, value) {
+    if (!transitionBeatJumpSizes[deck]) return;
+    const target = Number(value);
+    if (!BEAT_JUMP_SIZES.includes(target)) return;
+    transitionBeatJumpSizes[deck] = target;
+    renderTransitionPreview();
+  }
+  function stepTransitionBeatJumpSize(deck, direction) {
+    const current = transitionBeatJumpSizes[deck] || 4;
+    const index = Math.max(0, BEAT_JUMP_SIZES.indexOf(current));
+    const next = clamp(index + (Number(direction) < 0 ? -1 : 1), 0, BEAT_JUMP_SIZES.length - 1);
+    setTransitionBeatJumpSize(deck, BEAT_JUMP_SIZES[next]);
+  }
+  function applyTransitionBeatJump(deck, direction) {
+    const info = transitionWindowInfo(deck);
+    if (!info || (deck === 'from' && transitionReferenceLocked)) return;
+    const beats = (transitionBeatJumpSizes[deck] || 4) * (Number(direction) < 0 ? -1 : 1);
+    updateTransitionAlignment(deck, beats, 0);
+    refreshLiveRoughOffsets();
+    if (activeTransportMode() !== 'live' || (!livePlayback && !liveSeekInFlight)) return;
+    if (liveRoughOffsetsAreSafe()) {
+      liveTransitionMessage = 'Rough beat jump active · preparing HQ audio.';
+      liveTransitionError = false;
+      seekLiveTransport(activeTransportPosition(), { restart: true });
+    } else {
+      liveTransitionMessage = 'Beat jump exceeds prepared guard · preparing HQ audio.';
+      liveTransitionError = false;
+      updateLiveAuditionUi();
+    }
+  }
+  function activeAutomationParts() {
+    if (!transitionAutomationActiveLane) return null;
+    const [deck, lane] = transitionAutomationActiveLane.split(':');
+    return deck && lane ? { deck, lane } : null;
+  }
+  function snapAutomationBeat(value, info, bypass=false) {
+    if (bypass || transitionAutomationSnapTime === 'off') return clamp(value, 0, transitionAutomationBeats());
+    const grid = transitionAutomationSnapTime === 'quarter' ? .25 : transitionAutomationSnapTime === 'half' ? .5 : transitionAutomationSnapTime === 'bar' ? info.beatsPerBar : 1;
+    return clamp(Math.round(value / grid) * grid, 0, transitionAutomationBeats());
+  }
+  function snapAutomationValue(value, lane, bypass=false) {
+    const limits = automationLaneLimits(lane);
+    if (bypass || transitionAutomationSnapValue === 'off') return clamp(value, limits[0], limits[1]);
+    const step = lane === 'filter' ? .1 : (lane === 'delay' || lane === 'reverb' ? .05 : Number(transitionAutomationSnapValue) || 1);
+    let snapped = Math.round(value / step) * step;
+    if (lane !== 'filter' && lane !== 'delay' && lane !== 'reverb' && snapped < -93) snapped = -96;
+    return clamp(snapped, limits[0], limits[1]);
+  }
+  function automationValueFromEvent(canvas, info, ev, laneName) {
+    const rect = canvas.getBoundingClientRect();
+    const surface = canvas.getAttribute('data-transition-surface') || 'connected';
+    const lane = transitionLaneRect(Math.max(1, rect.width), Math.max(1, rect.height), surface);
+    const reference = transitionWindowInfo('from') || info;
+    const view = surface === 'connected' ? transitionSharedView(info, reference) : transitionVisibleRange(info, surface);
+    const x = clamp(Number(ev.clientX) - rect.left, lane.x, lane.x + lane.w);
+    const y = clamp(Number(ev.clientY) - rect.top, lane.y, lane.y + lane.h);
+    const time = view.start + ((x - lane.x) / Math.max(1, lane.w)) * view.duration;
+    return {
+      beat: snapAutomationBeat((time - info.transitionStart) / info.beatSec, info, !!ev.altKey),
+      value: snapAutomationValue(automationValueFromScalePosition(laneName, 1 - ((y - lane.y) / Math.max(1, lane.h))), laneName, !!ev.altKey),
+      lane,
+      view,
+    };
+  }
+  function findAutomationPointAtEvent(canvas, info, ev, deck, laneName) {
+    const points = automationLane(deck, laneName) || [];
+    const value = automationValueFromEvent(canvas, info, ev, laneName);
+    let match = null;
+    let distance = Infinity;
+    points.forEach((point, index) => {
+      const xy = automationPointXY(info, value.view, value.lane, laneName, point);
+      const d = Math.hypot(xy.x - (Number(ev.clientX) - canvas.getBoundingClientRect().left), xy.y - (Number(ev.clientY) - canvas.getBoundingClientRect().top));
+      if (d < distance) { distance = d; match = index; }
+    });
+    return distance <= 12 ? match : null;
+  }
+  function findAutomationSegmentAtEvent(canvas, info, ev, deck, laneName) {
+    const points = automationLane(deck, laneName) || [];
+    if (points.length < 2) return null;
+    const value = automationValueFromEvent(canvas, info, ev, laneName);
+    const pointerX = Number(ev.clientX) - canvas.getBoundingClientRect().left;
+    const pointerY = Number(ev.clientY) - canvas.getBoundingClientRect().top;
+    let match = null;
+    let distance = Infinity;
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const startBeat = Number(points[index].beat);
+      const endBeat = Number(points[index + 1].beat);
+      if (Math.abs(endBeat - startBeat) < .000001) {
+        const x = automationPointXY(info, value.view, value.lane, laneName, points[index]).x;
+        const y0 = automationValueY(laneName, points[index].value, value.lane);
+        const y1 = automationValueY(laneName, points[index + 1].value, value.lane);
+        const y = clamp(pointerY, Math.min(y0, y1), Math.max(y0, y1));
+        const d = Math.hypot(pointerX - x, pointerY - y);
+        if (d < distance) { distance = d; match = index; }
+        continue;
+      }
+      let previous = null;
+      for (let step = 0; step <= 20; step += 1) {
+        const beat = startBeat + ((step / 20) * (endBeat - startBeat));
+          const xy = automationPointXY(info, value.view, value.lane, laneName, { beat, value: automationValueAt(points, beat, laneName) });
+        if (previous) {
+          const dx = xy.x - previous.x;
+          const dy = xy.y - previous.y;
+          const denom = Math.max(.000001, (dx * dx) + (dy * dy));
+          const t = clamp((((pointerX - previous.x) * dx) + ((pointerY - previous.y) * dy)) / denom, 0, 1);
+          const d = Math.hypot(pointerX - (previous.x + t * dx), pointerY - (previous.y + t * dy));
+          if (d < distance) { distance = d; match = index; }
+        }
+        previous = xy;
+      }
+    }
+    return distance <= 9 ? match : null;
+  }
+  function deleteSelectedAutomationPoint() {
+    const selected = transitionAutomationSelectedPoint;
+    if (!selected) return false;
+    const points = automationLane(selected.deck, selected.lane);
+    if (!points || selected.index <= 0 || selected.index >= points.length - 1) return false;
+    points.splice(selected.index, 1);
+    transitionAutomationSelectedPoint = null;
+    transitionAutomationSelectedSegment = null;
+    markTransitionAutomationEdited();
+    return true;
+  }
+  function addAutomationPointFromEvent(canvas, info, ev) {
+    const deck = canvas.getAttribute('data-transition-deck');
+    const active = activeAutomationParts();
+    if (!active || active.deck !== deck || canvas.getAttribute('data-transition-surface') !== 'connected') return false;
+    const points = automationLane(deck, active.lane);
+    if (!points || findAutomationPointAtEvent(canvas, info, ev, deck, active.lane) !== null) return false;
+    const next = automationValueFromEvent(canvas, info, ev, active.lane);
+    const total = transitionAutomationBeats();
+    if (next.beat <= .001 || next.beat >= total - .001) return false;
+    points.push({ beat: next.beat, value: next.value, curve: 'linear' });
+    transitionAutomation[deck][active.lane] = normalizeAutomationPoints(points, active.lane);
+    const normalized = transitionAutomation[deck][active.lane];
+    let index = 0;
+    let distance = Infinity;
+    normalized.forEach((point, candidate) => {
+      const candidateDistance = Math.abs(Number(point.beat) - next.beat) + Math.abs(Number(point.value) - next.value);
+      if (candidateDistance < distance) { distance = candidateDistance; index = candidate; }
+    });
+    setAutomationPointSelection(deck, active.lane, index);
+    markTransitionAutomationEdited();
+    return true;
+  }
+  function sameAutomationBeat(a, b) {
+    return Math.abs(Number(a) - Number(b)) < .000001;
+  }
+  function dragAutomationPoint(points, drag, next) {
+    let index = drag.index;
+    const point = points[index];
+    if (!point) return index;
+    point.value = next.value;
+    if (index <= 0 || index >= points.length - 1) return index;
+    const currentBeat = Number(point.beat);
+    const pairedBefore = sameAutomationBeat(currentBeat, points[index - 1].beat);
+    const pairedAfter = sameAutomationBeat(currentBeat, points[index + 1].beat);
+    if (pairedAfter) {
+      // The dragged point is the before side of a jump. Moving it left resolves
+      // the pair; moving it right remains clamped against its after value.
+      if (next.beat < currentBeat - .000001) {
+        const min = Number(points[index - 1].beat) + .001;
+        point.beat = clamp(next.beat, min, currentBeat - .001);
+      } else point.beat = currentBeat;
+      return index;
+    }
+    if (pairedBefore) {
+      // The dragged point is the after side of a jump. Moving it right resolves
+      // the pair; moving it left remains clamped against its before value.
+      if (next.beat > currentBeat + .000001) {
+        const max = Number(points[index + 1].beat) - .001;
+        point.beat = clamp(next.beat, currentBeat + .001, max);
+      } else point.beat = currentBeat;
+      return index;
+    }
+    const left = points[index - 1];
+    const right = points[index + 1];
+    if (next.beat <= Number(left.beat) + .000001) {
+      if (index - 1 === 0) point.beat = Number(left.beat) + .001;
+      else {
+        point.beat = Number(left.beat);
+        // A point arriving from the right replaces a jump's after side.
+        if (index - 2 >= 0 && sameAutomationBeat(points[index - 2].beat, left.beat)) {
+          points.splice(index - 1, 1);
+          index -= 1;
+        }
+      }
+    } else if (next.beat >= Number(right.beat) - .000001) {
+      if (index + 1 === points.length - 1) point.beat = Number(right.beat) - .001;
+      else {
+        point.beat = Number(right.beat);
+        // A point arriving from the left replaces a jump's before side.
+        if (index + 2 < points.length && sameAutomationBeat(right.beat, points[index + 2].beat)) points.splice(index + 1, 1);
+      }
+    } else {
+      point.beat = next.beat;
+    }
+    return index;
+  }
   function bindTransitionEditor() {
+    document.querySelectorAll('[data-automation-lane]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => {
+        const lane = String(button.getAttribute('data-automation-lane') || '');
+        transitionAutomationActiveLane = transitionAutomationActiveLane === lane ? null : lane;
+        transitionAutomationSelectedPoint = null;
+        transitionAutomationSelectedSegment = null;
+        updatePreviewEffectDisplay({ dirty: false });
+      });
+    });
+    document.querySelectorAll('[data-automation-snap]').forEach(select => {
+      if (select.__seqBound) return;
+      select.__seqBound = true;
+      select.addEventListener('change', () => {
+        if (select.getAttribute('data-automation-snap') === 'time') transitionAutomationSnapTime = select.value;
+        else transitionAutomationSnapValue = select.value;
+      });
+    });
+    const curveSelect = document.querySelector('[data-automation-curve]');
+    syncAutomationEditorControls();
+    if (curveSelect && !curveSelect.__seqBound) {
+      curveSelect.__seqBound = true;
+      curveSelect.addEventListener('change', () => {
+        const selected = selectedAutomationSegmentParts();
+        if (!selected) return;
+        selected.start.curve = curveSelect.value;
+        markTransitionAutomationEdited();
+      });
+    }
+    document.querySelectorAll('[data-automation-segment-field]').forEach(input => {
+      if (input.__seqBound) return;
+      input.__seqBound = true;
+      input.addEventListener('change', () => {
+        const selected = selectedAutomationSegmentParts();
+        if (!selected) return;
+        const [endpoint, field] = String(input.getAttribute('data-automation-segment-field')).split(':');
+        const point = endpoint === 'start' ? selected.start : selected.end;
+        const pointIndex = selected.index + (endpoint === 'end' ? 1 : 0);
+        const raw = Number(input.value);
+        if (!Number.isFinite(raw)) { syncAutomationEditorControls(); return; }
+        if (field === 'value') point.value = snapAutomationValue(raw, selected.lane);
+        else if (Math.abs(Number(selected.start.beat) - Number(selected.end.beat)) < .000001) {
+          const info = transitionWindowInfo(selected.deck);
+          const min = Number(selected.points[selected.index - 1].beat) + .001;
+          const max = Number(selected.points[selected.index + 2].beat) - .001;
+          const beat = clamp(snapAutomationBeat(raw, info), min, max);
+          selected.start.beat = beat;
+          selected.end.beat = beat;
+        } else if (pointIndex > 0 && pointIndex < selected.points.length - 1) {
+          const info = transitionWindowInfo(selected.deck);
+          const min = Number(selected.points[pointIndex - 1].beat) + .001;
+          const max = Number(selected.points[pointIndex + 1].beat) - .001;
+          point.beat = clamp(snapAutomationBeat(raw, info), min, max);
+        }
+        transitionAutomation[selected.deck][selected.lane] = normalizeAutomationPoints(selected.points, selected.lane);
+        markTransitionAutomationEdited();
+      });
+    });
+    document.querySelectorAll('[data-automation-action]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => {
+        const action = button.getAttribute('data-automation-action');
+        const active = activeAutomationParts();
+        if (action === 'restore') {
+          previewFormState.preset = transitionAutomationPreset || 'auto';
+          transitionAutomationSelectedPoint = null;
+          transitionAutomationSelectedSegment = null;
+          ensureTransitionAutomation({ reset: true });
+          snapshotTransitionAutomation({ resetHistory: true });
+          renderTransitionPreview();
+          return;
+        }
+        if (action === 'delete-segment-keyframe') {
+          const selected = selectedAutomationSegmentParts();
+          if (!selected || selected.index + 1 >= selected.points.length - 1) return;
+          selected.points.splice(selected.index + 1, 1);
+          transitionAutomation[selected.deck][selected.lane] = normalizeAutomationPoints(selected.points, selected.lane);
+          transitionAutomationSelectedPoint = null;
+          transitionAutomationSelectedSegment = { deck: selected.deck, lane: selected.lane, index: Math.min(selected.index, selected.points.length - 2) };
+          markTransitionAutomationEdited();
+          return;
+        }
+        if (!active) return;
+        const points = automationLane(active.deck, active.lane);
+        if (!points) return;
+        if (action === 'reset-lane') {
+          const template = presetAutomationTemplate(transitionAutomationPreset || 'auto');
+          transitionAutomation[active.deck][active.lane] = cloneAutomation(template[active.deck][active.lane]);
+        } else if (action === 'copy-lane') {
+          const other = active.deck === 'from' ? 'to' : 'from';
+          transitionAutomation[other][active.lane] = cloneAutomation(points);
+        } else if (action === 'mirror-lane') {
+          const total = transitionAutomationBeats();
+          transitionAutomation[active.deck][active.lane] = points.map(point => ({ ...point, beat: total - Number(point.beat) })).reverse().map((point, index, list) => ({ ...point, curve: index < list.length - 1 ? point.curve : 'linear' }));
+        }
+        transitionAutomationSelectedPoint = null;
+        transitionAutomationSelectedSegment = null;
+        markTransitionAutomationEdited();
+      });
+    });
     const snap = document.getElementById('transition-snap-to-beat');
     if (snap && !snap.__seqBound) {
       snap.__seqBound = true;
@@ -5133,6 +7518,136 @@
         drawTransitionEditor();
       });
     }
+    const lock = document.getElementById('transition-lock-track-one');
+    if (lock && !lock.__seqBound) {
+      lock.__seqBound = true;
+      lock.addEventListener('change', () => {
+        transitionReferenceLocked = !!lock.checked;
+        renderTransitionPreview();
+      });
+    }
+    document.querySelectorAll('[data-transition-adjust]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => {
+        const [deck, beats] = String(button.getAttribute('data-transition-adjust') || '').split(':');
+        updateTransitionAlignment(deck, Number(beats) || 0, 0);
+      });
+    });
+    document.querySelectorAll('[data-transition-beat-size]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => {
+        const [deck, size] = String(button.getAttribute('data-transition-beat-size') || '').split(':');
+        setTransitionBeatJumpSize(deck, Number(size));
+      });
+    });
+    document.querySelectorAll('[data-transition-beat-size-step]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => {
+        const [deck, direction] = String(button.getAttribute('data-transition-beat-size-step') || '').split(':');
+        stepTransitionBeatJumpSize(deck, Number(direction));
+      });
+    });
+    document.querySelectorAll('[data-transition-beat-jump]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => {
+        const [deck, direction] = String(button.getAttribute('data-transition-beat-jump') || '').split(':');
+        applyTransitionBeatJump(deck, Number(direction));
+      });
+    });
+    document.querySelectorAll('[data-transition-beatgrid-adjust]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => {
+        const [deck, milliseconds] = String(button.getAttribute('data-transition-beatgrid-adjust') || '').split(':');
+        updateTransitionAlignment(deck, 0, Number(milliseconds) || 0);
+      });
+    });
+    document.querySelectorAll('[data-transition-reset-align]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => updateTransitionAlignment(button.getAttribute('data-transition-reset-align'), 0, 0, true));
+    });
+    const reference = transitionWindowInfo('from');
+    syncTransitionViewportControls(reference);
+    document.querySelectorAll('[data-transition-viewport-track]').forEach(track => {
+      if (track.__seqBound) return;
+      track.__seqBound = true;
+      let drag = null;
+      const update = ev => {
+        if (!drag) return;
+        const currentReference = transitionWindowInfo('from');
+        if (!currentReference) return;
+        const bounds = transitionViewportDefaults(currentReference);
+        const minSpan = 8;
+        const delta = ((Number(ev.clientX) - drag.startX) / Math.max(1, drag.width)) * (bounds.end - bounds.start);
+        const next = { start: drag.start, end: drag.end };
+        if (drag.mode === 'start') next.start = clamp(drag.start + delta, bounds.start, drag.end - minSpan);
+        else if (drag.mode === 'end') next.end = clamp(drag.end + delta, drag.start + minSpan, bounds.end);
+        else {
+          const span = drag.end - drag.start;
+          next.start = clamp(drag.start + delta, bounds.start, bounds.end - span);
+          next.end = next.start + span;
+        }
+        transitionViewport = next;
+        syncTransitionViewportControls(currentReference);
+        drawTransitionEditor();
+      };
+      track.addEventListener('pointerdown', ev => {
+        if (ev.button !== 0) return;
+        const currentReference = transitionWindowInfo('from');
+        if (!currentReference) return;
+        const viewport = transitionViewportState(currentReference);
+        const rect = track.getBoundingClientRect();
+        const handle = closestAttr(ev.target, 'data-transition-viewport-handle');
+        const xPct = clamp((Number(ev.clientX) - rect.left) / Math.max(1, rect.width), 0, 1);
+        const bounds = transitionViewportDefaults(currentReference);
+        const point = bounds.start + xPct * (bounds.end - bounds.start);
+        const mode = handle || (point >= viewport.start && point <= viewport.end ? 'pan' : (Math.abs(point - viewport.start) <= Math.abs(point - viewport.end) ? 'start' : 'end'));
+        drag = { mode, startX: Number(ev.clientX), start: viewport.start, end: viewport.end, width: rect.width };
+        try { track.setPointerCapture(ev.pointerId); } catch (err) {}
+        ev.preventDefault();
+      });
+      track.addEventListener('pointermove', update);
+      const end = ev => {
+        if (!drag) return;
+        update(ev);
+        drag = null;
+        try { track.releasePointerCapture(ev.pointerId); } catch (err) {}
+      };
+      track.addEventListener('pointerup', end);
+      track.addEventListener('pointercancel', () => { drag = null; });
+    });
+    document.querySelectorAll('[data-transition-viewport-reset]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => {
+        transitionViewport = null;
+        drawTransitionEditor();
+      });
+    });
+    document.querySelectorAll('[data-transition-viewport-zoom]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => {
+        const currentReference = transitionWindowInfo('from');
+        if (!currentReference) return;
+        const bounds = transitionViewportDefaults(currentReference);
+        const current = transitionViewportState(currentReference);
+        const center = (current.start + current.end) / 2;
+        const minSpan = 8;
+        const fullSpan = bounds.end - bounds.start;
+        const factor = button.getAttribute('data-transition-viewport-zoom') === 'in' ? 0.72 : 1.38;
+        const span = clamp((current.end - current.start) * factor, minSpan, fullSpan);
+        const start = clamp(center - span / 2, bounds.start, bounds.end - span);
+        transitionViewport = { start, end: start + span };
+        syncTransitionViewportControls(currentReference);
+        drawTransitionEditor();
+      });
+    });
     document.querySelectorAll('[data-transition-surface][data-transition-deck]').forEach(canvas => {
       if (canvas.__seqBound) return;
       canvas.__seqBound = true;
@@ -5141,6 +7656,34 @@
         const deck = canvas.getAttribute('data-transition-deck');
         const info = transitionWindowInfo(deck);
         if (!info) return;
+        const active = activeAutomationParts();
+        const surface = canvas.getAttribute('data-transition-surface');
+        if (active && active.deck === deck && surface === 'connected') {
+          const points = automationLane(deck, active.lane);
+          if (!points) return;
+          const index = findAutomationPointAtEvent(canvas, info, ev, deck, active.lane);
+          if (index !== null) {
+            setAutomationPointSelection(deck, active.lane, index);
+            transitionAutomationDrag = { deck, lane: active.lane, index };
+            try { canvas.setPointerCapture(ev.pointerId); } catch (err) {}
+            updatePreviewEffectDisplay({ dirty: false });
+            ev.preventDefault();
+            ev.stopPropagation();
+            return;
+          }
+          const segment = findAutomationSegmentAtEvent(canvas, info, ev, deck, active.lane);
+          if (segment !== null) {
+            setAutomationSegmentSelection(deck, active.lane, segment);
+            updatePreviewEffectDisplay({ dirty: false });
+            ev.preventDefault();
+            ev.stopPropagation();
+            return;
+          }
+          // Leave empty automation-lane clicks alone so the browser can emit
+          // the subsequent dblclick event that inserts a new automation point.
+          return;
+        }
+        if (deck === 'from' && transitionReferenceLocked) return;
         const cue = transitionCueAtPoint(canvas, info, ev);
         if (cue) {
           previewFormState[info.cfg.cueField] = cue.name || '';
@@ -5152,8 +7695,9 @@
           return;
         }
         const rect = canvas.getBoundingClientRect();
-        const surface = canvas.getAttribute('data-transition-surface');
-        const view = transitionVisibleRange(info, surface);
+        const canvasSurface = canvas.getAttribute('data-transition-surface');
+        const currentReference = transitionWindowInfo('from') || info;
+        const view = canvasSurface === 'connected' ? transitionSharedView(info, currentReference) : transitionVisibleRange(info, canvasSurface);
         const seconds = view.duration;
         transitionEditorDrag = {
           deck,
@@ -5165,12 +7709,44 @@
         ev.preventDefault();
         ev.stopPropagation();
       });
+      canvas.addEventListener('dblclick', ev => {
+        const deck = canvas.getAttribute('data-transition-deck');
+        const info = transitionWindowInfo(deck);
+        if (!info || !addAutomationPointFromEvent(canvas, info, ev)) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+      });
       canvas.addEventListener('pointermove', ev => {
+        if (transitionAutomationDrag && transitionAutomationDrag.deck === canvas.getAttribute('data-transition-deck')) {
+          const info = transitionWindowInfo(transitionAutomationDrag.deck);
+          const points = info && automationLane(transitionAutomationDrag.deck, transitionAutomationDrag.lane);
+          if (!info || !points) return;
+          const next = automationValueFromEvent(canvas, info, ev, transitionAutomationDrag.lane);
+          transitionAutomationDrag.index = dragAutomationPoint(points, transitionAutomationDrag, next);
+          setAutomationPointSelection(transitionAutomationDrag.deck, transitionAutomationDrag.lane, transitionAutomationDrag.index);
+          previewFormState.preset = 'custom';
+          const presetEl = document.getElementById('preset');
+          if (presetEl) presetEl.value = 'custom';
+          previewFormState.automation = transitionAutomation;
+          requestLiveAutomationReschedule();
+          syncAutomationEditorControls();
+          drawTransitionEditor();
+          updateTransitionDirtyUi();
+          ev.preventDefault();
+          return;
+        }
         if (!transitionEditorDrag || transitionEditorDrag.deck !== canvas.getAttribute('data-transition-deck')) return;
         applyTransitionEditorDrag(ev);
         ev.preventDefault();
       });
       const endDrag = ev => {
+        if (transitionAutomationDrag && transitionAutomationDrag.deck === canvas.getAttribute('data-transition-deck')) {
+          transitionAutomationDrag = null;
+          snapshotTransitionAutomation();
+          updatePreviewEffectDisplay({ dirty: true });
+          try { canvas.releasePointerCapture(ev.pointerId); } catch (err) {}
+          return;
+        }
         if (!transitionEditorDrag) return;
         applyTransitionEditorDrag(ev);
         transitionEditorDrag = null;
@@ -5178,7 +7754,7 @@
         updateTransitionDirtyUi();
       };
       canvas.addEventListener('pointerup', endDrag);
-      canvas.addEventListener('pointercancel', () => { transitionEditorDrag = null; });
+      canvas.addEventListener('pointercancel', () => { transitionEditorDrag = null; transitionAutomationDrag = null; });
     });
     drawTransitionEditor();
   }
@@ -5189,27 +7765,164 @@
     }
     setTimeout(() => safeUi('transition editor bind', bindTransitionEditor), 0);
     setTimeout(() => safeUi('transition scrubber bind', bindTransitionScrubber), 0);
+    setTimeout(() => safeUi('live mixer bind', bindLiveMixer), 0);
     setTimeout(() => safeUi('transition editor draw', drawTransitionEditor), 0);
     setTimeout(() => safeUi('transition dirty ui update', updateTransitionDirtyUi), 0);
+  }
+  function bindLiveMixer() {
+    document.querySelectorAll('[data-live-mixer-control]').forEach(input => {
+      if (input.__seqBound) return;
+      input.__seqBound = true;
+      input.addEventListener('input', () => {
+        const [deck, lane] = String(input.getAttribute('data-live-mixer-control') || '').split(':');
+        setLiveManualOverride(deck, lane, input.value);
+      });
+      input.addEventListener('dblclick', ev => {
+        ev.preventDefault();
+        const [deck, lane] = String(input.getAttribute('data-live-mixer-control') || '').split(':');
+        setLiveManualOverride(deck, lane, 0);
+      });
+    });
+    document.querySelectorAll('[data-live-mixer-auto]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => {
+        const [deck, lane] = String(button.getAttribute('data-live-mixer-auto') || '').split(':');
+        restoreLiveLaneAutomation(deck, lane);
+      });
+    });
+    document.querySelectorAll('[data-live-fx-setting]').forEach(input => {
+      if (input.__seqBound) return;
+      input.__seqBound = true;
+      const update = () => {
+        const [deck, setting] = String(input.getAttribute('data-live-fx-setting') || '').split(':');
+        setLiveFxSetting(deck, setting, input.value);
+      };
+      input.addEventListener('input', update);
+      input.addEventListener('change', update);
+      input.addEventListener('dblclick', ev => {
+        const [deck, setting] = String(input.getAttribute('data-live-fx-setting') || '').split(':');
+        const defaults = { delay_tone: .5, reverb_decay: 1.2, reverb_tone: .5 };
+        if (!Object.prototype.hasOwnProperty.call(defaults, setting)) return;
+        ev.preventDefault();
+        setLiveFxSetting(deck, setting, defaults[setting]);
+      });
+    });
+    document.querySelectorAll('[data-live-crossfader]').forEach(input => {
+      if (input.__seqBound) return;
+      input.__seqBound = true;
+      input.addEventListener('input', () => {
+        liveCrossfader = clamp(Number(input.value) || 0, -1, 1);
+        applyLiveCrossfader();
+      });
+      input.addEventListener('dblclick', ev => {
+        ev.preventDefault();
+        liveCrossfader = 0;
+        applyLiveCrossfader();
+        syncLiveMixerUi();
+      });
+    });
+    document.querySelectorAll('[data-live-crossfader-reset]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => {
+        liveCrossfader = 0;
+        applyLiveCrossfader();
+        syncLiveMixerUi();
+      });
+    });
+    document.querySelectorAll('[data-live-mixer-auto-all]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => toggleAllLiveAutomation());
+    });
+    document.querySelectorAll('[data-live-mixer-toggle]').forEach(button => {
+      if (button.__seqBound) return;
+      button.__seqBound = true;
+      button.addEventListener('click', () => {
+        liveMixerOpen = !liveMixerOpen;
+        renderTransitionPreview();
+      });
+    });
+    bindLiveRotaryControls();
+    syncLiveMixerUi();
+  }
+  function bindLiveRotaryControls() {
+    document.querySelectorAll('.live-mixer-knob input[type="range"]').forEach(input => {
+      const knob = input.closest('.live-mixer-knob');
+      if (!knob || knob.__seqRotaryBound) return;
+      knob.__seqRotaryBound = true;
+      let drag = null;
+      const finish = ev => {
+        if (!drag) return;
+        drag = null;
+        try { knob.releasePointerCapture(ev.pointerId); } catch (err) {}
+      };
+      knob.addEventListener('pointerdown', ev => {
+        if (ev.button !== 0) return;
+        const min = Number(input.min);
+        const max = Number(input.max);
+        const value = Number(input.value);
+        if (!Number.isFinite(min) || !Number.isFinite(max) || !Number.isFinite(value) || max <= min) return;
+        ev.preventDefault();
+        try { input.focus({ preventScroll: true }); } catch (err) { input.focus(); }
+        drag = { x: Number(ev.clientX), y: Number(ev.clientY), value, min, max, step: Math.max(.0001, Number(input.step) || .01) };
+        try { knob.setPointerCapture(ev.pointerId); } catch (err) {}
+      }, { capture: true });
+      knob.addEventListener('pointermove', ev => {
+        if (!drag) return;
+        // Up and right both increase, while a short movement remains precise.
+        const travel = ((Number(ev.clientX) - drag.x) * .5) - (Number(ev.clientY) - drag.y);
+        const raw = drag.value + ((travel / LIVE_KNOB_TRAVEL_PX) * (drag.max - drag.min));
+        const snapped = drag.min + (Math.round((raw - drag.min) / drag.step) * drag.step);
+        input.value = String(clamp(snapped, drag.min, drag.max));
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        ev.preventDefault();
+      });
+      knob.addEventListener('pointerup', finish);
+      knob.addEventListener('pointercancel', finish);
+      knob.addEventListener('dblclick', ev => {
+        const mixerControl = String(input.getAttribute('data-live-mixer-control') || '');
+        const fxControl = String(input.getAttribute('data-live-fx-setting') || '');
+        if (mixerControl) {
+          const [deck, lane] = mixerControl.split(':');
+          setLiveManualOverride(deck, lane, 0);
+        } else if (fxControl) {
+          const [deck, setting] = fxControl.split(':');
+          const defaults = { delay_tone: .5, reverb_decay: 1.2, reverb_tone: .5 };
+          if (Object.prototype.hasOwnProperty.call(defaults, setting)) setLiveFxSetting(deck, setting, defaults[setting]);
+        }
+        ev.preventDefault();
+      });
+    });
   }
   function updatePreviewFormStateFromElement(el) {
     const field = el && el.getAttribute && el.getAttribute('data-preview-field');
     if (!field) return;
     if (field === 'preset') {
-      applyPresetToPreviewState(el.value);
+      if (String(el.value) !== String(previewFormState.preset) || !transitionAutomation) applyPresetToPreviewState(el.value);
       updateTransitionDirtyUi();
       return;
     }
+    const previousValue = previewFormState[field];
     if (el.type === 'number') previewFormState[field] = Number(el.value);
     else previewFormState[field] = el.value;
+    if (field === 'padding_bars') {
+      setTransitionPadding(previewFormState[field]);
+      if (el) el.value = String(previewFormState.padding_bars);
+      return;
+    }
+    if (TRANSITION_TIMING_STEPS[field]) previewFormState[field] = nearestTransitionTimingValue(field, previewFormState[field]);
     if (field === 'from_nudge_beats') previewFormState[field] = clampTransitionNudge('from', previewFormState[field]);
     if (field === 'to_nudge_beats') previewFormState[field] = clampTransitionNudge('to', previewFormState[field]);
+    if (field === 'from_beatgrid_ms' || field === 'to_beatgrid_ms') previewFormState[field] = clamp(Math.round((Number(previewFormState[field]) || 0) / 5) * 5, -250, 250);
     if ((field === 'from_nudge_beats' || field === 'to_nudge_beats') && el) el.value = String(previewFormState[field]);
+    if ((field === 'from_beatgrid_ms' || field === 'to_beatgrid_ms') && el) el.value = String(previewFormState[field]);
+    if (TRANSITION_TIMING_STEPS[field] && el) el.value = String(previewFormState[field]);
     syncPreviewFieldElements(field, previewFormState[field], el);
-    if (['volume_mode', 'eq_mode', 'filter_mode'].includes(field) && previewFormState.preset !== 'custom') {
-      previewFormState.preset = 'custom';
-      const presetEl = document.getElementById('preset');
-      if (presetEl) presetEl.value = 'custom';
+    if (['volume_mode', 'eq_mode', 'filter_mode'].includes(field)) {
+      if (String(previousValue) !== String(previewFormState[field])) applyLegacyModeAutomation(field);
+      return;
     }
     drawTransitionEditor();
   }
@@ -5218,6 +7931,7 @@
   }
   async function renderBackendTransition() {
     if (transitionRenderPending) return;
+    stopLiveAudition();
     const from = transitionFromIdx === null ? null : byIdx.get(transitionFromIdx);
     const to = transitionToIdx === null ? null : byIdx.get(transitionToIdx);
     if (!from || !to) {
@@ -5227,10 +7941,14 @@
       return;
     }
     syncPreviewFormStateFromDom();
+    ensureTransitionAutomation();
     const body = Object.assign({}, previewFormState, {
       from_track: trackId(from),
       to_track: trackId(to),
-      overwrite: true,
+      loudness_match_mode: loudnessMatchMode(),
+      automation: cloneAutomation(transitionAutomation),
+      effects: cloneAutomation(previewFormState.effects),
+      overwrite: false,
     });
     const requestId = transitionRenderRequestId + 1;
     transitionRenderRequestId = requestId;
@@ -5249,7 +7967,7 @@
       if (!data.ok) throw new Error(data.error || 'Render failed');
       data.rendered_at = Date.now();
       transitionRender = data;
-      transitionRenderedState = Object.assign({}, body);
+      transitionRenderedState = Object.assign({}, body, { effects: cloneAutomation(body.effects) });
       transitionRenderMessage = 'Rendered preview is current.';
       transitionRenderWarn = false;
     } catch (err) {
@@ -5290,6 +8008,7 @@
     if (ev.button !== 0) return;
     const point = energyValueFromMouse(ev);
     if (!point) return;
+    planningEditSnapshot = planningSnapshot();
     draggingEnergySlot = point.slot;
     setTargetSlotValue(point.slot, point.value, true);
     ev.preventDefault();
@@ -5301,7 +8020,9 @@
     setTargetSlotValue(draggingEnergySlot, point.value, true);
   }
   function endEnergyDrag() {
+    if (draggingEnergySlot !== null && planningEditSnapshot) commitPlanningChange(planningEditSnapshot);
     draggingEnergySlot = null;
+    planningEditSnapshot = null;
   }
   function updateAppendControls() {
     const slot = targetSlot();
@@ -5408,6 +8129,15 @@
   setActionButton(els.clearLast, '−', 'Clear last sequence track', 'danger');
   setActionButton(els.resetSequence, '⌧', 'Reset sequence', 'danger');
   setActionButton(els.downloadSequence, '↓', 'Download sequence CSV');
+  if (els.fullscreenToggle) {
+    els.fullscreenToggle.addEventListener('click', ev => {
+      ev.stopPropagation();
+      toggleFullscreen();
+    });
+  }
+  document.addEventListener('fullscreenchange', syncFullscreenToggle);
+  document.addEventListener('webkitfullscreenchange', syncFullscreenToggle);
+  syncFullscreenToggle();
   if (els.settingsToggle) {
     els.settingsToggle.addEventListener('click', ev => {
       ev.stopPropagation();
@@ -5451,9 +8181,31 @@
     }
     const tag = ev.target && ev.target.tagName ? String(ev.target.tagName).toLowerCase() : '';
     const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || (ev.target && ev.target.isContentEditable);
-    if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
     const key = String(ev.key || '').toLowerCase();
-    if (key === '+' || key === '=' || key === 'i') {
+    if (!typing && (ev.metaKey || ev.ctrlKey) && !ev.altKey) {
+      if (key === 'z') {
+        if (activePane === 'preview' && transitionAutomationActiveLane) restoreTransitionAutomationHistory(ev.shiftKey ? 1 : -1);
+        else if (ev.shiftKey) redoPlanning();
+        else undoPlanning();
+        ev.preventDefault();
+        return;
+      }
+      if (key === 'y') {
+        if (activePane === 'preview' && transitionAutomationActiveLane) restoreTransitionAutomationHistory(1);
+        else redoPlanning();
+        ev.preventDefault();
+        return;
+      }
+    }
+    if (!typing && activePane === 'preview' && (key === 'delete' || key === 'backspace') && deleteSelectedAutomationPoint()) {
+      ev.preventDefault();
+      return;
+    }
+    if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    if (key === 'f' || key === 'f11') {
+      toggleFullscreen();
+      ev.preventDefault();
+    } else if (key === '+' || key === '=' || key === 'i') {
       handleMapAction('zoom-in');
       ev.preventDefault();
     } else if (key === '?') {
@@ -5487,15 +8239,10 @@
     }
   });
   els.tabButtons.forEach(btn => btn.addEventListener('click', () => setActivePane(btn.getAttribute('data-pane-tab') || 'explore')));
-  els.sequenceLength.addEventListener('change', () => setSequenceLength(els.sequenceLength.value));
+  els.sequenceLength.addEventListener('change', () => mutatePlanning(() => setSequenceLength(els.sequenceLength.value, false)));
   els.energySource.addEventListener('change', renderAll);
   els.colorMode.addEventListener('change', () => {
     setAppSetting('point_color', els.colorMode.value);
-    renderAll();
-  });
-  if (els.mapRenderer) els.mapRenderer.addEventListener('change', () => {
-    setAppSetting('map_renderer', els.mapRenderer.value === 'webgl' ? 'webgl' : 'plotly');
-    syncMapRenderer({ render: false });
     renderAll();
   });
   if (els.mapEffectsEnabled) els.mapEffectsEnabled.addEventListener('change', () => {
@@ -5513,6 +8260,17 @@
   if (els.figureLightMode) els.figureLightMode.addEventListener('change', () => {
     setAppSetting('figure_light_mode', Boolean(els.figureLightMode.checked));
     applyFigureTheme({ renderEnergy: true });
+    if (els.settingsPopover && !els.settingsPopover.classList.contains('hidden')) {
+      safeUi('settings render', renderSettingsPanel);
+    }
+  });
+  if (els.loudnessMatchMode) els.loudnessMatchMode.addEventListener('change', () => {
+    const mode = LOUDNESS_MATCH_MODES.includes(els.loudnessMatchMode.value) ? els.loudnessMatchMode.value : 'auditions_transitions';
+    setAppSetting('loudness_match_mode', mode);
+    applySharedAudioLoudness({ smooth: true });
+    applyLiveLoudnessGains({ smooth: true });
+    renderSelectionOnly();
+    updateTransitionDirtyUi();
     if (els.settingsPopover && !els.settingsPopover.classList.contains('hidden')) {
       safeUi('settings render', renderSettingsPanel);
     }
@@ -5546,15 +8304,23 @@
   if (els.setIncoming) els.setIncoming.addEventListener('click', () => { if (selectedIdx !== null) setCandidateTrack(selectedIdx, { autoplay: false, showPopover: true }); });
   els.appendSelected.addEventListener('click', () => { if (selectedIdx !== null) appendTrack(selectedIdx); });
   if (els.clearTransition) els.clearTransition.addEventListener('click', clearTransitionPair);
+  if (els.undoPlanning) els.undoPlanning.addEventListener('click', undoPlanning);
+  if (els.redoPlanning) els.redoPlanning.addEventListener('click', redoPlanning);
+  if (els.applyEnergyGuides) els.applyEnergyGuides.addEventListener('click', applyTargetGuides);
+  if (els.clearEnergyTargets) els.clearEnergyTargets.addEventListener('click', () => mutatePlanning(() => {
+    targetValues = Array.from({ length: sequenceLength }, () => null);
+  }));
   els.clearLast.addEventListener('click', () => {
-    for (let i = sequence.length - 1; i >= 0; i -= 1) { if (sequence[i] !== null) { sequence[i] = null; break; } }
-    renderAll();
+    mutatePlanning(() => {
+      for (let i = sequence.length - 1; i >= 0; i -= 1) { if (sequence[i] !== null) { sequence[i] = null; break; } }
+    });
   });
   els.resetSequence.addEventListener('click', () => {
-    sequence = Array.from({ length: sequenceLength }, () => null);
-    targetValues = Array.from({ length: sequenceLength }, () => DEFAULT_TARGET_ENERGY);
-    selectedSlot = null;
-    renderAll();
+    mutatePlanning(() => {
+      sequence = Array.from({ length: sequenceLength }, () => null);
+      targetValues = Array.from({ length: sequenceLength }, () => null);
+      selectedSlot = null;
+    });
   });
   els.downloadSequence.addEventListener('click', downloadCsv);
   if (els.librarySearch) els.librarySearch.addEventListener('input', () => {
@@ -5756,7 +8522,9 @@
     const appendIdx = closestAttr(ev.target, 'data-append-idx');
     const removeSlotValue = closestAttr(ev.target, 'data-remove-slot');
     const seqSlotValue = closestAttr(ev.target, 'data-seq-slot');
+    const clearTargetSlotAttr = closestAttr(ev.target, 'data-clear-target-slot');
     const placeSlotValue = closestAttr(ev.target, 'data-place-slot');
+    const focusTrackIdx = closestAttr(ev.target, 'data-focus-track');
     const playButton = closestEl(ev.target, '[data-play-idx]');
     const playIdx = playButton ? playButton.getAttribute('data-play-idx') : null;
     const playMode = playButton ? (playButton.getAttribute('data-play-mode') || 'point') : 'point';
@@ -5766,6 +8534,8 @@
     const libraryPlace = closestAttr(ev.target, 'data-library-place');
     const librarySortKey = closestAttr(ev.target, 'data-library-sort');
     const previewAction = closestAttr(ev.target, 'data-preview-action');
+    const previewStep = closestAttr(ev.target, 'data-preview-step');
+    const topLoopToggle = closestAttr(ev.target, 'data-transition-loop-top');
     const transitionTrackPlay = closestAttr(ev.target, 'data-transition-track-play');
     const mapAction = closestAttr(ev.target, 'data-map-action');
     const pinRecIdx = closestAttr(ev.target, 'data-pin-rec-idx');
@@ -5798,14 +8568,31 @@
     }
     if (appendIdx !== null) appendTrack(Number(appendIdx));
     if (removeSlotValue !== null) removeSlot(Number(removeSlotValue));
-    if (seqSlotValue !== null) { selectedSlot = Number(seqSlotValue); renderAll(); }
+    if (clearTargetSlotAttr !== null) mutatePlanning(() => clearTargetSlotValue(Number(clearTargetSlotAttr), false));
+    if (seqSlotValue !== null) mutatePlanning(() => {
+      const slot = Number(seqSlotValue);
+      selectedSlot = selectedSlot === slot ? null : slot;
+    });
     if (placeSlotValue !== null && selectedIdx !== null) { selectedSlot = Number(placeSlotValue); appendTrack(selectedIdx); }
     if (playIdx !== null) toggleTrackPreview(Number(playIdx), { mode: playMode });
+    if (focusTrackIdx !== null) focusTrack(Number(focusTrackIdx), { autoplay: false, showPopover: true });
     if (libraryCurrent !== null) setCurrentTrack(Number(libraryCurrent));
     if (libraryOutgoing !== null) setTransitionEndpoint('out', Number(libraryOutgoing), { toggle: false });
     if (libraryIncoming !== null) setCandidateTrack(Number(libraryIncoming), { autoplay: false, showPopover: true });
     if (libraryPlace !== null) appendTrack(Number(libraryPlace));
+    if (previewStep !== null) {
+      const [field, direction] = String(previewStep).split(':');
+      stepTransitionTimingField(field, Number(direction));
+      ev.preventDefault();
+      return;
+    }
+    if (topLoopToggle !== null) {
+      setTransitionLoopEnabled(!transitionLoopEnabled);
+      ev.preventDefault();
+      return;
+    }
     if (previewAction === 'swap') swapTransitionPair();
+    if (previewAction === 'reset-alignments') resetBothDeckAlignments();
     if (previewAction === 'clear') clearTransitionPair();
     if (previewAction === 'render') renderBackendTransition();
     if (transitionTrackPlay !== null) toggleTransitionTrackPreview(transitionTrackPlay);
@@ -5822,13 +8609,24 @@
       updatePreviewEffectDisplay({ dirty: true });
       return;
     }
+    if (ev.target && ev.target.getAttribute && ev.target.getAttribute('data-preview-mode') !== null) {
+      transitionPreviewMode = String(ev.target.value || 'verified') === 'live' ? 'live' : 'verified';
+      if (transitionPreviewMode === 'live') {
+        const rendered = transitionAudioElement();
+        if (rendered && !rendered.paused) rendered.pause();
+        scheduleLivePreparation();
+      } else stopLiveAudition();
+      renderTransitionPreview();
+      return;
+    }
     const slotValue = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-target-slot');
     if (slotValue === null) return;
     const slot = Number(slotValue);
-    const val = Number(ev.target.value);
-    targetValues[slot] = Number.isFinite(val) ? normalizeTargetEnergy(val) : DEFAULT_TARGET_ENERGY;
-    selectedSlot = Number.isFinite(slot) ? slot : selectedSlot;
-    renderAll();
+    const rawValue = String(ev.target.value || '').trim();
+    mutatePlanning(() => {
+      if (!rawValue) clearTargetSlotValue(slot, false);
+      else setTargetSlotValue(slot, rawValue, false);
+    });
   });
   document.body.addEventListener('input', ev => {
     if (updateRecFiltersFromElement(ev.target)) {
@@ -5840,6 +8638,19 @@
     if (ev.target && ev.target.getAttribute && ev.target.getAttribute('data-preview-field')) {
       updatePreviewFormStateFromElement(ev.target);
       updatePreviewEffectDisplay({ dirty: true });
+      return;
+    }
+    const transitionDeck = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-transition-track-scrub');
+    if (transitionDeck !== null) {
+      const info = transitionWindowInfo(transitionDeck);
+      const value = Number(ev.target.value || 0);
+      if (info && info.record && Number.isFinite(value)) {
+        const idx = Number(info.record.idx);
+        rowScrubPositions.set(idx, clamp(value, 0, info.trackDuration));
+        if (previewAudioIdx === idx && previewAudioContext === 'transition-' + transitionDeck && els.audio) seekSharedAudio(value);
+        updateTransitionTrackPlayButtons();
+        requestTransitionEditorDraw();
+      }
       return;
     }
     const scrubIdx = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-library-scrub-idx');
@@ -5934,6 +8745,9 @@
       handleMapBlankClick();
     });
   }
+  const restoredPlanningWorkspace = restorePlanningWorkspace();
+  if (restoredPlanningWorkspace && els.planningSaveStatus) els.planningSaveStatus.textContent = 'Restored local plan';
+  updatePlanningControls();
   setActivePane('explore', { render: false });
   renderAll();
 })();

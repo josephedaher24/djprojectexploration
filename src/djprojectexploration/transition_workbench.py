@@ -26,14 +26,28 @@ from djprojectexploration.local_http import (
     json_response,
     text_response,
 )
+from djprojectexploration.loudness_matching import (
+    DEFAULT_LOUDNESS_MATCH_MODE,
+    DEFAULT_TARGET_LUFS,
+    MAX_COMPENSATION_DB,
+    LoudnessMeasurement,
+    load_loudness_catalog,
+    lookup_loudness,
+    normalize_mode,
+)
 from djprojectexploration.tracklists import PROJECT_ROOT, load_playlist_tracks, read_csv_rows
 from djprojectexploration.transition_preview import (
+    AUTOMATION_LANES,
     DEFAULT_OUTPUT_DIR,
     EQ_MODES,
     FILTER_MODES,
     TRANSITION_PRESETS,
+    TRANSITION_QUALITY_CHOICES,
+    TRANSITION_QUALITY_PROFILES,
     VOLUME_MODES,
+    PreparedLiveTransition,
     RenderedTransition,
+    prepare_live_transition,
     render_transition,
 )
 from djprojectexploration.transition_visualizer import export_transition_visualizer
@@ -114,6 +128,7 @@ class TransitionWorkbench:
         tracklists: list[Path],
         cue_tables: list[Path | None] | None,
         output_dir: Path,
+        render_visuals: bool = True,
     ) -> None:
         if not tracklists:
             raise ValueError("At least one tracklist is required.")
@@ -122,6 +137,20 @@ class TransitionWorkbench:
         self.output_dir = output_dir.expanduser().resolve()
         self.generated_source_dir = self.output_dir / "_workbench_sources"
         self._tempo_bpm_cache: dict[Path, dict[int, float]] = {}
+        self._loudness_by_track_id: dict[str, LoudnessMeasurement] = {}
+        for source in self.sources:
+            by_filename, by_number = load_loudness_catalog(source.tracklist)
+            for track in load_playlist_tracks(source.tracklist):
+                self._loudness_by_track_id[f"{source.slug}:{track.track_number}"] = lookup_loudness(
+                    by_filename,
+                    by_number,
+                    filename=track.mp3_name,
+                    track_number=track.track_number,
+                )
+        self.render_visuals = bool(render_visuals)
+
+    def _loudness_for_track_id(self, track_id: str) -> LoudnessMeasurement:
+        return self._loudness_by_track_id.get(track_id, LoudnessMeasurement())
 
     def _tempo_embedding_path(self, source: TrackSource) -> Path:
         return PROJECT_ROOT / "data" / "tempo_embeddings" / f"{source.tracklist.stem}.npz"
@@ -196,6 +225,7 @@ class TransitionWorkbench:
                         "bpm": bpm,
                         "onset_time": track.onset_time,
                         "cues": cues_by_track.get(track.track_number, []),
+                        "loudness": self._loudness_for_track_id(f"{source.slug}:{track.track_number}").payload(),
                     }
                 )
         return {
@@ -220,6 +250,37 @@ class TransitionWorkbench:
             "volume_modes": sorted(VOLUME_MODES),
             "eq_modes": sorted(EQ_MODES),
             "filter_modes": sorted(FILTER_MODES),
+            "automation": {
+                "decks": ["from", "to"],
+                "lanes": list(AUTOMATION_LANES),
+                "curves": ["linear", "smooth", "exponential"],
+                "volume": {"minimum_db": -96, "maximum_db": 6, "mute_db": -96},
+                "eq": {"type": "isolator", "minimum_db": -96, "maximum_db": 6, "crossovers_hz": [275, 5000]},
+                "filter": {
+                    "minimum": -1,
+                    "maximum": 1,
+                    "center": 0,
+                    "lowpass_min_hz": 20,
+                    "highpass_max_hz": 20000,
+                    "edge_kill_start": 0.975,
+                    "edge_kill_end": 0.995,
+                },
+                "delay": {"minimum": 0, "maximum": 1, "default_beats": 0.5, "beat_divisions": [0.125, 0.25, 0.5, 0.75, 1, 2, 4]},
+                "reverb": {"minimum": 0, "maximum": 1, "default_decay_seconds": 1.2},
+            },
+            "transition_qualities": [
+                {
+                    "id": quality,
+                    "label": "Preview — faster R2, 44.1 kHz" if quality == "preview" else "Final — higher-quality R3, 44.1 kHz",
+                    "sample_rate": int(TRANSITION_QUALITY_PROFILES[quality]["sample_rate"]),
+                }
+                for quality in TRANSITION_QUALITY_CHOICES
+            ],
+            "loudness_matching": {
+                "default_mode": DEFAULT_LOUDNESS_MATCH_MODE,
+                "target_lufs": DEFAULT_TARGET_LUFS,
+                "maximum_compensation_db": MAX_COMPENSATION_DB,
+            },
         }
 
     def _resolve_track_ref(self, value: str) -> tuple[TrackSource, Any]:
@@ -365,6 +426,15 @@ class TransitionWorkbench:
             from_track,
             to_track,
         )
+        automation = body.get("automation")
+        if automation is not None and not isinstance(automation, dict):
+            raise ValueError("Automation must be an object.")
+        effects = body.get("effects")
+        if effects is not None and not isinstance(effects, dict):
+            raise ValueError("Effects must be an object.")
+        loudness_mode = normalize_mode(body.get("loudness_match_mode"))
+        from_loudness = self._loudness_for_track_id(from_track)
+        to_loudness = self._loudness_for_track_id(to_track)
 
         result = render_transition(
             tracklist_csv=render_tracklist,
@@ -379,30 +449,121 @@ class TransitionWorkbench:
             back_padding_bars=int(body.get("back_padding_bars") or 0),
             from_nudge_beats=float(body.get("from_nudge_beats") or 0.0),
             to_nudge_beats=float(body.get("to_nudge_beats") or 0.0),
+            from_beatgrid_ms=float(body.get("from_beatgrid_ms") or 0.0),
+            to_beatgrid_ms=float(body.get("to_beatgrid_ms") or 0.0),
             from_pitch_shift=int(body.get("from_pitch_shift") or 0),
             to_pitch_shift=int(body.get("to_pitch_shift") or 0),
             preset=str(body.get("preset") or "auto"),
             volume_mode=_optional_mode(body.get("volume_mode")),
             eq_mode=_optional_mode(body.get("eq_mode")),
             filter_mode=_optional_mode(body.get("filter_mode")),
-            overwrite=bool(body.get("overwrite", True)),
+            automation=automation,
+            effects=effects,
+            loudness_match_mode=loudness_mode,
+            from_loudness_lufs=from_loudness.integrated_lufs,
+            to_loudness_lufs=to_loudness.integrated_lufs,
+            quality=str(body.get("quality") or "preview"),
+            overwrite=bool(body.get("overwrite", False)),
+            write_waveform=self.render_visuals,
         )
-        visualizer = export_transition_visualizer(transition_dir=result.preview_path.parent)
+        visualizer = (
+            export_transition_visualizer(transition_dir=result.preview_path.parent)
+            if self.render_visuals
+            else None
+        )
         return {
             "ok": True,
             "transition": _transition_payload(result),
             "paths": {
-                "visualizer": str(visualizer),
+                "visualizer": "" if visualizer is None else str(visualizer),
                 "preview": str(result.preview_path),
                 "metadata": str(result.metadata_path),
-                "waveform": str(result.waveform_path),
+                "waveform": str(result.waveform_path) if self.render_visuals else "",
             },
             "urls": {
-                "visualizer": _artifact_url(result.preview_path.parent.name, visualizer.name),
+                "visualizer": _artifact_url(result.preview_path.parent.name, visualizer.name) if visualizer is not None else "",
                 "preview": _artifact_url(result.preview_path.parent.name, result.preview_path.name),
                 "metadata": _artifact_url(result.preview_path.parent.name, result.metadata_path.name),
-                "waveform": _artifact_url(result.preview_path.parent.name, result.waveform_path.name),
+                "waveform": _artifact_url(result.preview_path.parent.name, result.waveform_path.name) if self.render_visuals else "",
             },
+        }
+
+    def prepare_live_payload(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Prepare matched deck assets for the served app's Web Audio mixer."""
+        from_track = _optional_str(body.get("from_track"))
+        to_track = _optional_str(body.get("to_track"))
+        if not from_track or not to_track:
+            raise ValueError("Both from_track and to_track are required.")
+        render_tracklist, render_cue_table, from_query, to_query, default_from_cue, default_to_cue = self._write_render_sources(
+            from_track,
+            to_track,
+        )
+        result = prepare_live_transition(
+            tracklist_csv=render_tracklist,
+            cue_table=render_cue_table,
+            output_dir=self.output_dir,
+            from_query=from_query,
+            to_query=to_query,
+            from_cue=_optional_str(body.get("from_cue")) or default_from_cue,
+            to_cue=_optional_str(body.get("to_cue")) or default_to_cue,
+            overlap_bars=int(body.get("overlap_bars") or 8),
+            front_padding_bars=int(body.get("front_padding_bars") or 0),
+            back_padding_bars=int(body.get("back_padding_bars") or 0),
+            from_bar=float(body.get("from_bar") or 0.0),
+            to_bar=float(body.get("to_bar") or 0.0),
+            from_nudge_beats=float(body.get("from_nudge_beats") or 0.0),
+            to_nudge_beats=float(body.get("to_nudge_beats") or 0.0),
+            from_beatgrid_ms=float(body.get("from_beatgrid_ms") or 0.0),
+            to_beatgrid_ms=float(body.get("to_beatgrid_ms") or 0.0),
+            from_pitch_shift=int(body.get("from_pitch_shift") or 0),
+            to_pitch_shift=int(body.get("to_pitch_shift") or 0),
+            guard_bars=int(body.get("live_guard_bars") or 4),
+            quality="preview",
+            overwrite=bool(body.get("overwrite", False)),
+        )
+        loudness_mode = normalize_mode(body.get("loudness_match_mode"))
+        return self._prepared_live_payload(
+            result,
+            from_loudness=self._loudness_for_track_id(from_track).payload(loudness_mode),
+            to_loudness=self._loudness_for_track_id(to_track).payload(loudness_mode),
+            loudness_mode=loudness_mode,
+        )
+
+    @staticmethod
+    def _prepared_live_payload(
+        result: PreparedLiveTransition,
+        *,
+        from_loudness: dict[str, float | None] | None = None,
+        to_loudness: dict[str, float | None] | None = None,
+        loudness_mode: str = DEFAULT_LOUDNESS_MATCH_MODE,
+    ) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "live": {
+                "transition_id": result.transition_id,
+                "sample_rate": result.sample_rate,
+                "duration_seconds": result.duration_seconds,
+                "transport_start_seconds": result.transport_start_seconds,
+                "transport_end_seconds": result.transport_end_seconds,
+                "transition_start_seconds": result.transition_start_seconds,
+                "transition_end_seconds": result.transition_end_seconds,
+                "loop_start_seconds": result.loop_start_seconds,
+                "loop_end_seconds": result.loop_end_seconds,
+                "overlap_bars": result.overlap_bars,
+                "front_padding_bars": result.front_padding_bars,
+                "back_padding_bars": result.back_padding_bars,
+                "guard_bars": result.guard_bars,
+                "beats_per_bar": result.beats_per_bar,
+                "from_bpm": result.from_bpm,
+                "to_bpm": result.to_bpm,
+                "b_time_stretch_rate": result.b_time_stretch_rate,
+            },
+            "urls": {
+                "from": _artifact_url(result.transition_id, result.from_path.name),
+                "to": _artifact_url(result.transition_id, result.to_path.name),
+                "metadata": _artifact_url(result.transition_id, "live_transition.json"),
+            },
+            "loudness": {"mode": loudness_mode, "from": from_loudness or {}, "to": to_loudness or {}},
         }
 
     def artifact_path(self, transition_id: str, filename: str) -> Path | None:
